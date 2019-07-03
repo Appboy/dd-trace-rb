@@ -20,6 +20,7 @@ module Datadog
 
           option :enabled, default: true
           option :service_name, default: Ext::SERVICE_NAME
+          option :error_for_4xx, default: true
         end
       end
     end
