@@ -14,6 +14,8 @@ RSpec.describe Datadog::Runtime::Identity do
     end
 
     context 'when invoked around a fork' do
+      before { skip unless PlatformHelpers.supports_fork? }
+
       let(:before_fork_id) { described_class.id }
       let(:inside_fork_id) { described_class.id }
       let(:after_fork_id) { described_class.id }
@@ -23,12 +25,9 @@ RSpec.describe Datadog::Runtime::Identity do
         expect(before_fork_id).to be_a_kind_of(String)
 
         # Invoke in fork, make sure expectations run before continuing.
-        Timeout.timeout(1) do
-          fork do
-            expect(inside_fork_id).to be_a_kind_of(String)
-            expect(inside_fork_id).to_not eq(before_fork_id)
-          end
-          Process.wait
+        expect_in_fork do
+          expect(inside_fork_id).to be_a_kind_of(String)
+          expect(inside_fork_id).to_not eq(before_fork_id)
         end
 
         # Check after forking

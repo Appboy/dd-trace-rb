@@ -2,6 +2,379 @@
 
 ## [Unreleased]
 
+## [0.43.0] - 2020-11-18
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.43.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.42.0...v0.43.0
+
+### Added
+
+- Background job custom error handlers (#1212) (@norbertnytko)
+- Add "multi" methods instrumentation for Rails cache (#1217) (@michaelkl)
+- Support custom error status codes for Grape (#1238)
+- Cucumber integration (#1216)
+- RSpec integration (#1234)
+- Validation to `:on_error` argument on `Datadog::Tracer#trace` (#1220)
+
+### Changed
+
+- Update `TokenBucket#effective_rate` calculation (#1236)
+
+### Fixed
+
+- Avoid writer reinitialization during shutdown (#1235, #1248)
+- Fix configuration multiplexing (#1204, #1227)
+- Fix misnamed B3 distributed headers (#1226, #1229)
+- Correct span type for AWS SDK (#1233)
+- Correct span type for internal Pin on HTTP clients (#1239)
+- Reset trace context after fork (#1225)
+
+### Refactored
+
+- Improvements to test suite (#1232, #1244)
+- Improvements to documentation (#1243, #1218) (@cjford)
+
+### Removed
+
+## [0.42.0] - 2020-10-21
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.42.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.41.0...v0.42.0
+
+### Added
+
+- Increase Resque support to include 2.0  (#1213) (@erict-square)
+
+- Improve gRPC Propagator to support metadata array values (#1203) (@mdehoog)
+
+- Add CPU benchmarks, diagnostics to tests (#1188, #1198)
+
+- Access active correlation by Thread (#1200)
+
+- Improve delayed_job instrumentation (#1187) (@norbertnytko)
+
+### Changed
+
+### Fixed
+
+- Improve Rails `log_injection` option to support more Lograge formats (#1210) (@Supy)
+
+- Fix Changelog (#1199) (@y-yagi)
+
+### Refactored
+
+- Refactor Trace buffer into multiple components (#1195)
+
+## [0.41.0] - 2020-09-30
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.41.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.40.0...v0.41.0
+
+### Added
+
+- Improve duration counting using monotonic clock (#424, #1173) (@soulcutter)
+
+### Changed
+
+- Add peer.service tag to external services and skip tagging external services with language tag for runtime metrics (#934, #935, #1180)
+  - This helps support the way runtime metrics are associated with spans in the UI.
+- Faster TraceBuffer for CRuby (#1172)
+- Reduce memory usage during gem startup (#1090)
+- Reduce memory usage of the HTTP transport (#1165)
+
+### Fixed
+
+- Improved prepared statement support for Sequel  integrations (#1186)
+- Fix Sequel instrumentation when executing literal strings (#1185) (@matchbookmac)
+- Remove explicit `Logger` class verification (#1181) (@bartekbsh)
+  - This allows users to pass in a custom logger that does not inherit from `Logger` class.
+- Correct tracer buffer metric counting (#1182)
+- Fix Span#pretty_print for empty duration (#1183)
+
+### Refactored
+
+- Improvements to test suite & CI (#1179, #1184, #1177, #1178, #1176)
+- Reduce generated Span ID range to fit in Fixnum (#1189)
+
+## [0.40.0] - 2020-09-08
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.40.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.39.0...v0.40.0
+
+### Added
+
+- Rails `log_injection` option to auto enable log correlation (#1157)
+- Que integration (#1141, #1146) (@hs-bguven)
+- `Components#startup!` hook (#1151)
+- Code coverage report (#1159)
+  - Every commit now has a `coverage` CI step that contains the code coverage report. This report can be found in the `Artifacts` tab of that CI step, under `coverage/index.html`.
+
+### Changed
+
+- Use a single top level span for Racecar consumers (#1150) (@dasch)
+
+### Fixed
+
+- Sinatra nested modular applications possibly leaking spans (#1035, #1145)
+  
+  * **BREAKING** for nested modular Sinatra applications only:
+    ```ruby
+    class Nested < Sinatra::Base
+    end
+    
+    class TopLevel < Sinatra::Base
+      use Nested # Nesting happens here
+    end
+    ```
+  * Non-breaking for classic applications nor modular non-nested applications.
+  
+  Fixes issues introduced by #1015 (in 0.35.0), when we first introduced Sinatra support for modular applications.
+  
+  The main issue we had to solve for modular support is how to handle nested applications, as only one application is actually responsible for handling the route. A naive implementation would cause the creation of nested `sinatra.request` spans, even for applications that did not handle the request. This is technically correct, as Sinatra is traversing that middleware, accruing overhead, but that does not aligned with our existing behavior of having a single `sinatra.request` span.
+  
+  While trying to achieve backwards-compatibility, we had to resort to a solution that turned out brittle: `sinatra.request` spans had to start in one middleware level and finished it in another. This allowed us to only capture the `sinatra.request` for the matching route, and skip the non-matching one. This caused unexpected issues on some user setups, specially around Sinatra middleware that created spans in between the initialization and closure of `sinatra.request` spans.
+  
+  This change now address these implementation issues by creating multiple `sinatra.request`, one for each traversed Sinatra application, even non-matching ones. This instrumentation is more correct, but at the cost of being a breaking change for nested modular applications.
+  
+  Please see #1145 for more information, and example screenshots on how traces for affected applications will look like.
+
+- Rack/Rails span error propagation with `rescue_from` (#1155, #1162)
+- Prevent logger recursion during startup (#1158)
+- Race condition on new worker classes (#1154)
+  - These classes represent future work, and not being used at the moment.
+
+### Refactored
+
+- Run CI tests in parallel (#1156)
+- Migrate minitest tests to RSpec (#1127, #1128, #1133, #1149, #1152, #1153)
+- Improvements to test suite (#1134, #1148, #1163)
+- Improvements to documentation (#1138)
+
+### Removed
+
+- **Ruby 1.9 support ended, as it transitions from Maintenance to End-Of-Life (#1137)**
+- GitLab status check when not applicable (#1160)
+  - Allows for PRs pass all status checks once again. Before this change, a `dd-gitlab/copy_to_s3` check would never leave the "Pending" status. This check tracks the deployment of a commit to an internal testing platform, which currently only happens on `master` branch or when manually triggered internally.
+
+## [0.39.0] - 2020-08-05
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.39.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.38.0...v0.39.0
+
+### Added
+
+- JRuby 9.2 support (#1126)
+- Sneakers integration (#1121) (@janz93)
+
+### Changed
+
+- Consistent environment variables across languages (#1115)
+- Default logger level from WARN to INFO (#1120) (@gingerlime)
+  - This change also reduces the startup environment log message to INFO level (#1104)
+
+### Fixed
+
+- HTTP::StateError on error responses for http.rb (#1116, #1122) (@evan-waters)
+- Startup log error when using the test adapter (#1125, #1131) (@benhutton)
+- Warning message for Faraday < 1.0 (#1129) (@fledman, @tjwp)
+- Propagate Rails error message to Rack span (#1124)
+
+### Refactored
+
+- Improved ActiveRecord documentation (#1119)
+- Improvements to test suite (#1105, #1118)
+
+## [0.38.0] - 2020-07-13
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.38.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.37.0...v0.38.0
+
+### Added
+
+- http.rb integration (#529, #853)
+- Kafka integration (#1070) (@tjwp)
+- Span#set_tags (#1081) (@DocX)
+- retry_count tag for Sidekiq jobs (#1089) (@elyalvarado)
+- Startup environment log (#1104, #1109)
+- DD_SITE and DD_API_KEY configuration (#1107)
+
+### Changed
+
+- Auto instrument Faraday default connection (#1057)
+- Sidekiq client middleware is now the same for client and server (#1099) (@drcapulet)
+- Single pass SpanFilter (#1071) (@tjwp)
+
+### Fixed
+
+- Ensure fatal exceptions are propagated (#1100)
+- Respect child_of: option in Tracer#trace (#1082) (@DocX)
+- Improve Writer thread safety (#1091) (@fledman)
+
+### Refactored
+
+- Improvements to test suite (#1092, #1103)
+
+## [0.37.0] - 2020-06-24
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.37.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.36.0...v0.37.0
+
+### Refactored
+
+- Documentation improvements regarding Datadog Agent defaults (#1074) (@cswatt)
+- Improvements to test suite (#1043, #1051, #1062, #1075, #1076, #1086)
+
+### Removed
+
+- **DEPRECATION**: Deprecate Contrib::Configuration::Settings#tracer= (#1072, #1079)
+  - The `tracer:` option is no longer supported for integration configuration. A deprecation warning will be issued when this option is used.
+  - Tracer instances are dynamically created when `ddtrace` is reconfigured (through `Datadog.configure{}` calls).
+
+    A reference to a tracer instance cannot be stored as it will be replaced by a new instance during reconfiguration.
+
+    Retrieving the global tracer instance, by invoking `Datadog.tracer`, is the only safe mechanism to acquire the active tracer instance.
+
+    Allowing an integration to set its tracer instance is effectively preventing that integration from dynamically retrieving the current active tracer in the future, thus causing it to record spans in a stale tracer instance. Spans recorded in a stale tracer instance will look disconnected from their parent context.
+
+- **BREAKING**: Remove Pin#tracer= and DeprecatedPin#tracer= (#1073)
+  - The `Pin` and `DeprecatedPin` are internal tools used to provide more granular configuration for integrations.
+  - The APIs being removed are not public nor have been externally documented. The `DeprecatedPin` specifically has been considered deprecated since 0.20.0.
+  - This removal is a continuation of #1079 above, thus carrying the same rationale.
+
+### Migration
+
+- Remove `tracer` argument provided to integrations (e.g. `c.use :rails, tracer: ...`).
+- Remove `tracer` argument provided to `Pin` or `DeprecatedPin` initializers (e.g. `Pin.new(service, tracer: ...)`).
+- If you require a custom tracer instance, use a global instance configuration:
+    ```ruby
+    Datadog.configure do |c|
+      c.tracer.instance = custom_tracer
+    end
+    ```
+
+## [0.36.0] - 2020-05-27
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.36.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.35.2...v0.36.0
+
+### Changed
+
+- Prevent trace components from being re-initialized multiple times during setup (#1037)
+
+### Fixed
+
+- Allow Rails patching if Railties are loaded (#993, #1054) (@mustela, @bheemreddy181, @vramaiah)
+- Pin delegates to default tracer unless configured (#1041)
+
+### Refactored
+
+- Improvements to test suite (#1027, #1031, #1045, #1046, #1047)
+
+## [0.35.2] - 2020-05-08
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.35.2
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.35.1...v0.35.2
+
+### Fixed
+
+- Internal tracer HTTP requests generating traces (#1030, #1033) (@gingerlime)
+- `Datadog.configure` forcing all options to eager load (#1032, #1034) (@kelvin-acosta)
+
+## [0.35.1] - 2020-05-05
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.35.1
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.35.0...v0.35.1
+
+### Fixed
+
+- Components#teardown! NoMethodError (#1021, #1023) (@bzf)
+
+## [0.35.0] - 2020-04-29
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.35.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.34.2...v0.35.0
+
+### Added
+
+- Chunk large trace payloads before flushing (#818, #840)
+- Support for Sinatra modular apps (#486, #913, #1015) (@jpaulgs, @tomasv, @ZimbiX)
+- active_job support for Resque (#991) (@stefanahman, @psycholein)
+- JRuby 9.2 to CI test matrix (#995)
+- `TraceWriter` and `AsyncTraceWriter` workers (#986)
+- Runtime metrics worker (#988)
+
+### Changed
+
+- Populate env, service, and version from tags (#1008)
+- Extract components from configuration (#996)
+- Extract logger to components (#997)
+- Extract runtime metrics worker from `Writer` (#1004)
+- Improvements to Faraday documentation (#1005)
+
+### Fixed
+
+- Runtime metrics not starting after #write (#1010)
+
+### Refactored
+
+- Improvements to test suite (#842, #1006, #1009)
+
+## [0.34.2] - 2020-04-09
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.34.2
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.34.1...v0.34.2
+
+### Changed
+
+- Revert Rails applications setting default `env` if none are configured. (#1000) (@errriclee)
+
+## [0.34.1] - 2020-04-02
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.34.1
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.34.0...v0.34.1
+
+### Changed
+
+- Rails applications set default `service` and `env` if none are configured. (#990)
+
+### Fixed
+
+- Some configuration settings not applying (#989, #990) (@rahul342)
+
+## [0.34.0] - 2020-03-31
+
+Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.34.0
+
+Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.33.1...v0.34.0
+
+### Added
+
+- `Datadog::Event` for simple pub-sub messaging (#972)
+- `Datadog::Workers` for trace writing (#969, #973)
+- `_dd.measured` tag to some integrations for more statistics (#974)
+- `env`, `service`, `version`, `tags` configuration for auto-tagging (#977, #980, #982, #983, #985)
+- Multiplexed configuration for Ethon, Excon, Faraday, HTTP integrations (#882, #953) (@stormsilver)
+
+### Fixed
+
+- Runtime metrics configuration dropping with new writer (#967, #968) (@ericmustin)
+- Faraday "unexpected middleware" warnings on v0.x (#965, #971)
+- Presto configuration (#975)
+- Test suite issues (#981)
+
 ## [0.33.1] - 2020-03-09
 
 Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.33.1
@@ -1119,7 +1492,20 @@ Release notes: https://github.com/DataDog/dd-trace-rb/releases/tag/v0.3.1
 
 Git diff: https://github.com/DataDog/dd-trace-rb/compare/v0.3.0...v0.3.1
 
-[Unreleased]: https://github.com/DataDog/dd-trace-rb/compare/v0.33.1...master
+[Unreleased]: https://github.com/DataDog/dd-trace-rb/compare/v0.41.0...master
+[0.43.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.42.0...v0.43.0
+[0.41.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.40.0...v0.41.0
+[0.40.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.39.0...v0.40.0
+[0.39.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.38.0...v0.39.0
+[0.38.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.37.0...v0.38.0
+[0.37.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.36.0...v0.37.0
+[0.36.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.35.2...v0.36.0
+[0.35.2]: https://github.com/DataDog/dd-trace-rb/compare/v0.35.1...v0.35.2
+[0.35.1]: https://github.com/DataDog/dd-trace-rb/compare/v0.35.0...v0.35.1
+[0.35.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.34.2...v0.35.0
+[0.34.2]: https://github.com/DataDog/dd-trace-rb/compare/v0.34.1...v0.34.2
+[0.34.1]: https://github.com/DataDog/dd-trace-rb/compare/v0.34.0...v0.34.1
+[0.34.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/DataDog/dd-trace-rb/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/DataDog/dd-trace-rb/compare/v0.31.1...v0.32.0

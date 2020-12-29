@@ -1,6 +1,7 @@
 require 'ddtrace/contrib/analytics'
 require 'ddtrace/contrib/mongodb/ext'
 require 'ddtrace/contrib/mongodb/parsers'
+require 'ddtrace/ext/integration'
 
 module Datadog
   module Contrib
@@ -23,6 +24,9 @@ module Datadog
           # build a quantized Query using the Parser module
           query = MongoDB.query_builder(event.command_name, event.database_name, event.command)
           serialized_query = query.to_s
+
+          # Tag as an external peer service
+          span.set_tag(Datadog::Ext::Integration::TAG_PEER_SERVICE, span.service)
 
           # Set analytics sample rate
           if analytics_enabled?
@@ -50,7 +54,7 @@ module Datadog
           # the framework itself, so we set only the error and the message
           span.set_error(event)
         rescue StandardError => e
-          Datadog::Logger.log.debug("error when handling MongoDB 'failed' event: #{e}")
+          Datadog.logger.debug("error when handling MongoDB 'failed' event: #{e}")
         ensure
           # whatever happens, the Span must be removed from the local storage and
           # it must be finished to prevent any leak
@@ -66,7 +70,7 @@ module Datadog
           rows = event.reply.fetch('n', nil)
           span.set_tag(Ext::TAG_ROWS, rows) unless rows.nil?
         rescue StandardError => e
-          Datadog::Logger.log.debug("error when handling MongoDB 'succeeded' event: #{e}")
+          Datadog.logger.debug("error when handling MongoDB 'succeeded' event: #{e}")
         ensure
           # whatever happens, the Span must be removed from the local storage and
           # it must be finished to prevent any leak

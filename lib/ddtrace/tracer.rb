@@ -1,12 +1,13 @@
-require 'pp'
 require 'thread'
 require 'logger'
 require 'pathname'
 
+require 'ddtrace/environment'
 require 'ddtrace/span'
 require 'ddtrace/context'
 require 'ddtrace/logger'
 require 'ddtrace/writer'
+require 'ddtrace/runtime/identity'
 require 'ddtrace/sampler'
 require 'ddtrace/sampling'
 require 'ddtrace/correlation'
@@ -29,7 +30,7 @@ module Datadog
     def services
       # Only log each deprecation warning once (safeguard against log spam)
       Datadog::Patcher.do_once('Tracer#set_service_info') do
-        Datadog::Logger.log.warn('services: Usage of Tracer.services has been deprecated')
+        Datadog.logger.warn('services: Usage of Tracer.services has been deprecated')
       end
 
       {}
@@ -59,8 +60,8 @@ module Datadog
     #
     # This method makes use of a \ContextProvider that is automatically set during the tracer
     # initialization, or while using a library instrumentation.
-    def call_context
-      @provider.context
+    def call_context(key = nil)
+      @provider.context(key)
     end
 
     # Initialize a new \Tracer used to create, sample and submit spans that measure the
@@ -69,21 +70,23 @@ module Datadog
     # * +enabled+: set if the tracer submits or not spans to the local agent. It's enabled
     #   by default.
     def initialize(options = {})
-      @enabled = options.fetch(:enabled, true)
-      @writer = options.fetch(:writer, Datadog::Writer.new)
-      @sampler = options.fetch(:sampler, Datadog::AllSampler.new)
-
-      @provider = options.fetch(:context_provider, Datadog::DefaultContextProvider.new)
-      @provider ||= Datadog::DefaultContextProvider.new # @provider should never be nil
-
+      # Configurable options
       @context_flush = if options[:partial_flush]
                          Datadog::ContextFlush::Partial.new(options)
                        else
                          Datadog::ContextFlush::Finished.new
                        end
 
+      @default_service = options[:default_service]
+      @enabled = options.fetch(:enabled, true)
+      @provider = options.fetch(:context_provider, Datadog::DefaultContextProvider.new)
+      @sampler = options.fetch(:sampler, Datadog::AllSampler.new)
+      @tags = options.fetch(:tags, {})
+      @writer = options.fetch(:writer, Datadog::Writer.new)
+
+      # Instance variables
       @mutex = Mutex.new
-      @tags = {}
+      @provider ||= Datadog::DefaultContextProvider.new # @provider should never be nil
 
       # Enable priority sampling by default
       activate_priority_sampling!(@sampler)
@@ -112,11 +115,13 @@ module Datadog
 
       configure_writer(options)
 
-      @context_flush = if options[:partial_flush]
-                         Datadog::ContextFlush::Partial.new(options)
-                       else
-                         Datadog::ContextFlush::Finished.new
-                       end
+      if options.key?(:partial_flush)
+        @context_flush = if options[:partial_flush]
+                           Datadog::ContextFlush::Partial.new(options)
+                         else
+                           Datadog::ContextFlush::Finished.new
+                         end
+      end
     end
 
     # Set the information about the given service. A valid example is:
@@ -127,7 +132,7 @@ module Datadog
     def set_service_info(service, app, app_type)
       # Only log each deprecation warning once (safeguard against log spam)
       Datadog::Patcher.do_once('Tracer#set_service_info') do
-        Datadog::Logger.log.warn(%(
+        Datadog.logger.warn(%(
           set_service_info: Usage of set_service_info has been deprecated,
           service information no longer needs to be reported to the trace agent.
         ))
@@ -142,7 +147,7 @@ module Datadog
       begin
         @default_service = File.basename($PROGRAM_NAME, '.*')
       rescue StandardError => e
-        Datadog::Logger.log.error("unable to guess default service: #{e}")
+        Datadog.logger.error("unable to guess default service: #{e}")
         @default_service = 'ruby'.freeze
       end
       @default_service
@@ -154,7 +159,8 @@ module Datadog
     #
     #   tracer.set_tags('env' => 'prod', 'component' => 'core')
     def set_tags(tags)
-      @tags.update(tags)
+      string_tags = Hash[tags.collect { |k, v| [k.to_s, v] }]
+      @tags = @tags.merge(string_tags)
     end
 
     # Guess context and parent from child_of entry.
@@ -180,8 +186,7 @@ module Datadog
     # * +start_time+: when the span actually starts (defaults to \now)
     # * +tags+: extra tags which should be added to the span.
     def start_span(name, options = {})
-      start_time = options.fetch(:start_time, Time.now.utc)
-
+      start_time = options[:start_time]
       tags = options.fetch(:tags, {})
 
       span_options = options.select do |k, _v|
@@ -197,6 +202,7 @@ module Datadog
         # root span
         @sampler.sample!(span)
         span.set_tag('system.pid', Process.pid)
+        span.set_tag(Datadog::Ext::Runtime::TAG_ID, Datadog::Runtime::Identity.id)
 
         if ctx && ctx.trace_id
           span.trace_id = ctx.trace_id
@@ -206,9 +212,10 @@ module Datadog
         # child span
         span.parent = parent # sets service, trace_id, parent_id, sampled
       end
-      tags.each { |k, v| span.set_tag(k, v) } unless tags.empty?
-      @tags.each { |k, v| span.set_tag(k, v) } unless @tags.empty?
-      span.start_time = start_time
+
+      span.set_tags(@tags) unless @tags.empty?
+      span.set_tags(tags) unless tags.empty?
+      span.start(start_time)
 
       # this could at some point be optional (start_active_span vs start_manual_span)
       ctx.add_span(span) unless ctx.nil?
@@ -249,9 +256,11 @@ module Datadog
     # * +service+: the service name for this span
     # * +resource+: the resource this span refers, or \name if it's missing
     # * +span_type+: the type of the span (such as \http, \db and so on)
+    # * +child_of+: a \Span or a \Context instance representing the parent for this span.
+    #   If not set, defaults to Tracer.call_context
     # * +tags+: extra tags which should be added to the span.
     def trace(name, options = {})
-      options[:child_of] = call_context
+      options[:child_of] ||= call_context
 
       # call the finish only if a block is given; this ensures
       # that a call to tracer.trace() without a block, returns
@@ -263,11 +272,16 @@ module Datadog
         begin
           begin
             span = start_span(name, options)
-          # rubocop:disable Lint/UselessAssignment
           rescue StandardError => e
-            Datadog::Logger.log.debug('Failed to start span: #{e}')
+            Datadog.logger.debug("Failed to start span: #{e}")
           ensure
-            return_value = yield(span)
+            # We should yield to the provided block when possible, as this
+            # block is application code that we don't want to hinder. We call:
+            # * `yield(span)` during normal execution.
+            # * `yield(nil)` if `start_span` fails with a runtime error.
+            # * We don't yield during a fatal error, as the application is likely trying to
+            #   end its execution (either due to a system error or graceful shutdown).
+            return_value = yield(span) if span || e.is_a?(StandardError)
           end
         # rubocop:disable Lint/RescueException
         # Here we really want to catch *any* exception, not only StandardError,
@@ -275,8 +289,19 @@ module Datadog
         # and it is user code which should be executed no matter what.
         # It's not a problem since we re-raise it afterwards so for example a
         # SignalException::Interrupt would still bubble up.
+        # rubocop:disable Metrics/BlockNesting
         rescue Exception => e
-          (options[:on_error] || DEFAULT_ON_ERROR).call(span, e)
+          if (on_error_handler = options[:on_error]) && on_error_handler.respond_to?(:call)
+            begin
+              on_error_handler.call(span, e)
+            rescue
+              Datadog.logger.debug('Custom on_error handler failed, falling back to default')
+              DEFAULT_ON_ERROR.call(span, e)
+            end
+          else
+            Datadog.logger.debug('Custom on_error handler must be a callable, falling back to default') if on_error_handler
+            DEFAULT_ON_ERROR.call(span, e)
+          end
           raise e
         ensure
           span.finish unless span.nil?
@@ -308,34 +333,34 @@ module Datadog
     def record_context(context)
       trace = @context_flush.consume!(context)
 
-      write(trace) if trace && !trace.empty?
+      write(trace) if @enabled && trace && !trace.empty?
     end
 
     # Return the current active span or +nil+.
-    def active_span
-      call_context.current_span
+    def active_span(key = nil)
+      call_context(key).current_span
     end
 
     # Return the current active root span or +nil+.
-    def active_root_span
-      call_context.current_root_span
+    def active_root_span(key = nil)
+      call_context(key).current_root_span
     end
 
     # Return a CorrelationIdentifier for active span
-    def active_correlation
-      Datadog::Correlation.identifier_from_context(call_context)
+    def active_correlation(key = nil)
+      Datadog::Correlation.identifier_from_context(call_context(key))
     end
 
     # Send the trace to the writer to enqueue the spans list in the agent
     # sending queue.
     def write(trace)
-      return if @writer.nil? || !@enabled
+      return if @writer.nil?
 
-      if Datadog::Logger.debug_logging
-        Datadog::Logger.log.debug("Writing #{trace.length} spans (enabled: #{@enabled})")
+      if Datadog.configuration.diagnostics.debug
+        Datadog.logger.debug("Writing #{trace.length} spans (enabled: #{@enabled})")
         str = String.new('')
         PP.pp(trace, str)
-        Datadog::Logger.log.debug(str)
+        Datadog.logger.debug(str)
       end
 
       @writer.write(trace)
@@ -352,10 +377,10 @@ module Datadog
       sampler = options.fetch(:sampler, nil)
       priority_sampling = options.fetch(:priority_sampling, nil)
       writer = options.fetch(:writer, nil)
-      transport_options = options.fetch(:transport_options, {})
+      transport_options = options.fetch(:transport_options, {}).dup
 
       # Compile writer options
-      writer_options = options.fetch(:writer_options, {})
+      writer_options = options.fetch(:writer_options, {}).dup
       rebuild_writer = !writer_options.empty?
 
       # Re-build the sampler and writer if priority sampling is enabled,

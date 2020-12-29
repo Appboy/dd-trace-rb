@@ -24,7 +24,7 @@ module Datadog
               span.service = datadog_pin.service
               span.resource = opts[:query]
               span.span_type = Datadog::Ext::SQL::TYPE
-              Utils.set_analytics_sample_rate(span)
+              Utils.set_common_tags(span)
               span.set_tag(Ext::TAG_DB_VENDOR, adapter_name)
               response = super(sql, options)
             end
@@ -36,7 +36,7 @@ module Datadog
               Datadog.configuration[:sequel][:service_name] || adapter_name,
               app: Ext::APP,
               app_type: Datadog::Ext::AppTypes::DB,
-              tracer: Datadog.configuration[:sequel][:tracer] || Datadog.tracer
+              tracer: -> { Datadog.configuration[:sequel][:tracer] }
             )
           end
 
@@ -52,6 +52,8 @@ module Datadog
                       elsif instance_variable_defined?(:@pool) && @pool
                         @pool.db.opts
                       end
+            sql = sql.is_a?(::Sequel::SQL::Expression) ? literal(sql) : sql.to_s
+
             Utils.parse_opts(sql, opts, db_opts)
           end
         end

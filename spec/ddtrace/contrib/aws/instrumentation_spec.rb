@@ -1,5 +1,6 @@
-require 'spec_helper'
+require 'ddtrace/contrib/support/spec_helper'
 require 'ddtrace/contrib/analytics_examples'
+require 'ddtrace/contrib/integration_examples'
 
 require 'aws-sdk'
 require 'ddtrace'
@@ -7,14 +8,10 @@ require 'ddtrace/contrib/aws/patcher'
 require 'ddtrace/ext/http'
 
 RSpec.describe 'AWS instrumentation' do
-  let(:tracer) { get_test_tracer }
-  let(:configuration_options) { { tracer: tracer } }
+  let(:configuration_options) { {} }
 
   let(:client) { ::Aws::S3::Client.new(stub_responses: responses) }
   let(:responses) { true }
-
-  let(:span) { spans.first }
-  let(:spans) { tracer.writer.spans(:keep) }
 
   before(:each) do
     Datadog.configure do |c|
@@ -42,10 +39,12 @@ RSpec.describe 'AWS instrumentation' do
         let(:analytics_sample_rate_var) { Datadog::Contrib::Aws::Ext::ENV_ANALYTICS_SAMPLE_RATE }
       end
 
+      it_behaves_like 'measured span for integration', false
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
-        expect(span.span_type).to eq('web')
+        expect(span.span_type).to eq('http')
         expect(span.resource).to eq('s3.list_buckets')
 
         expect(span.get_tag('aws.agent')).to eq('aws-sdk-ruby')
@@ -56,6 +55,8 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag('http.method')).to eq('GET')
         expect(span.get_tag('http.status_code')).to eq('200')
       end
+
+      it_behaves_like 'a peer service span'
 
       it 'returns the correct response' do
         expect(list_buckets.buckets.map(&:name)).to eq(['bucket1'])

@@ -1,4 +1,5 @@
-require 'spec_helper'
+require 'ddtrace/contrib/integration_examples'
+require 'ddtrace/contrib/support/spec_helper'
 require 'time'
 require 'elasticsearch-transport'
 require 'faraday'
@@ -22,11 +23,7 @@ RSpec.describe 'Elasticsearch::Transport::Client tracing' do
   let(:server) { "http://#{host}:#{port}" }
 
   let(:client) { Elasticsearch::Client.new(url: server) }
-  let(:tracer) { get_test_tracer }
-  let(:configuration_options) { { tracer: tracer } }
-
-  let(:spans) { tracer.writer.spans }
-  let(:span) { spans.first }
+  let(:configuration_options) { {} }
 
   before(:each) do
     Datadog.configure do |c|
@@ -88,6 +85,8 @@ RSpec.describe 'Elasticsearch::Transport::Client tracing' do
           expect(span.get_tag('out.host')).to eq(host)
           expect(span.get_tag('out.port')).to eq(port)
         end
+
+        it_behaves_like 'a peer service span'
       end
 
       context 'PUT request' do
@@ -117,6 +116,8 @@ RSpec.describe 'Elasticsearch::Transport::Client tracing' do
             expect(span.get_tag('out.host')).to eq(host)
             expect(span.get_tag('out.port')).to eq(port)
           end
+
+          it_behaves_like 'a peer service span'
         end
 
         context 'with Hash params' do

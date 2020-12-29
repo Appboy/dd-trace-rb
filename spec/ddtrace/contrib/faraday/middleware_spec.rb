@@ -1,4 +1,5 @@
-require 'spec_helper'
+require 'ddtrace/contrib/integration_examples'
+require 'ddtrace/contrib/support/spec_helper'
 require 'ddtrace/contrib/analytics_examples'
 
 require 'ddtrace'
@@ -6,8 +7,6 @@ require 'faraday'
 require 'ddtrace/ext/distributed'
 
 RSpec.describe 'Faraday middleware' do
-  let(:tracer) { get_test_tracer }
-
   let(:client) do
     ::Faraday.new('http://example.com') do |builder|
       builder.use(:ddtrace, middleware_options) if use_middleware
@@ -22,10 +21,10 @@ RSpec.describe 'Faraday middleware' do
 
   let(:use_middleware) { true }
   let(:middleware_options) { {} }
-  let(:configuration_options) { { tracer: tracer } }
+  let(:configuration_options) { {} }
 
   let(:request_span) do
-    tracer.writer.spans(:keep).find { |span| span.name == Datadog::Contrib::Faraday::Ext::SPAN_REQUEST }
+    spans.find { |span| span.name == Datadog::Contrib::Faraday::Ext::SPAN_REQUEST }
   end
 
   before(:each) do
@@ -42,7 +41,7 @@ RSpec.describe 'Faraday middleware' do
   end
 
   context 'without explicit middleware configured' do
-    subject!(:response) { client.get('/success') }
+    subject(:response) { client.get('/success') }
     let(:use_middleware) { false }
 
     it 'uses default configuration' do
@@ -59,6 +58,45 @@ RSpec.describe 'Faraday middleware' do
       expect(request_span.get_tag(Datadog::Ext::NET::TARGET_PORT)).to eq(80)
       expect(request_span.span_type).to eq(Datadog::Ext::HTTP::TYPE_OUTBOUND)
       expect(request_span).to_not have_error
+    end
+
+    it_behaves_like 'a peer service span'
+
+    it 'executes without warnings' do
+      expect { response }.to_not output(/WARNING/).to_stderr
+    end
+
+    context 'with default Faraday connection' do
+      subject(:response) { client.get('http://example.com/success') }
+      let(:client) { ::Faraday } # Use the singleton client
+
+      before do
+        # We mock HTTP requests we we can't configure
+        # the test adapter for the default connection
+        WebMock.enable!
+        stub_request(:get, 'http://example.com/success').to_return(status: 200)
+      end
+
+      after { WebMock.disable! }
+
+      it 'uses default configuration' do
+        expect(response.status).to eq(200)
+
+        expect(request_span.service).to eq(Datadog::Contrib::Faraday::Ext::SERVICE_NAME)
+        expect(request_span.name).to eq(Datadog::Contrib::Faraday::Ext::SPAN_REQUEST)
+        expect(request_span.resource).to eq('GET')
+        expect(request_span.get_tag(Datadog::Ext::HTTP::METHOD)).to eq('GET')
+        expect(request_span.get_tag(Datadog::Ext::HTTP::STATUS_CODE)).to eq('200')
+        expect(request_span.get_tag(Datadog::Ext::HTTP::URL)).to eq('/success')
+        expect(request_span.get_tag(Datadog::Ext::NET::TARGET_HOST)).to eq('example.com')
+        expect(request_span.get_tag(Datadog::Ext::NET::TARGET_PORT)).to eq(80)
+        expect(request_span.span_type).to eq(Datadog::Ext::HTTP::TYPE_OUTBOUND)
+        expect(request_span).to_not have_error
+      end
+
+      it 'executes without warnings' do
+        expect { response }.to_not output(/WARNING/).to_stderr
+      end
     end
   end
 
@@ -81,6 +119,8 @@ RSpec.describe 'Faraday middleware' do
       let(:span) { request_span }
     end
 
+    it_behaves_like 'measured span for integration', false
+
     it do
       expect(request_span).to_not be nil
       expect(request_span.service).to eq(Datadog::Contrib::Faraday::Ext::SERVICE_NAME)
@@ -94,6 +134,8 @@ RSpec.describe 'Faraday middleware' do
       expect(request_span.span_type).to eq(Datadog::Ext::HTTP::TYPE_OUTBOUND)
       expect(request_span).to_not have_error
     end
+
+    it_behaves_like 'a peer service span'
   end
 
   context 'when there is a failing request' do
@@ -113,6 +155,8 @@ RSpec.describe 'Faraday middleware' do
       expect(request_span).to have_error_type('Error 500')
       expect(request_span).to have_error_message('Boom!')
     end
+
+    it_behaves_like 'a peer service span'
   end
 
   context 'with library error' do
@@ -133,6 +177,10 @@ RSpec.describe 'Faraday middleware' do
       expect(request_span).to have_error_type('Faraday::ConnectionFailed')
       expect(request_span).to have_error_message(/Test error/)
     end
+
+    it_behaves_like 'a peer service span' do
+      subject { client.get('/error') rescue nil }
+    end
   end
 
   context 'when there is a client error' do
@@ -150,14 +198,38 @@ RSpec.describe 'Faraday middleware' do
   end
 
   context 'when split by domain' do
-    subject!(:response) { client.get('/success') }
+    subject(:response) { client.get('/success') }
 
-    let(:middleware_options) { { split_by_domain: true } }
+    let(:configuration_options) { super().merge(split_by_domain: true) }
 
     it do
+      response
       expect(request_span.name).to eq(Datadog::Contrib::Faraday::Ext::SPAN_REQUEST)
       expect(request_span.service).to eq('example.com')
       expect(request_span.resource).to eq('GET')
+    end
+
+    it_behaves_like 'a peer service span'
+
+    context 'and the host matches a specific configuration' do
+      before do
+        Datadog.configure do |c|
+          c.use :faraday, describes: /example\.com/ do |faraday|
+            faraday.service_name = 'bar'
+            faraday.split_by_domain = false
+          end
+
+          c.use :faraday, describes: /badexample\.com/ do |faraday|
+            faraday.service_name = 'bar_bad'
+            faraday.split_by_domain = false
+          end
+        end
+      end
+
+      it 'uses the configured service name over the domain name and the correct describes block' do
+        response
+        expect(request_span.service).to eq('bar')
+      end
     end
   end
 
@@ -203,9 +275,15 @@ RSpec.describe 'Faraday middleware' do
 
     after(:each) { Datadog.configure { |c| c.use :faraday, service_name: @old_service_name } }
 
+    subject { client.get('/success') }
+
     it do
-      client.get('/success')
+      subject
       expect(request_span.service).to eq(service_name)
+    end
+
+    it_behaves_like 'a peer service span' do
+      let(:span) { request_span }
     end
   end
 
@@ -217,6 +295,45 @@ RSpec.describe 'Faraday middleware' do
 
     it do
       expect(request_span.service).to eq(service_name)
+    end
+
+    it_behaves_like 'a peer service span' do
+      let(:span) { request_span }
+    end
+  end
+
+  context 'configuration override' do
+    subject(:response) { client.get('/success') }
+
+    context 'with global configuration' do
+      let(:configuration_options) { super().merge(service_name: 'global') }
+
+      it 'uses the global value' do
+        subject
+        expect(request_span.service).to eq('global')
+      end
+
+      context 'and per-host configuration' do
+        before do
+          Datadog.configure do |c|
+            c.use :faraday, describes: /example\.com/, service_name: 'host'
+          end
+        end
+
+        it 'uses per-host override' do
+          subject
+          expect(request_span.service).to eq('host')
+        end
+
+        context 'with middleware instance configuration' do
+          let(:middleware_options) { super().merge(service_name: 'instance') }
+
+          it 'uses middleware instance override' do
+            subject
+            expect(request_span.service).to eq('instance')
+          end
+        end
+      end
     end
   end
 end

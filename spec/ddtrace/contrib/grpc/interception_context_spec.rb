@@ -1,4 +1,5 @@
-require 'spec_helper'
+require 'ddtrace/contrib/integration_examples'
+require 'ddtrace/contrib/support/spec_helper'
 require 'ddtrace/contrib/analytics_examples'
 
 require 'grpc'
@@ -6,12 +7,9 @@ require 'ddtrace'
 
 RSpec.describe GRPC::InterceptionContext do
   subject(:interception_context) { described_class.new }
-  let(:tracer) { get_test_tracer }
-  let(:configuration_options) { { tracer: tracer, service_name: 'rspec' } }
+  let(:configuration_options) { { service_name: 'rspec' } }
 
   describe '#intercept!' do
-    let(:span) { tracer.writer.spans.first }
-
     before do
       Datadog.configure do |c|
         c.use :grpc, configuration_options
@@ -40,6 +38,8 @@ RSpec.describe GRPC::InterceptionContext do
           let(:analytics_enabled_var) { Datadog::Contrib::GRPC::Ext::ENV_ANALYTICS_ENABLED }
           let(:analytics_sample_rate_var) { Datadog::Contrib::GRPC::Ext::ENV_ANALYTICS_SAMPLE_RATE }
         end
+
+        it_behaves_like 'a peer service span'
       end
 
       context 'request response call type' do
@@ -82,6 +82,8 @@ RSpec.describe GRPC::InterceptionContext do
           expect(span.get_tag('error.stack')).to be_nil
           expect(span.get_tag(:some)).to eq 'datum'
         end
+
+        it_behaves_like 'a peer service span'
       end
 
       context 'bidirectional streaming call type' do
@@ -110,6 +112,8 @@ RSpec.describe GRPC::InterceptionContext do
           let(:analytics_enabled_var) { Datadog::Contrib::GRPC::Ext::ENV_ANALYTICS_ENABLED }
           let(:analytics_sample_rate_var) { Datadog::Contrib::GRPC::Ext::ENV_ANALYTICS_SAMPLE_RATE }
         end
+
+        it_behaves_like 'a peer service span'
       end
 
       context 'request response call type' do

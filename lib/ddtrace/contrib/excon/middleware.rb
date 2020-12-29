@@ -1,28 +1,33 @@
 require 'excon'
 require 'ddtrace/ext/http'
+require 'ddtrace/ext/integration'
 require 'ddtrace/ext/net'
 require 'ddtrace/ext/distributed'
 require 'ddtrace/propagation/http_propagator'
 require 'ddtrace/contrib/analytics'
 require 'ddtrace/contrib/excon/ext'
+require 'ddtrace/contrib/http_annotation_helper'
 
 module Datadog
   module Contrib
     module Excon
       # Middleware implements an excon-middleware for ddtrace instrumentation
       class Middleware < ::Excon::Middleware::Base
+        include Datadog::Contrib::HttpAnnotationHelper
+
         DEFAULT_ERROR_HANDLER = lambda do |response|
           Datadog::Ext::HTTP::ERROR_RANGE.cover?(response[:status])
         end
 
         def initialize(stack, options = {})
           super(stack)
-          @options = Datadog.configuration[:excon].options_hash.merge(options)
+          @default_options = datadog_configuration.options_hash.merge(options)
         end
 
         def request_call(datum)
           begin
             unless datum.key?(:datadog_span)
+              @options = build_request_options!(datum)
               tracer.trace(Ext::SPAN_REQUEST).tap do |span|
                 datum[:datadog_span] = span
                 annotate!(span, datum)
@@ -30,7 +35,7 @@ module Datadog
               end
             end
           rescue StandardError => e
-            Datadog::Logger.log.debug(e.message)
+            Datadog.logger.debug(e.message)
           end
 
           @stack.request_call(datum)
@@ -56,6 +61,12 @@ module Datadog
             # rubocop:disable Style/TrivialAccessors
             def self.options
               @options
+            end
+
+            # default_options in this case contains our specific middleware options
+            # so we want it to take precedence in build_request_options
+            def build_request_options!(datum)
+              datadog_configuration(datum[:host]).options_hash.merge(@default_options)
             end
 
             def initialize(stack)
@@ -99,14 +110,13 @@ module Datadog
           @options[:error_handler] || DEFAULT_ERROR_HANDLER
         end
 
-        def split_by_domain?
-          @options[:split_by_domain] == true
-        end
-
         def annotate!(span, datum)
           span.resource = datum[:method].to_s.upcase
-          span.service = service_name(datum)
+          span.service = service_name(datum[:host], @options)
           span.span_type = Datadog::Ext::HTTP::TYPE_OUTBOUND
+
+          # Tag as an external peer service
+          span.set_tag(Datadog::Ext::Integration::TAG_PEER_SERVICE, span.service)
 
           # Set analytics sample rate
           if analytics_enabled?
@@ -137,16 +147,19 @@ module Datadog
             end
           end
         rescue StandardError => e
-          Datadog::Logger.log.debug(e.message)
+          Datadog.logger.debug(e.message)
         end
 
         def propagate!(span, datum)
           Datadog::HTTPPropagator.inject!(span.context, datum[:headers])
         end
 
-        def service_name(datum)
-          # TODO: Change this to implement more sensible multiplexing
-          split_by_domain? ? datum[:host] : @options[:service_name]
+        def build_request_options!(datum)
+          @default_options.merge(datadog_configuration(datum[:host]).options_hash)
+        end
+
+        def datadog_configuration(host = :default)
+          Datadog.configuration[:excon, host]
         end
       end
     end

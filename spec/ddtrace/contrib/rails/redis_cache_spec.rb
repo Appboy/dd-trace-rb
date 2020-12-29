@@ -1,3 +1,4 @@
+require 'ddtrace/contrib/integration_examples'
 require 'ddtrace/contrib/rails/rails_helper'
 
 # It's important that there's *NO* "require 'redis-rails'" or
@@ -29,8 +30,8 @@ MESSAGE
   before { app }
 
   before do
-    Datadog.configuration.use(:redis)
-    Datadog.configure(client_from_driver(driver), tracer_options)
+    Datadog.configure { |c| c.use :redis }
+    Datadog.configure(client_from_driver(driver))
   end
 
   let(:driver) do
@@ -74,6 +75,10 @@ MESSAGE
       expect(cache.trace_id).to eq(redis.trace_id)
       expect(cache.span_id).to eq(redis.parent_id)
     end
+
+    it_behaves_like 'a peer service span' do
+      let(:span) { spans.last }
+    end
   end
 
   context '#read' do
@@ -102,7 +107,7 @@ MESSAGE
 
         # check that the value is really updated, and persistent
         expect(cache.read(key)).to eq(51)
-        clear_spans
+        clear_spans!
 
         # if value exists, fetch returns it and does no update
         expect(cache.fetch(key) { 7 }).to eq(51)
@@ -134,9 +139,13 @@ MESSAGE
       expect(cache.trace_id).to eq(redis.trace_id)
       expect(cache.span_id).to eq(redis.parent_id)
     end
+
+    it_behaves_like 'a peer service span' do
+      let(:span) { spans.last }
+    end
   end
 
-  context '#write' do
+  context '#delete' do
     subject!(:write) { cache.delete(key) }
 
     it do
@@ -153,6 +162,10 @@ MESSAGE
       # the following ensures span will be correctly displayed (parent/child of the same trace)
       expect(cache.trace_id).to eq(del.trace_id)
       expect(cache.span_id).to eq(del.parent_id)
+    end
+
+    it_behaves_like 'a peer service span' do
+      let(:span) { spans.last }
     end
   end
 

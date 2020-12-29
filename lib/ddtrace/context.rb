@@ -3,6 +3,7 @@ require 'ddtrace/diagnostics/health'
 
 require 'ddtrace/context_flush'
 require 'ddtrace/context_provider'
+require 'ddtrace/utils/forking'
 
 module Datadog
   # \Context is used to keep track of a hierarchy of spans for the current
@@ -19,6 +20,8 @@ module Datadog
   # This data structure is thread-safe.
   # rubocop:disable Metrics/ClassLength
   class Context
+    include Datadog::Utils::Forking
+
     # 100k spans is about a 100Mb footprint
     DEFAULT_MAX_LENGTH = 100_000
 
@@ -95,12 +98,12 @@ module Datadog
         if @max_length > 0 && @trace.length >= @max_length
           # Detach the span from any context, it's being dropped and ignored.
           span.context = nil
-          Datadog::Logger.log.debug("context full, ignoring span #{span.name}")
+          Datadog.logger.debug("context full, ignoring span #{span.name}")
 
           # If overflow has already occurred, don't send this metric.
           # Prevents metrics spam if buffer repeatedly overflows for the same trace.
           unless @overflow
-            Diagnostics::Health.metrics.error_context_overflow(1, tags: ["max_length:#{@max_length}"])
+            Datadog.health_metrics.error_context_overflow(1, tags: ["max_length:#{@max_length}"])
             @overflow = true
           end
 
@@ -124,14 +127,14 @@ module Datadog
         set_current_span(span.parent)
         return if span.tracer.nil?
         if span.parent.nil? && !all_spans_finished?
-          if Datadog::Logger.debug_logging
+          if Datadog.configuration.diagnostics.debug
             opened_spans = @trace.length - @finished_spans
-            Datadog::Logger.log.debug("root span #{span.name} closed but has #{opened_spans} unfinished spans:")
+            Datadog.logger.debug("root span #{span.name} closed but has #{opened_spans} unfinished spans:")
           end
 
           @trace.reject(&:finished?).group_by(&:name).each do |unfinished_span_name, unfinished_spans|
-            Datadog::Logger.log.debug("unfinished span: #{unfinished_spans.first}") if Datadog::Logger.debug_logging
-            Diagnostics::Health.metrics.error_unfinished_spans(
+            Datadog.logger.debug("unfinished span: #{unfinished_spans.first}") if Datadog.configuration.diagnostics.debug
+            Datadog.health_metrics.error_unfinished_spans(
               unfinished_spans.length,
               tags: ["name:#{unfinished_span_name}"]
             )
@@ -230,6 +233,21 @@ module Datadog
         # rubocop:disable Metrics/LineLength
         "Context(trace.length:#{@trace.length},sampled:#{@sampled},finished_spans:#{@finished_spans},current_span:#{@current_span})"
       end
+    end
+
+    # Generates equivalent context for forked processes.
+    #
+    # When Context from parent process is forked, child process
+    # should have a Context belonging to the same trace but not
+    # have the parent process spans.
+    def fork_clone
+      self.class.new(
+        trace_id: trace_id,
+        span_id: span_id,
+        sampled: sampled?,
+        sampling_priority: sampling_priority,
+        origin: origin
+      )
     end
 
     private

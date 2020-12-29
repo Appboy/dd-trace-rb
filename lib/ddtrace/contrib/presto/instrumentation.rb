@@ -24,10 +24,10 @@ module Datadog
                   span.span_type = Datadog::Ext::SQL::TYPE
                   span.set_tag(Ext::TAG_QUERY_ASYNC, false)
                 rescue StandardError => e
-                  Datadog::Logger.log.debug("error preparing span for presto: #{e}")
-                ensure
-                  super(query)
+                  Datadog.logger.debug("error preparing span for presto: #{e}")
                 end
+
+                super(query)
               end
             end
 
@@ -39,10 +39,10 @@ module Datadog
                   span.span_type = Datadog::Ext::SQL::TYPE
                   span.set_tag(Ext::TAG_QUERY_ASYNC, !blk.nil?)
                 rescue StandardError => e
-                  Datadog::Logger.log.debug("error preparing span for presto: #{e}")
-                ensure
-                  super(query, &blk)
+                  Datadog.logger.debug("error preparing span for presto: #{e}")
                 end
+
+                super(query, &blk)
               end
             end
 
@@ -55,10 +55,10 @@ module Datadog
                   # ^ not an SQL type span, since there's no SQL query
                   span.set_tag(Ext::TAG_QUERY_ID, query_id)
                 rescue StandardError => e
-                  Datadog::Logger.log.debug("error preparing span for presto: #{e}")
-                ensure
-                  super(query_id)
+                  Datadog.logger.debug("error preparing span for presto: #{e}")
                 end
+
+                super(query_id)
               end
             end
 
@@ -90,9 +90,12 @@ module Datadog
               set_nilable_tag!(span, :http_proxy, Ext::TAG_PROXY)
               set_nilable_tag!(span, :model_version, Ext::TAG_MODEL_VERSION)
 
+              # Tag as an external peer service
+              span.set_tag(Datadog::Ext::Integration::TAG_PEER_SERVICE, span.service)
+
               # Set analytics sample rate
-              if Contrib::Analytics.enabled?(configuration[:analytics_enabled])
-                Contrib::Analytics.set_sample_rate(span, configuration[:analytics_sample_rate])
+              if Contrib::Analytics.enabled?(datadog_configuration[:analytics_enabled])
+                Contrib::Analytics.set_sample_rate(span, datadog_configuration[:analytics_sample_rate])
               end
             end
 

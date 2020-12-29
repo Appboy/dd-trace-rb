@@ -8,14 +8,21 @@ module Datadog
         def initialize(options = {})
           @tracer = options[:tracer] || configuration[:tracer]
           @shoryuken_service = options[:service_name] || configuration[:service_name]
+          @error_handler = options[:error_handler] || configuration[:error_handler]
         end
 
         def call(worker_instance, queue, sqs_msg, body)
-          @tracer.trace(Ext::SPAN_JOB, service: @shoryuken_service, span_type: Datadog::Ext::AppTypes::WORKER) do |span|
+          @tracer.trace(Ext::SPAN_JOB, service: @shoryuken_service, span_type: Datadog::Ext::AppTypes::WORKER,
+                                       on_error: @error_handler) do |span|
+
             # Set analytics sample rate
             if Contrib::Analytics.enabled?(configuration[:analytics_enabled])
               Contrib::Analytics.set_sample_rate(span, configuration[:analytics_sample_rate])
             end
+
+            # Measure service stats
+            Contrib::Analytics.set_measured(span)
+
             span.resource = resource(worker_instance, body)
             span.set_tag(Ext::TAG_JOB_ID, sqs_msg.message_id)
             span.set_tag(Ext::TAG_JOB_QUEUE, queue)

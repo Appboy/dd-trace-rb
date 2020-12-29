@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'ddtrace/contrib/support/spec_helper'
 require 'ddtrace/contrib/analytics_examples'
 require 'rack/test'
 
@@ -9,11 +9,7 @@ require 'ddtrace/contrib/rack/middlewares'
 RSpec.describe 'Rack integration configuration' do
   include Rack::Test::Methods
 
-  let(:tracer) { get_test_tracer }
-  let(:configuration_options) { { tracer: tracer } }
-
-  let(:spans) { tracer.writer.spans }
-  let(:span) { spans.first }
+  let(:configuration_options) { {} }
 
   before(:each) do
     Datadog.configure do |c|
@@ -49,6 +45,11 @@ RSpec.describe 'Rack integration configuration' do
     let(:analytics_sample_rate_var) { Datadog::Contrib::Rack::Ext::ENV_ANALYTICS_SAMPLE_RATE }
   end
 
+  it_behaves_like 'measured span for integration', true do
+    include_context 'an incoming HTTP request'
+    before { is_expected.to be_ok }
+  end
+
   describe 'request queueing' do
     shared_context 'queue header' do
       let(:queue_value) { "t=#{queue_time}" }
@@ -76,8 +77,7 @@ RSpec.describe 'Rack integration configuration' do
         expect(queue_span.span_type).to eq('proxy')
         expect(queue_span.service).to eq(Datadog.configuration[:rack][:web_service_name])
         expect(queue_span.start_time.to_i).to eq(queue_time)
-        # Queue span gets tagged for runtime metrics because its a local root span.
-        # TODO: It probably shouldn't get tagged like this in the future; it's not part of the runtime.
+        expect(queue_span.get_tag(Datadog::Ext::Runtime::TAG_LANG)).to be_nil
 
         expect(rack_span.name).to eq('rack.request')
         expect(rack_span.span_type).to eq('web')

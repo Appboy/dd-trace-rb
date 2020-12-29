@@ -1,4 +1,5 @@
-require 'spec_helper'
+require 'ddtrace/contrib/integration_examples'
+require 'ddtrace/contrib/support/spec_helper'
 require 'ddtrace/contrib/analytics_examples'
 
 require 'excon'
@@ -6,18 +7,16 @@ require 'ddtrace'
 require 'ddtrace/contrib/excon/middleware'
 
 RSpec.describe Datadog::Contrib::Excon::Middleware do
-  let(:tracer) { get_test_tracer }
-
   let(:connection_options) { { mock: true } }
   let(:middleware_options) { {} }
-  let(:configuration_options) { { tracer: tracer } }
+  let(:configuration_options) { {} }
 
   let(:request_span) do
-    tracer.writer.spans(:keep).find { |span| span.name == Datadog::Contrib::Excon::Ext::SPAN_REQUEST }
+    spans.find { |span| span.name == Datadog::Contrib::Excon::Ext::SPAN_REQUEST }
   end
 
   let(:all_request_spans) do
-    tracer.writer.spans(:keep).find_all { |span| span.name == Datadog::Contrib::Excon::Ext::SPAN_REQUEST }
+    spans.find_all { |span| span.name == Datadog::Contrib::Excon::Ext::SPAN_REQUEST }
   end
 
   before(:each) do
@@ -85,6 +84,8 @@ RSpec.describe Datadog::Contrib::Excon::Middleware do
       let(:span) { request_span }
     end
 
+    it_behaves_like 'measured span for integration', false
+
     it do
       expect(request_span).to_not be nil
       expect(request_span.service).to eq(Datadog::Contrib::Excon::Ext::SERVICE_NAME)
@@ -98,6 +99,8 @@ RSpec.describe Datadog::Contrib::Excon::Middleware do
       expect(request_span.span_type).to eq(Datadog::Ext::HTTP::TYPE_OUTBOUND)
       expect(request_span).to_not have_error
     end
+
+    it_behaves_like 'a peer service span'
   end
 
   context 'when there is a failing request' do
@@ -117,6 +120,8 @@ RSpec.describe Datadog::Contrib::Excon::Middleware do
       expect(request_span).to have_error_type('Error 500')
       expect(request_span).to have_error_message('Boom!')
     end
+
+    it_behaves_like 'a peer service span'
   end
 
   context 'when the path is not found' do
@@ -152,14 +157,38 @@ RSpec.describe Datadog::Contrib::Excon::Middleware do
   end
 
   context 'when split by domain' do
-    subject!(:response) { connection.get(path: '/success') }
+    subject(:response) { connection.get(path: '/success') }
     let(:configuration_options) { super().merge(split_by_domain: true) }
     after(:each) { Datadog.configuration[:excon][:split_by_domain] = false }
 
     it do
+      response
       expect(request_span.name).to eq(Datadog::Contrib::Excon::Ext::SPAN_REQUEST)
       expect(request_span.service).to eq('example.com')
       expect(request_span.resource).to eq('GET')
+    end
+
+    it_behaves_like 'a peer service span'
+
+    context 'and the host matches a specific configuration' do
+      before do
+        Datadog.configure do |c|
+          c.use :excon, describes: /example\.com/ do |excon|
+            excon.service_name = 'bar'
+            excon.split_by_domain = false
+          end
+
+          c.use :excon, describes: /badexample\.com/ do |excon|
+            excon.service_name = 'bar_bad'
+            excon.split_by_domain = false
+          end
+        end
+      end
+
+      it 'uses the configured service name over the domain name and the correct describes block' do
+        response
+        expect(request_span.service).to eq('bar')
+      end
     end
   end
 
@@ -240,6 +269,7 @@ RSpec.describe Datadog::Contrib::Excon::Middleware do
   end
 
   context 'global service name' do
+    subject(:get) { connection.get(path: '/success') }
     let(:service_name) { 'excon-global' }
 
     before(:each) do
@@ -250,9 +280,12 @@ RSpec.describe Datadog::Contrib::Excon::Middleware do
     after(:each) { Datadog.configure { |c| c.use :excon, service_name: @old_service_name } }
 
     it do
-      Excon.stub({ method: :get, path: '/success' }, body: 'OK', status: 200)
-      connection.get(path: '/success')
+      subject
       expect(request_span.service).to eq(service_name)
+    end
+
+    it_behaves_like 'a peer service span' do
+      let(:span) { request_span }
     end
   end
 
@@ -268,12 +301,20 @@ RSpec.describe Datadog::Contrib::Excon::Middleware do
       include_context 'connection with default middleware'
       let(:service_name) { 'request-with-default' }
       it { expect(request_span.service).to eq(service_name) }
+
+      it_behaves_like 'a peer service span' do
+        let(:span) { request_span }
+      end
     end
 
     context 'with custom middleware' do
       include_context 'connection with custom middleware'
       let(:service_name) { 'request-with-custom' }
       it { expect(request_span.service).to eq(service_name) }
+
+      it_behaves_like 'a peer service span' do
+        let(:span) { request_span }
+      end
     end
   end
 end

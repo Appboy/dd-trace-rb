@@ -1,5 +1,6 @@
 require 'ddtrace/contrib/patcher'
 require 'ddtrace/ext/app_types'
+require 'ddtrace/ext/integration'
 require 'ddtrace/ext/net'
 require 'ddtrace/contrib/analytics'
 require 'ddtrace/contrib/elasticsearch/ext'
@@ -37,14 +38,13 @@ module Datadog
             end
 
             def initialize(*args, &block)
-              tracer = Datadog.configuration[:elasticsearch][:tracer]
               service = Datadog.configuration[:elasticsearch][:service_name]
 
               pin = Datadog::Pin.new(
                 service,
                 app: Datadog::Contrib::Elasticsearch::Ext::APP,
                 app_type: Datadog::Ext::AppTypes::DB,
-                tracer: tracer
+                tracer: -> { Datadog.configuration[:elasticsearch][:tracer] }
               )
               pin.onto(self)
               initialize_without_datadog(*args, &block)
@@ -78,6 +78,9 @@ module Datadog
                   params = JSON.generate(params) if params && !params.is_a?(String)
                   body = JSON.generate(body) if body && !body.is_a?(String)
 
+                  # Tag as an external peer service
+                  span.set_tag(Datadog::Ext::Integration::TAG_PEER_SERVICE, span.service)
+
                   # Set analytics sample rate
                   if Contrib::Analytics.enabled?(datadog_configuration[:analytics_enabled])
                     Contrib::Analytics.set_sample_rate(span, datadog_configuration[:analytics_sample_rate])
@@ -97,7 +100,7 @@ module Datadog
                   quantized_url = Datadog::Contrib::Elasticsearch::Quantize.format_url(url)
                   span.resource = "#{method} #{quantized_url}"
                 rescue StandardError => e
-                  Datadog::Logger.log.error(e.message)
+                  Datadog.logger.error(e.message)
                 ensure
                   # the call is still executed
                   response = perform_request_without_datadog(*args)

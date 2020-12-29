@@ -5,25 +5,50 @@ require 'ddtrace'
 require 'ddtrace/runtime/metrics'
 
 RSpec.describe Datadog::Runtime::Metrics do
-  subject(:runtime_metrics) { described_class.new }
+  subject(:runtime_metrics) { described_class.new(options) }
+  let(:options) { {} }
+
+  describe '::new' do
+    context 'given :services' do
+      let(:options) { super().merge(services: services) }
+      let(:services) { ['service-a', 'service-b'] }
+
+      it do
+        expect(runtime_metrics.send(:service_tags)).to include(
+          "#{Datadog::Ext::Runtime::Metrics::TAG_SERVICE}:service-a",
+          "#{Datadog::Ext::Runtime::Metrics::TAG_SERVICE}:service-b"
+        )
+      end
+    end
+  end
 
   describe '#associate_with_span' do
     subject(:associate_with_span) { runtime_metrics.associate_with_span(span) }
-    let(:span) { instance_double(Datadog::Span, service: service) }
+    let(:span) { Datadog::Span.new(nil, 'dummy', service: service) }
     let(:service) { 'parser' }
 
     context 'when enabled' do
       before do
         runtime_metrics.enabled = true
 
-        expect(span).to receive(:set_tag)
-          .with(Datadog::Ext::Runtime::TAG_LANG, Datadog::Runtime::Identity.lang)
-
         associate_with_span
       end
 
-      it 'registers the span\'s service' do
-        expect(runtime_metrics.default_metric_options[:tags]).to include("service:#{service}")
+      context 'with internal span' do
+        it 'registers the span\'s service' do
+          expect(runtime_metrics.default_metric_options[:tags]).to include("service:#{service}")
+          expect(span.get_tag(Datadog::Ext::Runtime::TAG_LANG)).to eq(Datadog::Runtime::Identity.lang)
+        end
+      end
+
+      context 'with external resource span' do
+        let(:span) do
+          super().tap { |s| s.set_tag(Datadog::Ext::Integration::TAG_PEER_SERVICE, 'peer-service-name') }
+        end
+
+        it "doesn't tag as an internal language span" do
+          expect(span.get_tag(Datadog::Ext::Runtime::TAG_LANG)).to be nil
+        end
       end
     end
 
@@ -103,7 +128,7 @@ RSpec.describe Datadog::Runtime::Metrics do
       end
 
       context 'when an error is thrown' do
-        before(:each) { allow(Datadog::Logger.log).to receive(:error) }
+        before(:each) { allow(Datadog.logger).to receive(:error) }
 
         it do
           allow(metric).to receive(:available?)
@@ -111,7 +136,7 @@ RSpec.describe Datadog::Runtime::Metrics do
 
           flush
 
-          expect(Datadog::Logger.log).to have_received(:error)
+          expect(Datadog.logger).to have_received(:error)
             .with(/Error while sending runtime metric./)
             .at_least(:once)
         end
@@ -152,12 +177,29 @@ RSpec.describe Datadog::Runtime::Metrics do
   describe '#gc_metrics' do
     subject(:gc_metrics) { runtime_metrics.gc_metrics }
 
-    it 'has a metric for each value in GC.stat' do
-      is_expected.to have(GC.stat.keys.count).items
+    context 'on MRI' do
+      before { skip unless PlatformHelpers.mri? }
 
-      gc_metrics.each do |metric, value|
-        expect(metric).to start_with(Datadog::Ext::Runtime::Metrics::METRIC_GC_PREFIX)
-        expect(value).to be_a_kind_of(Numeric)
+      it 'has a metric for each value in GC.stat' do
+        is_expected.to have(GC.stat.keys.size).items
+
+        gc_metrics.each do |metric, value|
+          expect(metric).to start_with(Datadog::Ext::Runtime::Metrics::METRIC_GC_PREFIX)
+          expect(value).to be_a_kind_of(Numeric)
+        end
+      end
+    end
+
+    context 'on JRuby' do
+      before { skip unless PlatformHelpers.jruby? }
+
+      it 'has a metric for each value in GC.stat' do
+        is_expected.to have_at_least(GC.stat.keys.count).items
+
+        gc_metrics.each do |metric, value|
+          expect(metric).to start_with(Datadog::Ext::Runtime::Metrics::METRIC_GC_PREFIX)
+          expect(value).to be_a_kind_of(Numeric)
+        end
       end
     end
   end

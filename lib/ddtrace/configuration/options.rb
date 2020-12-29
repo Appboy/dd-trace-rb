@@ -26,7 +26,9 @@ module Datadog
           builder = OptionDefinition::Builder.new(name, meta, &block)
           options[name] = builder.to_definition.tap do
             # Resolve and define helper functions
-            helpers = default_helpers(name).merge(builder.helpers)
+            helpers = default_helpers(name)
+            # Prevent unnecessary creation of an identical copy of helpers if there's nothing to merge
+            helpers = helpers.merge(builder.helpers) unless builder.helpers.empty?
             define_helpers(helpers)
           end
         end
@@ -80,7 +82,7 @@ module Datadog
         end
 
         def options_hash
-          options.each_with_object({}) do |(key, _), hash|
+          self.class.options.merge(options).each_with_object({}) do |(key, _), hash|
             hash[key] = get_option(key)
           end
         end

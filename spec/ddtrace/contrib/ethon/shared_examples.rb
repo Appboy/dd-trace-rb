@@ -1,3 +1,4 @@
+require 'ddtrace/contrib/integration_examples'
 require 'ddtrace/contrib/ethon/integration_context'
 
 RSpec.shared_examples_for 'span' do
@@ -37,6 +38,8 @@ RSpec.shared_examples_for 'span' do
   it 'has correct service name' do
     expect(span.service).to eq('ethon')
   end
+
+  it_behaves_like 'a peer service span'
 end
 
 RSpec.shared_examples_for 'instrumented request' do
@@ -44,7 +47,7 @@ RSpec.shared_examples_for 'instrumented request' do
 
   describe 'instrumented request' do
     it 'creates a span' do
-      expect { request }.to change { tracer.writer.spans.first }.to be_instance_of(Datadog::Span)
+      expect { request }.to change { fetch_spans.first }.to be_instance_of(Datadog::Span)
     end
 
     it 'returns response' do
@@ -53,10 +56,10 @@ RSpec.shared_examples_for 'instrumented request' do
 
     describe 'created span' do
       subject(:span) do
-        tracer.writer.spans.select { |span| span.name == 'ethon.request' }.first
+        spans.select { |span| span.name == 'ethon.request' }.first
       end
 
-      context 'response is successfull' do
+      context 'response is successful' do
         before { request }
 
         it_behaves_like 'span'
@@ -113,7 +116,7 @@ RSpec.shared_examples_for 'instrumented request' do
 
     context 'distributed tracing default' do
       let(:return_headers) { true }
-      let(:span) { tracer.writer.spans.select { |span| span.name == 'ethon.request' }.first }
+      let(:span) { spans.select { |span| span.name == 'ethon.request' }.first }
 
       shared_examples_for 'propagating distributed headers' do
         let(:return_headers) { true }

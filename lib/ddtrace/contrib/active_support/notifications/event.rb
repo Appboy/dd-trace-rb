@@ -18,6 +18,8 @@ module Datadog
           # Redefines some class behaviors for a Subscriber to make
           # it a bit simpler for an Event.
           module ClassMethods
+            DEFAULT_TRACER = -> { Datadog.tracer }
+
             def subscribe!
               super
             end
@@ -52,7 +54,17 @@ module Datadog
             end
 
             def tracer
-              Datadog.tracer
+              DEFAULT_TRACER
+            end
+
+            def report_if_exception(span, payload)
+              exception = payload_exception(payload)
+              span.set_error(payload[:exception]) if exception
+            end
+
+            def payload_exception(payload)
+              payload[:exception_object] ||
+                payload[:exception] # Fallback for ActiveSupport < 5.0
             end
           end
         end

@@ -1,4 +1,5 @@
-require 'spec_helper'
+require 'ddtrace/contrib/integration_examples'
+require 'ddtrace/contrib/support/spec_helper'
 require 'ddtrace'
 require 'net/http'
 require 'time'
@@ -15,10 +16,8 @@ RSpec.describe 'net/http miniapp tests' do
   let(:uri) { "http://#{host}:#{port}" }
 
   let(:client) { Net::HTTP.new(host, port) }
-  let(:tracer) { get_test_tracer }
-
   before(:each) do
-    Datadog.configure { |c| c.use :http, tracer: tracer }
+    Datadog.configure { |c| c.use :http }
   end
 
   context 'when performing a trace around HTTP calls' do
@@ -39,7 +38,6 @@ RSpec.describe 'net/http miniapp tests' do
       end
 
       let(:path) { '/my/path' }
-      let(:spans) { tracer.writer.spans }
       let(:parent_span) { spans[2] }
       let(:http_spans) { spans[0..1] }
       let(:trace_id) { spans[2].trace_id }
@@ -59,6 +57,7 @@ RSpec.describe 'net/http miniapp tests' do
         http_spans.each do |span|
           expect(span.name).to eq('http.request')
           expect(span.service).to eq('net/http')
+          expect(span.get_tag(Datadog::Ext::Integration::TAG_PEER_SERVICE)).to eq('net/http')
           expect(span.resource).to eq('GET')
           expect(span.get_tag('http.url')).to eq('/my/path')
           expect(span.get_tag('http.method')).to eq('GET')

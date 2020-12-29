@@ -1,13 +1,18 @@
-require 'spec_helper'
+require 'ddtrace/contrib/support/spec_helper'
 require 'ddtrace'
+require 'ddtrace/contrib/integration_examples'
 
 require 'active_record'
-require 'mysql2'
-require 'sqlite3'
+
+if PlatformHelpers.jruby?
+  require 'activerecord-jdbc-adapter'
+else
+  require 'mysql2'
+  require 'sqlite3'
+end
 
 RSpec.describe 'ActiveRecord multi-database implementation' do
-  let(:tracer) { get_test_tracer }
-  let(:configuration_options) { { tracer: tracer, service_name: default_db_service_name } }
+  let(:configuration_options) { { service_name: default_db_service_name } }
   let(:default_db_service_name) { 'default-db' }
 
   let(:mysql) do
@@ -71,10 +76,9 @@ RSpec.describe 'ActiveRecord multi-database implementation' do
     end
   end
 
-  subject(:spans) do
+  subject(:count) do
     gadget_class.count
     widget_class.count
-    tracer.writer.spans
   end
 
   let(:gadget_span) { spans[0] }
@@ -133,18 +137,17 @@ RSpec.describe 'ActiveRecord multi-database implementation' do
 
           Datadog.configure do |c|
             c.use :active_record, describes: :gadget do |gadget_db|
-              gadget_db.tracer = tracer
               gadget_db.service_name = gadget_db_service_name
             end
 
             c.use :active_record, describes: :widget do |widget_db|
-              widget_db.tracer = tracer
               widget_db.service_name = widget_db_service_name
             end
           end
         end
 
         it do
+          count
           # Gadget is configured to show up as its own database service
           expect(gadget_span.service).to eq(gadget_db_service_name)
           # Widget is configured to show up as its own database service
@@ -158,17 +161,25 @@ RSpec.describe 'ActiveRecord multi-database implementation' do
         before(:each) do
           Datadog.configure do |c|
             c.use :active_record, describes: mysql_connection_string do |gadget_db|
-              gadget_db.tracer = tracer
               gadget_db.service_name = gadget_db_service_name
             end
           end
         end
 
         it do
+          count
           # Gadget is configured to show up as its own database service
           expect(gadget_span.service).to eq(gadget_db_service_name)
           # Widget isn't, ends up assigned to the default database service
           expect(widget_span.service).to eq(default_db_service_name)
+        end
+
+        it_behaves_like 'a peer service span' do
+          let(:span) { gadget_span }
+        end
+
+        it_behaves_like 'a peer service span' do
+          let(:span) { widget_span }
         end
       end
 
@@ -176,17 +187,25 @@ RSpec.describe 'ActiveRecord multi-database implementation' do
         before(:each) do
           Datadog.configure do |c|
             c.use :active_record, describes: 'sqlite3::memory:' do |widget_db|
-              widget_db.tracer = tracer
               widget_db.service_name = widget_db_service_name
             end
           end
         end
 
         it do
+          count
           # Gadget belongs to the default database
           expect(gadget_span.service).to eq(default_db_service_name)
           # Widget belongs to its own database
           expect(widget_span.service).to eq(widget_db_service_name)
+        end
+
+        it_behaves_like 'a peer service span' do
+          let(:span) { gadget_span }
+        end
+
+        it_behaves_like 'a peer service span' do
+          let(:span) { widget_span }
         end
       end
     end
@@ -197,17 +216,25 @@ RSpec.describe 'ActiveRecord multi-database implementation' do
 
         Datadog.configure do |c|
           c.use :active_record, describes: widget_db_connection_hash do |widget_db|
-            widget_db.tracer = tracer
             widget_db.service_name = widget_db_service_name
           end
         end
       end
 
       it do
+        count
         # Gadget belongs to the default database
         expect(gadget_span.service).to eq(default_db_service_name)
         # Widget belongs to its own database
         expect(widget_span.service).to eq(widget_db_service_name)
+      end
+
+      it_behaves_like 'a peer service span' do
+        let(:span) { gadget_span }
+      end
+
+      it_behaves_like 'a peer service span' do
+        let(:span) { widget_span }
       end
     end
   end

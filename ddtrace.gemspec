@@ -41,24 +41,34 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency 'opentracing', '>= 0.4.1'
 
   # Development dependencies
+  spec.add_development_dependency 'concurrent-ruby' # Leave it open as we also have it as an integration and want Appraisal to control the version under test.
   spec.add_development_dependency 'rake', '>= 10.5'
   spec.add_development_dependency 'rubocop', '= 0.49.1' if RUBY_VERSION >= '2.1.0'
   spec.add_development_dependency 'rspec', '~> 3.0'
   spec.add_development_dependency 'rspec-collection_matchers', '~> 1.1'
+  spec.add_development_dependency 'ruby-prof', '~> 1.4' if RUBY_PLATFORM != 'java' && RUBY_VERSION >= '2.4.0'
   spec.add_development_dependency 'minitest', '= 5.10.1'
+  spec.add_development_dependency 'minitest-around', '0.5.0'
+  spec.add_development_dependency 'minitest-stub_any_instance', '1.0.2'
   spec.add_development_dependency 'appraisal', '~> 2.2'
-  spec.add_development_dependency 'bundler', '<= 2.1.2' # Remove when https://github.com/thoughtbot/appraisal/issues/162 is fixed
   spec.add_development_dependency 'yard', '~> 0.9'
   spec.add_development_dependency 'webmock', '~> 2.0'
   spec.add_development_dependency 'builder'
-  spec.add_development_dependency 'ruby-prof'
-  spec.add_development_dependency 'sqlite3', '~> 1.3.6'
+  if RUBY_PLATFORM != 'java'
+    spec.add_development_dependency 'sqlite3', '~> 1.3.6'
+  else
+    spec.add_development_dependency 'jdbc-sqlite3', '~> 3'
+  end
   spec.add_development_dependency 'climate_control', '~> 0.2.0'
 
   # locking transitive dependency of webmock
   spec.add_development_dependency 'addressable', '~> 2.4.0'
+  spec.add_development_dependency 'benchmark-ips', '~> 2.8'
+  spec.add_development_dependency 'benchmark-memory', '~> 0.1'
+  spec.add_development_dependency 'memory_profiler', '~> 0.9'
   spec.add_development_dependency 'redcarpet', '~> 3.4' if RUBY_PLATFORM != 'java'
   spec.add_development_dependency 'pry', '~> 0.10.4'
   spec.add_development_dependency 'pry-stack_explorer', '~> 0.4.9.2'
+  spec.add_development_dependency 'simplecov', '~> 0.17'
   spec.add_development_dependency 'warning', '~> 1' if RUBY_VERSION >= '2.5.0'
 end
