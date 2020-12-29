@@ -25,7 +25,6 @@ module Datadog
           end
 
           option :service_name, default: Ext::SERVICE_NAME
-          option :error_for_4xx, default: true
 
           option :error_statuses, default: nil do |o|
             o.setter do |new_value, _old_value|
