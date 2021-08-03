@@ -1,31 +1,24 @@
 require 'ddtrace/contrib/patcher'
-require 'ddtrace/contrib/kafka/producer'
+require 'ddtrace/ext/app_types'
+require 'ddtrace/contrib/kafka/ext'
+require 'ddtrace/contrib/kafka/events'
 
 module Datadog
   module Contrib
     module Kafka
-      # Patcher enables patching of 'ruby-kafka' module.
+      # Patcher enables patching of 'kafka' module.
       module Patcher
         include Contrib::Patcher
 
         module_function
 
-        def patched?
-          done?(:kafka)
+        def target_version
+          Integration.version
         end
 
         def patch
-          do_once(:kafka) do
-            begin
-              patch_kafka_client
-            rescue StandardError => e
-              Datadog::Tracer.log.error("Unable to apply kafka integration: #{e}")
-            end
-          end
-        end
-
-        def patch_kafka_client
-          ::Kafka::Producer.send(:include, Producer)
+          # Subscribe to Kafka events
+          Events.subscribe!
         end
       end
     end

@@ -1,6 +1,15 @@
+# Enable branch coverage reporting.
+# SimpleCov only supports branch coverage in
+# Ruby >= 2.5.
+SimpleCov.enable_coverage :branch if RUBY_VERSION >= '2.5.0'
+
+# Categorize SimpleCov report, for easier reading
 SimpleCov.add_group 'contrib', '/lib/ddtrace/contrib'
 SimpleCov.add_group 'transport', '/lib/ddtrace/transport'
 SimpleCov.add_group 'spec', '/spec/'
+
+# Exclude code not maintained by this project
+SimpleCov.add_filter %r{/vendor/}
 
 SimpleCov.coverage_dir ENV.fetch('COVERAGE_DIR', 'coverage')
 

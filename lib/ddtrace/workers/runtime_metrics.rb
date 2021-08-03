@@ -12,19 +12,23 @@ module Datadog
       extend Forwardable
       include Workers::Polling
 
+      # In seconds
+      DEFAULT_FLUSH_INTERVAL = 10
+      DEFAULT_BACK_OFF_MAX = 30
+
       attr_reader \
         :metrics
 
       def initialize(options = {})
-        @metrics = options.fetch(:metrics, Runtime::Metrics.new)
+        @metrics = options.fetch(:metrics) { Runtime::Metrics.new }
 
         # Workers::Async::Thread settings
         self.fork_policy = options.fetch(:fork_policy, Workers::Async::Thread::FORK_POLICY_STOP)
 
         # Workers::IntervalLoop settings
-        self.interval = options[:interval] if options.key?(:interval)
-        self.back_off_ratio = options[:back_off_ratio] if options.key?(:back_off_ratio)
-        self.back_off_max = options[:back_off_max] if options.key?(:back_off_max)
+        self.loop_base_interval = options.fetch(:interval, DEFAULT_FLUSH_INTERVAL)
+        self.loop_back_off_ratio = options[:back_off_ratio] if options.key?(:back_off_ratio)
+        self.loop_back_off_max = options.fetch(:back_off_max, DEFAULT_BACK_OFF_MAX)
 
         self.enabled = options.fetch(:enabled, false)
       end
@@ -37,6 +41,19 @@ module Datadog
       def associate_with_span(*args)
         # Start the worker
         metrics.associate_with_span(*args).tap { perform }
+      end
+
+      # TODO: `close_metrics` is only needed because
+      # Datadog::Components directly manipulates the lifecycle of
+      # Runtime::Metrics.statsd instances.
+      # This should be avoided, as it prevents this class from
+      # ensuring correct resource decommission of its internal
+      # dependencies.
+      def stop(*args, close_metrics: true)
+        self.enabled = false
+        result = super(*args)
+        @metrics.close if close_metrics
+        result
       end
 
       def_delegators \

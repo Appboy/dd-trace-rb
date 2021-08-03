@@ -7,9 +7,9 @@ module Datadog
     # Adds registry, configuration access for integrations.
     module Extensions
       def self.extended(base)
-        Datadog.send(:extend, Helpers)
-        Datadog.send(:extend, Configuration)
-        Datadog::Configuration::Settings.send(:include, Configuration::Settings)
+        Datadog.extend(Helpers)
+        Datadog.extend(Configuration)
+        Datadog::Configuration::Settings.include(Configuration::Settings)
       end
 
       # Helper methods for Datadog module.
@@ -27,8 +27,27 @@ module Datadog
 
           # Activate integrations
           if target.respond_to?(:integrations_pending_activation)
+            reduce_verbosity = target.respond_to?(:reduce_verbosity?) ? target.reduce_verbosity? : false
             target.integrations_pending_activation.each do |integration|
-              integration.patch if integration.respond_to?(:patch)
+              next unless integration.respond_to?(:patch)
+
+              # integration.patch returns either true or a hash of details on why patching failed
+              patch_results = integration.patch
+
+              next if patch_results == true
+
+              # if patching failed, only log output if verbosity is unset
+              # or if patching failure is due to compatibility or integration specific reasons
+              next unless !reduce_verbosity ||
+                          ((patch_results[:available] && patch_results[:loaded]) &&
+                           (!patch_results[:compatible] || !patch_results[:patchable]))
+
+              desc = "Available?: #{patch_results[:available]}"
+              desc += ", Loaded? #{patch_results[:loaded]}"
+              desc += ", Compatible? #{patch_results[:compatible]}"
+              desc += ", Patchable? #{patch_results[:patchable]}"
+
+              Datadog.logger.warn("Unable to patch #{patch_results[:name]} (#{desc})")
             end
 
             target.integrations_pending_activation.clear
@@ -48,9 +67,32 @@ module Datadog
             end
           end
 
-          def [](integration_name, configuration_name = :default)
+          # For the provided `integration_name`, resolves a matching configuration
+          # for the provided integration from an integration-specific `key`.
+          #
+          # How the matching is performed is integration-specific.
+          #
+          # @param [Symbol] integration_name the integration name
+          # @param [Object] key the integration-specific lookup key
+          # @return [Datadog::Contrib::Configuration::Settings]
+          def [](integration_name, key = :default)
             integration = fetch_integration(integration_name)
-            integration.configuration(configuration_name) unless integration.nil?
+            integration.resolve(key) unless integration.nil?
+          end
+
+          # For the provided `integration_name`, retrieves a configuration previously
+          # stored by `#instrument`. Specifically, `describes` should be
+          # the same value provided in the `describes:` option for `#instrument`.
+          #
+          # If no `describes` value is provided, the default configuration is returned.
+          #
+          # @param [Symbol] integration_name the integration name
+          # @param [Object] describes the previously configured `describes:` object. If `nil`,
+          #   fetches the default configuration
+          # @return [Datadog::Contrib::Configuration::Settings]
+          def configuration(integration_name, describes = nil)
+            integration = fetch_integration(integration_name)
+            integration.configuration(describes) unless integration.nil?
           end
 
           def instrument(integration_name, options = {}, &block)
@@ -85,6 +127,14 @@ module Datadog
           def fetch_integration(name)
             registry[name] ||
               raise(InvalidIntegrationError, "'#{name}' is not a valid integration.")
+          end
+
+          def reduce_verbosity?
+            defined?(@reduce_verbosity) ? @reduce_verbosity : false
+          end
+
+          def reduce_log_verbosity
+            @reduce_verbosity ||= true
           end
         end
       end

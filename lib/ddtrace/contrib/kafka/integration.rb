@@ -9,14 +9,21 @@ module Datadog
       class Integration
         include Contrib::Integration
 
-        register_as :kafka
+        MINIMUM_VERSION = Gem::Version.new('0.7.10')
+
+        register_as :kafka, auto_patch: false
 
         def self.version
           Gem.loaded_specs['ruby-kafka'] && Gem.loaded_specs['ruby-kafka'].version
         end
 
-        def self.present?
-          super && defined?(::Kafka)
+        def self.loaded?
+          !defined?(::Kafka).nil? \
+            && !defined?(::ActiveSupport::Notifications).nil?
+        end
+
+        def self.compatible?
+          super && version >= MINIMUM_VERSION
         end
 
         def default_configuration
