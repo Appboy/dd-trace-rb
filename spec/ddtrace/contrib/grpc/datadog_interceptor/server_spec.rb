@@ -7,6 +7,7 @@ require 'ddtrace'
 
 RSpec.describe 'tracing on the server connection' do
   subject(:server) { Datadog::Contrib::GRPC::DatadogInterceptor::Server.new }
+
   let(:configuration_options) { { service_name: 'rspec' } }
 
   before do
@@ -48,7 +49,7 @@ RSpec.describe 'tracing on the server connection' do
     end
 
     before do
-      subject.request_response(keywords) {}
+      subject.request_response(**keywords) {}
     end
 
     it_behaves_like 'span data contents'
@@ -61,7 +62,7 @@ RSpec.describe 'tracing on the server connection' do
     end
 
     before do
-      subject.client_streamer(keywords) {}
+      subject.client_streamer(**keywords) {}
     end
 
     it_behaves_like 'span data contents'
@@ -75,7 +76,7 @@ RSpec.describe 'tracing on the server connection' do
     end
 
     before do
-      subject.server_streamer(keywords) {}
+      subject.server_streamer(**keywords) {}
     end
 
     it_behaves_like 'span data contents'
@@ -89,7 +90,7 @@ RSpec.describe 'tracing on the server connection' do
     end
 
     before do
-      subject.bidi_streamer(keywords) {}
+      subject.bidi_streamer(**keywords) {}
     end
 
     it_behaves_like 'span data contents'
