@@ -42,6 +42,7 @@ module Datadog
                 span.service = pin.service
                 span.span_type = Datadog::Contrib::Redis::Ext::TYPE
                 span.resource = get_command(args)
+                span.set_metric Datadog::Contrib::Redis::Ext::METRIC_RAW_COMMAND_LENGTH, args.to_s.length
                 Datadog::Contrib::Redis::Tags.set_common_tags(self, span)
 
                 response = call_without_datadog(*args, &block)
@@ -63,6 +64,7 @@ module Datadog
                 commands = get_pipeline_commands(args)
                 span.resource = commands.join("\n")
                 span.set_metric Datadog::Contrib::Redis::Ext::METRIC_PIPELINE_LEN, commands.length
+                span.set_metric Datadog::Contrib::Redis::Ext::METRIC_RAW_COMMAND_LENGTH, args.to_s.length
                 Datadog::Contrib::Redis::Tags.set_common_tags(self, span)
 
                 response = call_pipeline_without_datadog(*args, &block)
