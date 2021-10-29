@@ -15,10 +15,6 @@ module Datadog
         end
 
         def patch
-          patch_pg_client
-        end
-
-        def patch_pg_client
           ::PG::Connection.send(:include, Connection)
         end
       end
