@@ -15,16 +15,6 @@ module Datadog
         end
 
         def patch
-          do_once(:pg) do
-            begin
-              patch_pg_client
-            rescue StandardError => e
-              Datadog::Tracer.log.error("Unable to apply pg integration: #{e}")
-            end
-          end
-        end
-
-        def patch_pg_client
           ::PG::Connection.send(:include, Connection)
         end
       end
