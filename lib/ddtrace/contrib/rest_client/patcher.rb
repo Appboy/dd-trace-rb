@@ -1,8 +1,10 @@
+# typed: true
 module Datadog
   module Contrib
     module RestClient
       # Patcher enables patching of 'rest_client' module.
       module Patcher
+        include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
         include Contrib::Patcher
 
         module_function

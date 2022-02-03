@@ -2,7 +2,7 @@ require 'bundler/gem_tasks'
 require 'ddtrace/version'
 require 'rubocop/rake_task' if Gem.loaded_specs.key? 'rubocop'
 require 'rspec/core/rake_task'
-require 'rake/testtask'
+require 'rake/extensiontask'
 require 'appraisal'
 require 'yard'
 
@@ -12,7 +12,7 @@ desc 'Run RSpec'
 # rubocop:disable Metrics/BlockLength
 namespace :spec do
   task all: [:main, :benchmark,
-             :rails, :railsredis, :railsactivejob,
+             :rails, :railsredis, :railsredis_activesupport, :railsactivejob,
              :elasticsearch, :http, :redis, :sidekiq, :sinatra]
 
   RSpec::Core::RakeTask.new(:main) do |t, args|
@@ -21,6 +21,7 @@ namespace :spec do
                         ' spec/**/auto_instrument_spec.rb'
     t.rspec_opts = args.to_a.join(' ')
   end
+  Rake::Task[:main].enhance([:compile]) unless %w[jruby truffleruby].include?(RUBY_ENGINE)
 
   RSpec::Core::RakeTask.new(:benchmark) do |t, args|
     t.pattern = 'spec/ddtrace/benchmark/**/*_spec.rb'
@@ -47,6 +48,14 @@ namespace :spec do
   RSpec::Core::RakeTask.new(:railsredis) do |t, args|
     t.pattern = 'spec/ddtrace/contrib/rails/**/*redis*_spec.rb'
     t.rspec_opts = args.to_a.join(' ')
+  end
+
+  RSpec::Core::RakeTask.new(:railsredis_activesupport) do |t, args|
+    t.pattern = 'spec/ddtrace/contrib/rails/**/*redis*_spec.rb'
+    t.rspec_opts = args.to_a.join(' ')
+
+    # Flag used to tell specs the expected configuration (so that they break if they're not being setup correctly)
+    ENV['EXPECT_RAILS_ACTIVESUPPORT'] = 'true'
   end
 
   RSpec::Core::RakeTask.new(:railsactivejob) do |t, args|
@@ -99,6 +108,7 @@ namespace :spec do
   # Datadog Tracing integrations
   [
     :action_cable,
+    :action_mailer,
     :action_pack,
     :action_view,
     :active_model_serializers,
@@ -160,30 +170,6 @@ namespace :spec do
   end
 end
 
-namespace :test do
-  task all: [:main,
-             :rails]
-
-  Rake::TestTask.new(:main) do |t|
-    t.libs << %w[test lib]
-    t.test_files = FileList['test/**/*_test.rb'].reject do |path|
-      path.include?('contrib') ||
-        path.include?('benchmark') ||
-        path.include?('redis')
-    end
-  end
-
-  Rake::TestTask.new(:rails) do |t|
-    t.libs << %w[test lib]
-    t.test_files = FileList['test/contrib/rails/**/*_test.rb']
-  end
-end
-
-Rake::TestTask.new(:benchmark) do |t|
-  t.libs << %w[test lib]
-  t.test_files = FileList['test/benchmark_test.rb']
-end
-
 if defined?(RuboCop::RakeTask)
   RuboCop::RakeTask.new(:rubocop) do |t|
     t.options << ['-D', '--force-exclusion']
@@ -210,7 +196,12 @@ end
 
 # Declare a command for execution.
 # Jobs are parallelized if running in CI.
-def declare(*args)
+def declare(rubies_to_command)
+  rubies, command = rubies_to_command.first
+
+  return unless rubies.include?("✅ #{RUBY_VERSION[0..2]}")
+  return if RUBY_PLATFORM == 'java' && rubies.include?('❌ jruby')
+
   total_executors = ENV.key?('CIRCLE_NODE_TOTAL') ? ENV['CIRCLE_NODE_TOTAL'].to_i : nil
   current_executor = ENV.key?('CIRCLE_NODE_INDEX') ? ENV['CIRCLE_NODE_INDEX'].to_i : nil
 
@@ -220,720 +211,134 @@ def declare(*args)
                    "#{RUBY_ENGINE}-#{RUBY_VERSION}" # For Ruby < 2.3
                  end
 
-  args[0].sub!(/^bundle exec appraisal /, "bundle exec appraisal #{ruby_runtime}-")
+  command.sub!(/^bundle exec appraisal /, "bundle exec appraisal #{ruby_runtime}-")
 
   if total_executors && current_executor && total_executors > 1
     @execution_count ||= 0
     @execution_count += 1
-    sh(*args) if @execution_count % total_executors == current_executor
+    sh(command) if @execution_count % total_executors == current_executor
   else
-    sh(*args)
+    sh(command)
   end
 end
 
 desc 'CI task; it runs all tests for current version of Ruby'
 task :ci do
-  if Gem::Version.new(RUBY_VERSION) < Gem::Version.new(Datadog::VERSION::MINIMUM_RUBY_VERSION)
-    raise NotImplementedError, "Ruby versions < #{Datadog::VERSION::MINIMUM_RUBY_VERSION} are not supported!"
-  elsif Gem::Version.new('2.1.0') <= Gem::Version.new(RUBY_VERSION) \
-        && Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.2.0')
-    # Main library
-    declare 'bundle exec rake test:main'
-    declare 'bundle exec rake spec:main'
-    declare 'bundle exec appraisal core-old rake spec:main'
-    declare 'bundle exec rake spec:contrib'
-    declare 'bundle exec rake spec:opentracer'
+  # ADD NEW RUBIES HERE
 
-    # Contrib specs
-    declare 'bundle exec appraisal contrib-old rake spec:active_model_serializers'
-    declare 'bundle exec appraisal contrib-old rake spec:active_record'
-    declare 'bundle exec appraisal contrib-old rake spec:active_support'
-    declare 'bundle exec appraisal contrib-old rake spec:autoinstrument'
-    declare 'bundle exec appraisal contrib-old rake spec:aws'
-    declare 'bundle exec appraisal contrib-old rake spec:concurrent_ruby'
-    declare 'bundle exec appraisal contrib-old rake spec:dalli'
-    declare 'bundle exec appraisal contrib-old rake spec:delayed_job'
-    declare 'bundle exec appraisal contrib-old rake spec:elasticsearch'
-    declare 'bundle exec appraisal contrib-old rake spec:ethon'
-    declare 'bundle exec appraisal contrib-old rake spec:excon'
-    declare 'bundle exec appraisal contrib-old rake spec:faraday'
-    declare 'bundle exec appraisal contrib-old rake spec:http'
-    declare 'bundle exec appraisal contrib-old rake spec:httpclient'
-    declare 'bundle exec appraisal contrib-old rake spec:httprb'
-    declare 'bundle exec appraisal contrib-old rake spec:kafka'
-    declare 'bundle exec appraisal contrib-old rake spec:mongodb'
-    declare 'bundle exec appraisal contrib-old rake spec:mysql2'
-    declare 'bundle exec appraisal contrib-old rake spec:presto'
-    declare 'bundle exec appraisal contrib-old rake spec:rack'
-    declare 'bundle exec appraisal contrib-old rake spec:rake'
-    declare 'bundle exec appraisal contrib-old rake spec:redis'
-    declare 'bundle exec appraisal contrib-old rake spec:resque'
-    declare 'bundle exec appraisal contrib-old rake spec:rest_client'
-    declare 'bundle exec appraisal contrib-old rake spec:rspec'
-    declare 'bundle exec appraisal contrib-old rake spec:semantic_logger'
-    declare 'bundle exec appraisal contrib-old rake spec:sequel'
-    declare 'bundle exec appraisal contrib-old rake spec:sidekiq'
-    declare 'bundle exec appraisal contrib-old rake spec:sinatra'
-    declare 'bundle exec appraisal contrib-old rake spec:sucker_punch'
-    declare 'bundle exec appraisal contrib-old rake spec:suite'
-    # Rails minitests
-    declare 'bundle exec appraisal rails30-postgres rake test:rails'
-    declare 'bundle exec appraisal rails30-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails30-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails32-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails32-postgres rake test:rails'
-    declare 'bundle exec appraisal rails32-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails32-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails32-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails4-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails4-postgres rake test:rails'
-    declare 'bundle exec appraisal rails4-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails4-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails4-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails4-semantic-logger rake spec:railssemanticlogger'
-    # Rails specs
-    declare 'bundle exec appraisal rails30-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails32-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails32-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails4-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails4-postgres rake spec:rails'
-    # Rails suite specs
-    declare 'bundle exec appraisal rails32-postgres rake spec:action_pack'
-    declare 'bundle exec appraisal rails32-postgres rake spec:action_view'
-    declare 'bundle exec appraisal rails32-mysql2 rake spec:active_record'
-    declare 'bundle exec appraisal rails32-postgres rake spec:active_support'
-  elsif Gem::Version.new('2.2.0') <= Gem::Version.new(RUBY_VERSION)\
-        && Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.3.0')
-    # Main library
-    declare 'bundle exec rake test:main'
-    declare 'bundle exec rake spec:main'
-    declare 'bundle exec appraisal core-old rake spec:main'
-    declare 'bundle exec rake spec:contrib'
-    declare 'bundle exec rake spec:opentracer'
+  # Main library
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec rake spec:main'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal core-old rake spec:main'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec rake spec:contrib'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec rake spec:opentelemetry'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec rake spec:opentracer'
 
-    # Contrib minitests
-    # Contrib specs
-    declare 'bundle exec appraisal contrib rake spec:action_pack'
-    declare 'bundle exec appraisal contrib rake spec:action_view'
-    declare 'bundle exec appraisal contrib rake spec:active_model_serializers'
-    declare 'bundle exec appraisal contrib rake spec:active_record'
-    declare 'bundle exec appraisal contrib rake spec:active_support'
-    declare 'bundle exec appraisal contrib rake spec:autoinstrument'
-    declare 'bundle exec appraisal contrib rake spec:aws'
-    declare 'bundle exec appraisal contrib rake spec:concurrent_ruby'
-    declare 'bundle exec appraisal contrib rake spec:dalli'
-    declare 'bundle exec appraisal contrib rake spec:delayed_job'
-    declare 'bundle exec appraisal contrib rake spec:elasticsearch'
-    declare 'bundle exec appraisal contrib rake spec:ethon'
-    declare 'bundle exec appraisal contrib rake spec:excon'
-    declare 'bundle exec appraisal contrib rake spec:faraday'
-    declare 'bundle exec appraisal contrib rake spec:grape'
-    declare 'bundle exec appraisal contrib rake spec:graphql'
-    declare 'bundle exec appraisal contrib rake spec:grpc'
-    declare 'bundle exec appraisal contrib rake spec:http'
-    declare 'bundle exec appraisal contrib rake spec:httpclient'
-    declare 'bundle exec appraisal contrib rake spec:httprb'
-    declare 'bundle exec appraisal contrib rake spec:lograge'
-    declare 'bundle exec appraisal contrib rake spec:kafka'
-    declare 'bundle exec appraisal contrib rake spec:mongodb'
-    declare 'bundle exec appraisal contrib rake spec:mysql2'
-    declare 'bundle exec appraisal contrib rake spec:presto'
-    declare 'bundle exec appraisal contrib rake spec:qless'
-    declare 'bundle exec appraisal contrib rake spec:que'
-    declare 'bundle exec appraisal contrib rake spec:racecar'
-    declare 'bundle exec appraisal contrib rake spec:rack'
-    declare 'bundle exec appraisal contrib rake spec:rake'
-    declare 'bundle exec appraisal contrib rake spec:redis'
-    declare 'bundle exec appraisal contrib rake spec:resque'
-    declare 'bundle exec appraisal contrib rake spec:rest_client'
-    declare 'bundle exec appraisal contrib rake spec:rspec'
-    declare 'bundle exec appraisal contrib rake spec:semantic_logger'
-    declare 'bundle exec appraisal contrib rake spec:sequel'
-    declare 'bundle exec appraisal contrib rake spec:shoryuken'
-    declare 'bundle exec appraisal contrib rake spec:sidekiq'
-    declare 'bundle exec appraisal contrib rake spec:sinatra'
-    declare 'bundle exec appraisal contrib rake spec:sneakers'
-    declare 'bundle exec appraisal contrib rake spec:sucker_punch'
-    declare 'bundle exec appraisal contrib rake spec:suite'
-    # Rails minitests
-    declare 'bundle exec appraisal rails30-postgres rake test:rails'
-    declare 'bundle exec appraisal rails30-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails30-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails32-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails32-postgres rake test:rails'
-    declare 'bundle exec appraisal rails32-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails32-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails32-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails4-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails4-postgres rake test:rails'
-    declare 'bundle exec appraisal rails4-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails4-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails4-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails4-postgres-sidekiq rake spec:railsactivejob'
-    declare 'bundle exec appraisal rails5-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails5-postgres rake test:rails'
-    declare 'bundle exec appraisal rails5-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails5-postgres-redis-activesupport rake spec:railsredis'
-    declare 'bundle exec appraisal rails5-postgres-sidekiq rake spec:railsactivejob'
-    declare 'bundle exec appraisal rails5-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails5-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails4-semantic-logger rake spec:railssemanticlogger'
-    declare 'bundle exec appraisal rails5-semantic-logger rake spec:railssemanticlogger'
-    # Rails specs
-    declare 'bundle exec appraisal rails30-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails32-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails32-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails4-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails4-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails5-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails5-postgres rake spec:rails'
-  elsif Gem::Version.new('2.3.0') <= Gem::Version.new(RUBY_VERSION) \
-        && Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.4.0')
-    # Main library
-    declare 'bundle exec rake test:main'
-    declare 'bundle exec rake spec:main'
-    declare 'bundle exec appraisal core-old rake spec:main'
-    declare 'bundle exec rake spec:contrib'
-    declare 'bundle exec rake spec:opentracer'
+  # Contrib specs
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:action_pack'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:action_view'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:active_model_serializers'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:active_record'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:active_support'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:autoinstrument'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:aws'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:concurrent_ruby'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:cucumber'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:dalli'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:delayed_job'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:elasticsearch'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:ethon'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:excon'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:faraday'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:grape'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:graphql'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ❌ jruby' => 'bundle exec appraisal contrib rake spec:grpc' # disabled on JRuby, protobuf not supported
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:http'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:httpclient'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:httprb'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:kafka'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:lograge' # disabled on 3.0 as lograge nested dependancy thor ~> 1.0 conflicts w/qless dependancy thor ~> 0.19.1
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:mongodb'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ❌ jruby' => 'bundle exec appraisal contrib rake spec:mysql2' # disabled on JRuby, built-in jdbc is used instead
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:presto'
+  declare '❌ 2.1 / ✅ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:qless'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:que'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:racecar' # disabled on 3.0 pending release of our fix: https://github.com/appsignal/rdkafka-ruby/pull/144
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:rack'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:rake'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:redis'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:resque'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:rest_client'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:rspec'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:semantic_logger'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:sequel'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:shoryuken'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:sidekiq'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:sinatra'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:sneakers'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:sucker_punch'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib rake spec:suite'
 
-    # Contrib minitests
-    # Contrib specs
-    declare 'bundle exec appraisal contrib rake spec:action_pack'
-    declare 'bundle exec appraisal contrib rake spec:action_view'
-    declare 'bundle exec appraisal contrib rake spec:active_model_serializers'
-    declare 'bundle exec appraisal contrib rake spec:active_record'
-    declare 'bundle exec appraisal contrib rake spec:active_support'
-    declare 'bundle exec appraisal contrib rake spec:autoinstrument'
-    declare 'bundle exec appraisal contrib rake spec:aws'
-    declare 'bundle exec appraisal contrib rake spec:concurrent_ruby'
-    declare 'bundle exec appraisal contrib rake spec:dalli'
-    declare 'bundle exec appraisal contrib rake spec:delayed_job'
-    declare 'bundle exec appraisal contrib rake spec:elasticsearch'
-    declare 'bundle exec appraisal contrib rake spec:ethon'
-    declare 'bundle exec appraisal contrib rake spec:excon'
-    declare 'bundle exec appraisal contrib rake spec:faraday'
-    declare 'bundle exec appraisal contrib rake spec:grape'
-    declare 'bundle exec appraisal contrib rake spec:graphql'
-    declare 'bundle exec appraisal contrib rake spec:grpc'
-    declare 'bundle exec appraisal contrib rake spec:http'
-    declare 'bundle exec appraisal contrib rake spec:httpclient'
-    declare 'bundle exec appraisal contrib rake spec:httprb'
-    declare 'bundle exec appraisal contrib rake spec:lograge'
-    declare 'bundle exec appraisal contrib rake spec:kafka'
-    declare 'bundle exec appraisal contrib rake spec:mongodb'
-    declare 'bundle exec appraisal contrib rake spec:mysql2'
-    declare 'bundle exec appraisal contrib rake spec:presto'
-    declare 'bundle exec appraisal contrib rake spec:que'
-    declare 'bundle exec appraisal contrib rake spec:racecar'
-    declare 'bundle exec appraisal contrib rake spec:rack'
-    declare 'bundle exec appraisal contrib rake spec:rake'
-    declare 'bundle exec appraisal contrib rake spec:redis'
-    declare 'bundle exec appraisal contrib rake spec:resque'
-    declare 'bundle exec appraisal contrib rake spec:rest_client'
-    declare 'bundle exec appraisal contrib rake spec:rspec'
-    declare 'bundle exec appraisal contrib rake spec:semantic_logger'
-    declare 'bundle exec appraisal contrib rake spec:sequel'
-    declare 'bundle exec appraisal contrib rake spec:shoryuken'
-    declare 'bundle exec appraisal contrib rake spec:sidekiq'
-    declare 'bundle exec appraisal contrib rake spec:sinatra'
-    declare 'bundle exec appraisal contrib rake spec:sneakers'
-    declare 'bundle exec appraisal contrib rake spec:sucker_punch'
-    declare 'bundle exec appraisal contrib rake spec:suite'
-    # Contrib specs with old gem versions
-    declare 'bundle exec appraisal contrib-old rake spec:faraday'
-    # Rails minitests
-    declare 'bundle exec appraisal rails30-postgres rake test:rails'
-    declare 'bundle exec appraisal rails30-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails30-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails32-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails32-postgres rake test:rails'
-    declare 'bundle exec appraisal rails32-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails32-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails32-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails4-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails4-postgres rake test:rails'
-    declare 'bundle exec appraisal rails4-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails4-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails4-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails4-postgres-sidekiq rake spec:railsactivejob'
-    declare 'bundle exec appraisal rails5-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails5-postgres rake test:rails'
-    declare 'bundle exec appraisal rails5-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails5-postgres-redis-activesupport rake spec:railsredis'
-    declare 'bundle exec appraisal rails5-postgres-sidekiq rake spec:railsactivejob'
-    declare 'bundle exec appraisal rails5-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails5-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails4-semantic-logger rake spec:railssemanticlogger'
-    declare 'bundle exec appraisal rails5-semantic-logger rake spec:railssemanticlogger'
-    # Rails specs
-    declare 'bundle exec appraisal rails30-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails32-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails32-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails4-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails4-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails5-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails5-postgres rake spec:rails'
+  # Contrib specs with old gem versions
+  declare '❌ 2.1 / ❌ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal contrib-old rake spec:faraday'
 
-    # explicitly test resque-2x compatability
-    declare 'bundle exec appraisal resque2-redis3 rake spec:resque'
-    declare 'bundle exec appraisal resque2-redis4 rake spec:resque'
-  elsif Gem::Version.new('2.4.0') <= Gem::Version.new(RUBY_VERSION) \
-        && Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.5.0')
-    # Main library
-    declare 'bundle exec rake test:main'
-    declare 'bundle exec rake spec:main'
-    declare 'bundle exec appraisal core-old rake spec:main'
-    declare 'bundle exec rake spec:contrib'
-    declare 'bundle exec rake spec:opentracer'
-    declare 'bundle exec rake spec:opentelemetry'
+  # Rails specs
+  # On Ruby 2.4 and 2.5, we only test Rails 5+ because older versions require Bundler < 2.0
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails30-postgres rake spec:rails'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails30-postgres rake spec:railsautoinstrument'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails30-postgres rake spec:railsdisableenv'
+  declare '✅ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-mysql2 rake spec:active_record'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-mysql2 rake spec:rails'
+  declare '✅ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-postgres rake spec:action_pack'
+  declare '✅ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-postgres rake spec:action_view'
+  declare '✅ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-postgres rake spec:active_support'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-postgres rake spec:rails'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-postgres rake spec:railsautoinstrument'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-postgres rake spec:railsdisableenv'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails32-postgres-redis rake spec:railsredis_activesupport'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails4-mysql2 rake spec:rails'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails4-postgres rake spec:rails'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails4-postgres rake spec:railsautoinstrument'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails4-postgres rake spec:railsdisableenv'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails4-postgres-redis rake spec:railsredis_activesupport'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails4-postgres-sidekiq rake spec:railsactivejob'
+  declare '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ❌ 2.4 / ❌ 2.5 / ❌ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails4-semantic-logger rake spec:railssemanticlogger'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-mysql2 rake spec:action_cable'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ❌ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-mysql2 rake spec:action_mailer'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-mysql2 rake spec:rails'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-postgres rake spec:rails'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-postgres rake spec:railsautoinstrument'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-postgres rake spec:railsdisableenv'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-postgres-redis rake spec:railsredis'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-postgres-redis-activesupport rake spec:railsredis_activesupport'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-postgres-sidekiq rake spec:railsactivejob'
+  declare '❌ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails5-semantic-logger rake spec:railssemanticlogger'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-mysql2 rake spec:action_cable'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-mysql2 rake spec:action_mailer'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-mysql2 rake spec:rails'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-postgres rake spec:rails'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-postgres rake spec:railsautoinstrument'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-postgres rake spec:railsdisableenv'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-postgres-redis rake spec:railsredis'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-postgres-redis-activesupport rake spec:railsredis_activesupport'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-postgres-sidekiq rake spec:railsactivejob'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ❌ 3.0 / ❌ 3.1 / ✅ jruby' => 'bundle exec appraisal rails6-semantic-logger rake spec:railssemanticlogger'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal rails61-mysql2 rake spec:action_cable'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal rails61-mysql2 rake spec:action_mailer'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal rails61-mysql2 rake spec:rails'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal rails61-postgres rake spec:rails'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal rails61-postgres rake spec:railsdisableenv'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal rails61-postgres-redis rake spec:railsredis'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal rails61-postgres-sidekiq rake spec:railsactivejob'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal rails61-semantic-logger rake spec:railssemanticlogger'
 
-    # Contrib minitests
-    # Contrib specs
-    declare 'bundle exec appraisal contrib rake spec:action_pack'
-    declare 'bundle exec appraisal contrib rake spec:action_view'
-    declare 'bundle exec appraisal contrib rake spec:active_model_serializers'
-    declare 'bundle exec appraisal contrib rake spec:active_record'
-    declare 'bundle exec appraisal contrib rake spec:active_support'
-    declare 'bundle exec appraisal contrib rake spec:autoinstrument'
-    declare 'bundle exec appraisal contrib rake spec:aws'
-    declare 'bundle exec appraisal contrib rake spec:concurrent_ruby'
-    declare 'bundle exec appraisal contrib rake spec:dalli'
-    declare 'bundle exec appraisal contrib rake spec:delayed_job'
-    declare 'bundle exec appraisal contrib rake spec:elasticsearch'
-    declare 'bundle exec appraisal contrib rake spec:ethon'
-    declare 'bundle exec appraisal contrib rake spec:excon'
-    declare 'bundle exec appraisal contrib rake spec:faraday'
-    declare 'bundle exec appraisal contrib rake spec:grape'
-    declare 'bundle exec appraisal contrib rake spec:graphql'
-    declare 'bundle exec appraisal contrib rake spec:grpc'
-    declare 'bundle exec appraisal contrib rake spec:http'
-    declare 'bundle exec appraisal contrib rake spec:httpclient'
-    declare 'bundle exec appraisal contrib rake spec:httprb'
-    declare 'bundle exec appraisal contrib rake spec:lograge'
-    declare 'bundle exec appraisal contrib rake spec:kafka'
-    declare 'bundle exec appraisal contrib rake spec:mongodb'
-    declare 'bundle exec appraisal contrib rake spec:mysql2'
-    declare 'bundle exec appraisal contrib rake spec:presto'
-    declare 'bundle exec appraisal contrib rake spec:que'
-    declare 'bundle exec appraisal contrib rake spec:racecar'
-    declare 'bundle exec appraisal contrib rake spec:rack'
-    declare 'bundle exec appraisal contrib rake spec:rake'
-    declare 'bundle exec appraisal contrib rake spec:redis'
-    declare 'bundle exec appraisal contrib rake spec:resque'
-    declare 'bundle exec appraisal contrib rake spec:rest_client'
-    declare 'bundle exec appraisal contrib rake spec:rspec'
-    declare 'bundle exec appraisal contrib rake spec:semantic_logger'
-    declare 'bundle exec appraisal contrib rake spec:sequel'
-    declare 'bundle exec appraisal contrib rake spec:shoryuken'
-    declare 'bundle exec appraisal contrib rake spec:sidekiq'
-    declare 'bundle exec appraisal contrib rake spec:sinatra'
-    declare 'bundle exec appraisal contrib rake spec:sneakers'
-    declare 'bundle exec appraisal contrib rake spec:sucker_punch'
-    declare 'bundle exec appraisal contrib rake spec:suite'
-    # Contrib specs with old gem versions
-    declare 'bundle exec appraisal contrib-old rake spec:faraday'
-    # Rails minitests
-    # We only test Rails 5+ because older versions require Bundler < 2.0
-    declare 'bundle exec appraisal rails5-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails5-postgres rake test:rails'
-    declare 'bundle exec appraisal rails5-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails5-postgres-redis-activesupport rake spec:railsredis'
-    declare 'bundle exec appraisal rails5-postgres-sidekiq rake spec:railsactivejob'
-    declare 'bundle exec appraisal rails5-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails5-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails5-semantic-logger rake spec:railssemanticlogger'
-    # Rails specs
-    declare 'bundle exec appraisal rails5-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails5-postgres rake spec:rails'
+  # explicitly test resque-2x compatability
+  declare '❌ 2.1 / ❌ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal resque2-redis3 rake spec:resque'
+  declare '❌ 2.1 / ❌ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal resque2-redis4 rake spec:resque'
 
-    # explicitly test resque-2x compatability
-    declare 'bundle exec appraisal resque2-redis3 rake spec:resque'
-    declare 'bundle exec appraisal resque2-redis4 rake spec:resque'
-
-    # explicitly test cucumber compatibility
-    declare 'bundle exec appraisal cucumber3 rake spec:cucumber'
-    declare 'bundle exec appraisal cucumber4 rake spec:cucumber'
-  elsif Gem::Version.new('2.5.0') <= Gem::Version.new(RUBY_VERSION) \
-        && Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.6.0')
-    # Main library
-    declare 'bundle exec rake test:main'
-    declare 'bundle exec rake spec:main'
-    declare 'bundle exec appraisal core-old rake spec:main'
-    declare 'bundle exec rake spec:contrib'
-    declare 'bundle exec rake spec:opentracer'
-    declare 'bundle exec rake spec:opentelemetry'
-    # Contrib minitests
-    # Contrib specs
-    declare 'bundle exec appraisal contrib rake spec:action_pack'
-    declare 'bundle exec appraisal contrib rake spec:action_view'
-    declare 'bundle exec appraisal contrib rake spec:active_model_serializers'
-    declare 'bundle exec appraisal contrib rake spec:active_record'
-    declare 'bundle exec appraisal contrib rake spec:active_support'
-    declare 'bundle exec appraisal contrib rake spec:autoinstrument'
-    declare 'bundle exec appraisal contrib rake spec:aws'
-    declare 'bundle exec appraisal contrib rake spec:concurrent_ruby'
-    declare 'bundle exec appraisal contrib rake spec:cucumber'
-    declare 'bundle exec appraisal contrib rake spec:dalli'
-    declare 'bundle exec appraisal contrib rake spec:delayed_job'
-    declare 'bundle exec appraisal contrib rake spec:elasticsearch'
-    declare 'bundle exec appraisal contrib rake spec:ethon'
-    declare 'bundle exec appraisal contrib rake spec:excon'
-    declare 'bundle exec appraisal contrib rake spec:faraday'
-    declare 'bundle exec appraisal contrib rake spec:grape'
-    declare 'bundle exec appraisal contrib rake spec:graphql'
-    declare 'bundle exec appraisal contrib rake spec:grpc' if RUBY_PLATFORM != 'java' # protobuf not supported
-    declare 'bundle exec appraisal contrib rake spec:http'
-    declare 'bundle exec appraisal contrib rake spec:httpclient'
-    declare 'bundle exec appraisal contrib rake spec:httprb'
-    declare 'bundle exec appraisal contrib rake spec:lograge'
-    declare 'bundle exec appraisal contrib rake spec:kafka'
-    declare 'bundle exec appraisal contrib rake spec:mongodb'
-    declare 'bundle exec appraisal contrib rake spec:mysql2' if RUBY_PLATFORM != 'java' # built-in jdbc is used instead
-    declare 'bundle exec appraisal contrib rake spec:presto'
-    declare 'bundle exec appraisal contrib rake spec:qless'
-    declare 'bundle exec appraisal contrib rake spec:que'
-    declare 'bundle exec appraisal contrib rake spec:racecar'
-    declare 'bundle exec appraisal contrib rake spec:rack'
-    declare 'bundle exec appraisal contrib rake spec:rake'
-    declare 'bundle exec appraisal contrib rake spec:redis'
-    declare 'bundle exec appraisal contrib rake spec:resque'
-    declare 'bundle exec appraisal contrib rake spec:rest_client'
-    declare 'bundle exec appraisal contrib rake spec:rspec'
-    declare 'bundle exec appraisal contrib rake spec:semantic_logger'
-    declare 'bundle exec appraisal contrib rake spec:sequel'
-    declare 'bundle exec appraisal contrib rake spec:shoryuken'
-    declare 'bundle exec appraisal contrib rake spec:sidekiq'
-    declare 'bundle exec appraisal contrib rake spec:sinatra'
-    declare 'bundle exec appraisal contrib rake spec:sneakers'
-    declare 'bundle exec appraisal contrib rake spec:sucker_punch'
-    declare 'bundle exec appraisal contrib rake spec:suite'
-    # Contrib specs with old gem versions
-    declare 'bundle exec appraisal contrib-old rake spec:faraday'
-    # Rails minitests
-    # We only test Rails 5+ because older versions require Bundler < 2.0
-    declare 'bundle exec appraisal rails5-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails5-postgres rake test:rails'
-    declare 'bundle exec appraisal rails5-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails5-postgres-redis-activesupport rake spec:railsredis'
-    declare 'bundle exec appraisal rails5-postgres-sidekiq rake spec:railsactivejob'
-    declare 'bundle exec appraisal rails5-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails5-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails6-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails6-postgres rake test:rails'
-    declare 'bundle exec appraisal rails6-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails6-postgres-redis-activesupport rake spec:railsredis'
-    declare 'bundle exec appraisal rails6-postgres-sidekiq rake spec:railsactivejob'
-    declare 'bundle exec appraisal rails6-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails6-postgres rake spec:railsautoinstrument'
-    declare 'bundle exec appraisal rails5-semantic-logger rake spec:railssemanticlogger'
-    declare 'bundle exec appraisal rails6-semantic-logger rake spec:railssemanticlogger'
-    declare 'bundle exec appraisal rails61-semantic-logger rake spec:railssemanticlogger'
-    # Rails specs
-    declare 'bundle exec appraisal rails5-mysql2 rake spec:action_cable'
-    declare 'bundle exec appraisal rails5-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails5-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails6-mysql2 rake spec:action_cable'
-    declare 'bundle exec appraisal rails6-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails6-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails61-mysql2 rake spec:action_cable'
-    declare 'bundle exec appraisal rails61-mysql2 rake spec:rails'
-    declare 'bundle exec appraisal rails61-mysql2 rake test:rails'
-    declare 'bundle exec appraisal rails61-postgres rake spec:rails'
-    declare 'bundle exec appraisal rails61-postgres rake spec:railsdisableenv'
-    declare 'bundle exec appraisal rails61-postgres rake test:rails'
-    declare 'bundle exec appraisal rails61-postgres-redis rake spec:railsredis'
-    declare 'bundle exec appraisal rails61-postgres-sidekiq rake spec:railsactivejob'
-
-    # explicitly test resque-2x compatability
-    declare 'bundle exec appraisal resque2-redis3 rake spec:resque'
-    declare 'bundle exec appraisal resque2-redis4 rake spec:resque'
-
-    # explicitly test cucumber compatibility
-    declare 'bundle exec appraisal cucumber3 rake spec:cucumber'
-    declare 'bundle exec appraisal cucumber4 rake spec:cucumber'
-    declare 'bundle exec appraisal cucumber5 rake spec:cucumber'
-  elsif Gem::Version.new('2.6.0') <= Gem::Version.new(RUBY_VERSION) \
-      && Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.7.0')
-    # Main library
-    declare 'bundle exec rake test:main'
-    declare 'bundle exec rake spec:main'
-    declare 'bundle exec appraisal core-old rake spec:main'
-    declare 'bundle exec rake spec:contrib'
-    declare 'bundle exec rake spec:opentracer'
-    declare 'bundle exec rake spec:opentelemetry'
-
-    if RUBY_PLATFORM != 'java'
-      # Contrib minitests
-      # Contrib specs
-      declare 'bundle exec appraisal contrib rake spec:action_pack'
-      declare 'bundle exec appraisal contrib rake spec:action_view'
-      declare 'bundle exec appraisal contrib rake spec:active_model_serializers'
-      declare 'bundle exec appraisal contrib rake spec:active_record'
-      declare 'bundle exec appraisal contrib rake spec:active_support'
-      declare 'bundle exec appraisal contrib rake spec:autoinstrument'
-      declare 'bundle exec appraisal contrib rake spec:aws'
-      declare 'bundle exec appraisal contrib rake spec:concurrent_ruby'
-      declare 'bundle exec appraisal contrib rake spec:cucumber'
-      declare 'bundle exec appraisal contrib rake spec:dalli'
-      declare 'bundle exec appraisal contrib rake spec:delayed_job'
-      declare 'bundle exec appraisal contrib rake spec:elasticsearch'
-      declare 'bundle exec appraisal contrib rake spec:ethon'
-      declare 'bundle exec appraisal contrib rake spec:excon'
-      declare 'bundle exec appraisal contrib rake spec:faraday'
-      declare 'bundle exec appraisal contrib rake spec:grape'
-      declare 'bundle exec appraisal contrib rake spec:graphql'
-      declare 'bundle exec appraisal contrib rake spec:grpc'
-      declare 'bundle exec appraisal contrib rake spec:http'
-      declare 'bundle exec appraisal contrib rake spec:httpclient'
-      declare 'bundle exec appraisal contrib rake spec:httprb'
-      declare 'bundle exec appraisal contrib rake spec:lograge'
-      declare 'bundle exec appraisal contrib rake spec:kafka'
-      declare 'bundle exec appraisal contrib rake spec:mongodb'
-      declare 'bundle exec appraisal contrib rake spec:mysql2'
-      declare 'bundle exec appraisal contrib rake spec:presto'
-      declare 'bundle exec appraisal contrib rake spec:qless'
-      declare 'bundle exec appraisal contrib rake spec:que'
-      declare 'bundle exec appraisal contrib rake spec:racecar'
-      declare 'bundle exec appraisal contrib rake spec:rack'
-      declare 'bundle exec appraisal contrib rake spec:rake'
-      declare 'bundle exec appraisal contrib rake spec:redis'
-      declare 'bundle exec appraisal contrib rake spec:resque'
-      declare 'bundle exec appraisal contrib rake spec:rest_client'
-      declare 'bundle exec appraisal contrib rake spec:rspec'
-      declare 'bundle exec appraisal contrib rake spec:semantic_logger'
-      declare 'bundle exec appraisal contrib rake spec:sequel'
-      declare 'bundle exec appraisal contrib rake spec:shoryuken'
-      declare 'bundle exec appraisal contrib rake spec:sidekiq'
-      declare 'bundle exec appraisal contrib rake spec:sinatra'
-      declare 'bundle exec appraisal contrib rake spec:sneakers'
-      declare 'bundle exec appraisal contrib rake spec:sucker_punch'
-      declare 'bundle exec appraisal contrib rake spec:suite'
-
-      # Contrib specs with old gem versions
-      declare 'bundle exec appraisal contrib-old rake spec:faraday'
-      # Rails minitests
-      # We only test Rails 5+ because older versions require Bundler < 2.0
-      declare 'bundle exec appraisal rails5-mysql2 rake test:rails'
-      declare 'bundle exec appraisal rails5-postgres rake test:rails'
-      declare 'bundle exec appraisal rails5-postgres-redis rake spec:railsredis'
-      declare 'bundle exec appraisal rails5-postgres-redis-activesupport rake spec:railsredis'
-      declare 'bundle exec appraisal rails5-postgres-sidekiq rake spec:railsactivejob'
-      declare 'bundle exec appraisal rails5-postgres rake spec:railsdisableenv'
-      declare 'bundle exec appraisal rails5-postgres rake spec:railsautoinstrument'
-      declare 'bundle exec appraisal rails6-mysql2 rake test:rails'
-      declare 'bundle exec appraisal rails6-postgres rake test:rails'
-      declare 'bundle exec appraisal rails6-postgres-redis rake spec:railsredis'
-      declare 'bundle exec appraisal rails6-postgres-redis-activesupport rake spec:railsredis'
-      declare 'bundle exec appraisal rails6-postgres-sidekiq rake spec:railsactivejob'
-      declare 'bundle exec appraisal rails6-postgres rake spec:railsdisableenv'
-      declare 'bundle exec appraisal rails6-postgres rake spec:railsautoinstrument'
-      declare 'bundle exec appraisal rails5-semantic-logger rake spec:railssemanticlogger'
-      declare 'bundle exec appraisal rails6-semantic-logger rake spec:railssemanticlogger'
-      declare 'bundle exec appraisal rails61-semantic-logger rake spec:railssemanticlogger'
-      # Rails specs
-      declare 'bundle exec appraisal rails5-mysql2 rake spec:action_cable'
-      declare 'bundle exec appraisal rails5-mysql2 rake spec:rails'
-      declare 'bundle exec appraisal rails5-postgres rake spec:rails'
-      declare 'bundle exec appraisal rails6-mysql2 rake spec:action_cable'
-      declare 'bundle exec appraisal rails6-mysql2 rake spec:rails'
-      declare 'bundle exec appraisal rails6-postgres rake spec:rails'
-      declare 'bundle exec appraisal rails61-mysql2 rake spec:action_cable'
-      declare 'bundle exec appraisal rails61-mysql2 rake spec:rails'
-      declare 'bundle exec appraisal rails61-mysql2 rake test:rails'
-      declare 'bundle exec appraisal rails61-postgres rake spec:rails'
-      declare 'bundle exec appraisal rails61-postgres rake spec:railsdisableenv'
-      declare 'bundle exec appraisal rails61-postgres rake test:rails'
-      declare 'bundle exec appraisal rails61-postgres-redis rake spec:railsredis'
-      declare 'bundle exec appraisal rails61-postgres-sidekiq rake spec:railsactivejob'
-
-      # explicitly test resque-2x compatability
-      declare 'bundle exec appraisal resque2-redis3 rake spec:resque'
-      declare 'bundle exec appraisal resque2-redis4 rake spec:resque'
-
-      # explicitly test cucumber compatibility
-      declare 'bundle exec appraisal cucumber3 rake spec:cucumber'
-      declare 'bundle exec appraisal cucumber4 rake spec:cucumber'
-      declare 'bundle exec appraisal cucumber5 rake spec:cucumber'
-    end
-  elsif Gem::Version.new('2.7.0') <= Gem::Version.new(RUBY_VERSION) \
-      && Gem::Version.new(RUBY_VERSION) < Gem::Version.new('3.0.0')
-    # Main library
-    declare 'bundle exec rake test:main'
-    declare 'bundle exec rake spec:main'
-    declare 'bundle exec appraisal core-old rake spec:main'
-    declare 'bundle exec rake spec:contrib'
-    declare 'bundle exec rake spec:opentracer'
-    declare 'bundle exec rake spec:opentelemetry'
-
-    if RUBY_PLATFORM != 'java'
-      # Contrib minitests
-      # Contrib specs
-      declare 'bundle exec appraisal contrib rake spec:action_pack'
-      declare 'bundle exec appraisal contrib rake spec:action_view'
-      declare 'bundle exec appraisal contrib rake spec:active_model_serializers'
-      declare 'bundle exec appraisal contrib rake spec:active_record'
-      declare 'bundle exec appraisal contrib rake spec:active_support'
-      declare 'bundle exec appraisal contrib rake spec:autoinstrument'
-      declare 'bundle exec appraisal contrib rake spec:aws'
-      declare 'bundle exec appraisal contrib rake spec:concurrent_ruby'
-      declare 'bundle exec appraisal contrib rake spec:cucumber'
-      declare 'bundle exec appraisal contrib rake spec:dalli'
-      declare 'bundle exec appraisal contrib rake spec:delayed_job'
-      declare 'bundle exec appraisal contrib rake spec:elasticsearch'
-      declare 'bundle exec appraisal contrib rake spec:ethon'
-      declare 'bundle exec appraisal contrib rake spec:excon'
-      declare 'bundle exec appraisal contrib rake spec:faraday'
-      declare 'bundle exec appraisal contrib rake spec:grape'
-      declare 'bundle exec appraisal contrib rake spec:graphql'
-      declare 'bundle exec appraisal contrib rake spec:grpc'
-      declare 'bundle exec appraisal contrib rake spec:http'
-      declare 'bundle exec appraisal contrib rake spec:httpclient'
-      declare 'bundle exec appraisal contrib rake spec:httprb'
-      declare 'bundle exec appraisal contrib rake spec:lograge'
-      declare 'bundle exec appraisal contrib rake spec:kafka'
-      declare 'bundle exec appraisal contrib rake spec:mongodb'
-      declare 'bundle exec appraisal contrib rake spec:mysql2'
-      declare 'bundle exec appraisal contrib rake spec:presto'
-      declare 'bundle exec appraisal contrib rake spec:qless'
-      declare 'bundle exec appraisal contrib rake spec:que'
-      declare 'bundle exec appraisal contrib rake spec:racecar'
-      declare 'bundle exec appraisal contrib rake spec:rack'
-      declare 'bundle exec appraisal contrib rake spec:rake'
-      declare 'bundle exec appraisal contrib rake spec:redis'
-      declare 'bundle exec appraisal contrib rake spec:resque'
-      declare 'bundle exec appraisal contrib rake spec:rest_client'
-      declare 'bundle exec appraisal contrib rake spec:rspec'
-      declare 'bundle exec appraisal contrib rake spec:semantic_logger'
-      declare 'bundle exec appraisal contrib rake spec:sequel'
-      declare 'bundle exec appraisal contrib rake spec:shoryuken'
-      declare 'bundle exec appraisal contrib rake spec:sidekiq'
-      declare 'bundle exec appraisal contrib rake spec:sinatra'
-      declare 'bundle exec appraisal contrib rake spec:sneakers'
-      declare 'bundle exec appraisal contrib rake spec:sucker_punch'
-      declare 'bundle exec appraisal contrib rake spec:suite'
-
-      # Contrib specs with old gem versions
-      declare 'bundle exec appraisal contrib-old rake spec:faraday'
-      # Rails minitests
-      # We only test Rails 5+ because older versions require Bundler < 2.0
-      declare 'bundle exec appraisal rails5-mysql2 rake test:rails'
-      declare 'bundle exec appraisal rails5-postgres rake test:rails'
-      declare 'bundle exec appraisal rails5-postgres-redis rake spec:railsredis'
-      declare 'bundle exec appraisal rails5-postgres-redis-activesupport rake spec:railsredis'
-      declare 'bundle exec appraisal rails5-postgres-sidekiq rake spec:railsactivejob'
-      declare 'bundle exec appraisal rails5-postgres rake spec:railsdisableenv'
-      declare 'bundle exec appraisal rails5-postgres rake spec:railsautoinstrument'
-      declare 'bundle exec appraisal rails6-mysql2 rake test:rails'
-      declare 'bundle exec appraisal rails6-postgres rake test:rails'
-      declare 'bundle exec appraisal rails6-postgres-redis rake spec:railsredis'
-      declare 'bundle exec appraisal rails6-postgres-redis-activesupport rake spec:railsredis'
-      declare 'bundle exec appraisal rails6-postgres-sidekiq rake spec:railsactivejob'
-      declare 'bundle exec appraisal rails6-postgres rake spec:railsdisableenv'
-      declare 'bundle exec appraisal rails6-postgres rake spec:railsautoinstrument'
-      declare 'bundle exec appraisal rails5-semantic-logger rake spec:railssemanticlogger'
-      declare 'bundle exec appraisal rails6-semantic-logger rake spec:railssemanticlogger'
-      declare 'bundle exec appraisal rails61-semantic-logger rake spec:railssemanticlogger'
-      # Rails specs
-      declare 'bundle exec appraisal rails5-mysql2 rake spec:rails'
-      declare 'bundle exec appraisal rails5-postgres rake spec:rails'
-      declare 'bundle exec appraisal rails6-mysql2 rake spec:action_cable'
-      declare 'bundle exec appraisal rails6-mysql2 rake spec:rails'
-      declare 'bundle exec appraisal rails6-postgres rake spec:rails'
-      declare 'bundle exec appraisal rails61-mysql2 rake spec:action_cable'
-      declare 'bundle exec appraisal rails61-mysql2 rake spec:rails'
-      declare 'bundle exec appraisal rails61-mysql2 rake test:rails'
-      declare 'bundle exec appraisal rails61-postgres rake spec:rails'
-      declare 'bundle exec appraisal rails61-postgres rake spec:railsdisableenv'
-      declare 'bundle exec appraisal rails61-postgres rake test:rails'
-      declare 'bundle exec appraisal rails61-postgres-redis rake spec:railsredis'
-      declare 'bundle exec appraisal rails61-postgres-sidekiq rake spec:railsactivejob'
-
-      # explicitly test resque-2x compatability
-      declare 'bundle exec appraisal resque2-redis3 rake spec:resque'
-      declare 'bundle exec appraisal resque2-redis4 rake spec:resque'
-
-      # explicitly test cucumber compatibility
-      declare 'bundle exec appraisal cucumber3 rake spec:cucumber'
-      declare 'bundle exec appraisal cucumber4 rake spec:cucumber'
-      declare 'bundle exec appraisal cucumber5 rake spec:cucumber'
-    end
-  elsif Gem::Version.new('3.0.0') <= Gem::Version.new(RUBY_VERSION)
-    # Main library
-    declare 'bundle exec rake test:main'
-    declare 'bundle exec rake spec:main'
-    declare 'bundle exec appraisal core-old rake spec:main'
-    declare 'bundle exec rake spec:contrib'
-    declare 'bundle exec rake spec:opentracer'
-    declare 'bundle exec rake spec:opentelemetry'
-
-    if RUBY_PLATFORM != 'java'
-      # Contrib minitests
-      # Contrib specs
-      declare 'bundle exec appraisal contrib rake spec:action_pack'
-      declare 'bundle exec appraisal contrib rake spec:action_view'
-      declare 'bundle exec appraisal contrib rake spec:active_model_serializers'
-      declare 'bundle exec appraisal contrib rake spec:active_record'
-      declare 'bundle exec appraisal contrib rake spec:active_support'
-      declare 'bundle exec appraisal contrib rake spec:aws'
-      declare 'bundle exec appraisal contrib rake spec:concurrent_ruby'
-      declare 'bundle exec appraisal contrib rake spec:cucumber'
-      declare 'bundle exec appraisal contrib rake spec:dalli'
-      declare 'bundle exec appraisal contrib rake spec:delayed_job'
-      declare 'bundle exec appraisal contrib rake spec:elasticsearch'
-      declare 'bundle exec appraisal contrib rake spec:ethon'
-      declare 'bundle exec appraisal contrib rake spec:excon'
-      declare 'bundle exec appraisal contrib rake spec:faraday'
-      declare 'bundle exec appraisal contrib rake spec:grape'
-      declare 'bundle exec appraisal contrib rake spec:graphql'
-      declare 'bundle exec appraisal contrib rake spec:grpc'
-      declare 'bundle exec appraisal contrib rake spec:http'
-      declare 'bundle exec appraisal contrib rake spec:httpclient'
-      declare 'bundle exec appraisal contrib rake spec:httprb'
-      # lograge nested dependancy thor ~> 1.0 conflicts w/qless dependancy thor ~> 0.19.1
-      # declare 'bundle exec appraisal contrib rake spec:lograge'
-      declare 'bundle exec appraisal contrib rake spec:kafka'
-      declare 'bundle exec appraisal contrib rake spec:mongodb'
-      declare 'bundle exec appraisal contrib rake spec:mysql2'
-      declare 'bundle exec appraisal contrib rake spec:presto'
-      declare 'bundle exec appraisal contrib rake spec:qless'
-      declare 'bundle exec appraisal contrib rake spec:que'
-      # declare 'bundle exec appraisal contrib rake spec:racecar' # Pending release of our fix: https://github.com/appsignal/rdkafka-ruby/pull/144
-      declare 'bundle exec appraisal contrib rake spec:rack'
-      declare 'bundle exec appraisal contrib rake spec:rake'
-      declare 'bundle exec appraisal contrib rake spec:redis'
-      declare 'bundle exec appraisal contrib rake spec:resque'
-      declare 'bundle exec appraisal contrib rake spec:rest_client'
-      declare 'bundle exec appraisal contrib rake spec:rspec'
-      declare 'bundle exec appraisal contrib rake spec:semantic_logger'
-      declare 'bundle exec appraisal contrib rake spec:sequel'
-      declare 'bundle exec appraisal contrib rake spec:shoryuken'
-      declare 'bundle exec appraisal contrib rake spec:sidekiq'
-      declare 'bundle exec appraisal contrib rake spec:sinatra'
-      declare 'bundle exec appraisal contrib rake spec:sneakers'
-      declare 'bundle exec appraisal contrib rake spec:sucker_punch'
-      declare 'bundle exec appraisal contrib rake spec:suite'
-
-      # Rails
-      declare 'bundle exec appraisal rails61-mysql2 rake spec:action_cable'
-      declare 'bundle exec appraisal rails61-mysql2 rake spec:rails'
-      declare 'bundle exec appraisal rails61-mysql2 rake test:rails'
-      declare 'bundle exec appraisal rails61-postgres rake spec:rails'
-      declare 'bundle exec appraisal rails61-postgres rake spec:railsdisableenv'
-      declare 'bundle exec appraisal rails61-postgres rake test:rails'
-      declare 'bundle exec appraisal rails61-postgres-redis rake spec:railsredis'
-      declare 'bundle exec appraisal rails61-postgres-sidekiq rake spec:railsactivejob'
-      declare 'bundle exec appraisal rails61-semantic-logger rake spec:railssemanticlogger'
-
-      # explicitly test resque-2x compatability
-      declare 'bundle exec appraisal resque2-redis3 rake spec:resque'
-      declare 'bundle exec appraisal resque2-redis4 rake spec:resque'
-
-      # explicitly test cucumber compatibility
-      declare 'bundle exec appraisal cucumber3 rake spec:cucumber'
-      declare 'bundle exec appraisal cucumber4 rake spec:cucumber'
-      declare 'bundle exec appraisal cucumber5 rake spec:cucumber'
-    end
-  end
+  # explicitly test cucumber compatibility
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal cucumber3 rake spec:cucumber'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal cucumber4 rake spec:cucumber'
+  declare '❌ 2.1 / ❌ 2.2 / ❌ 2.3 / ❌ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ jruby' => 'bundle exec appraisal cucumber5 rake spec:cucumber'
 end
 
 namespace :coverage do
@@ -979,4 +384,40 @@ namespace :changelog do
   end
 end
 
-task default: 'spec:main'
+Rake::ExtensionTask.new("ddtrace_profiling_native_extension.#{RUBY_VERSION}_#{RUBY_PLATFORM}") do |ext|
+  ext.ext_dir = 'ext/ddtrace_profiling_native_extension'
+end
+
+desc 'Runs the sorbet type checker on the codebase'
+task :typecheck do
+  if Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.3.0')
+    $stderr.puts 'Sorry, cannot run sorbet type checker on older rubies :(' # rubocop:disable Style/StderrPuts
+  else
+    begin
+      sh 'srb tc'
+    rescue
+      $stderr.puts( # rubocop:disable Style/StderrPuts
+        %(
++------------------------------------------------------------------------------+
+|  **Hello there, fellow contributor who just triggered a Sorbet type error**  |
+|                                                                              |
+| We're still experimenting with Sorbet on this codebase. If possible, take a  |
+| stab at getting it to work, but feel free to unblock yourself by adding      |
+| a `# typed: false` or `# typed: ignore` comment at the top of files which    |
+| Sorbet is struggling with.                                                   |
+|                                                                              |
+| In particular, if you're adding a new integration, you'll need to use this   |
+| mechanism as Sorbet does not play well with optional dependencies.           |
++------------------------------------------------------------------------------+
+)
+      )
+      raise
+    end
+  end
+end
+
+desc 'Runs rubocop + type check + main test suite'
+task default: ['rubocop', 'typecheck', 'spec:main']
+
+desc 'Runs the default task in parallel'
+multitask fastdefault: ['rubocop', 'typecheck', 'spec:main']

@@ -28,8 +28,10 @@ To contribute, check out the [contribution guidelines][contribution docs] and [d
  - [Integration instrumentation](#integration-instrumentation)
      - [Action Cable](#action-cable)
      - [Action View](#action-view)
+     - [Action Mailer](#action-mailer)
      - [Active Model Serializers](#active-model-serializers)
      - [Action Pack](#action-pack)
+     - [Active Job](#active-job)
      - [Active Record](#active-record)
      - [Active Support](#active-support)
      - [AWS](#aws)
@@ -44,12 +46,12 @@ To contribute, check out the [contribution guidelines][contribution docs] and [d
      - [Grape](#grape)
      - [GraphQL](#graphql)
      - [gRPC](#grpc)
-     - [http.rb](#http-rb)
+     - [http.rb](#httprb)
      - [httpclient](#httpclient)
      - [httpx](#httpx)
      - [MongoDB](#mongodb)
      - [MySQL2](#mysql2)
-     - [Net/HTTP](#net-http)
+     - [Net/HTTP](#nethttp)
      - [Presto](#presto)
      - [Qless](#qless)
      - [Que](#que)
@@ -86,6 +88,8 @@ To contribute, check out the [contribution guidelines][contribution docs] and [d
          - [For application runtime](#for-application-runtime)
      - [OpenTracing](#opentracing)
      - [Profiling](#profiling)
+         - [Troubleshooting](#troubleshooting)
+         - [Profiling Resque jobs](#profiling-resque-jobs)
  - [Known issues and suggested configurations](#known-issues-and-suggested-configurations)
     - [Payload too large](#payload-too-large)
     - [Stack level too deep](#stack-level-too-deep)
@@ -131,13 +135,22 @@ To contribute, check out the [contribution guidelines][contribution docs] and [d
 
 *EOL* indicates support is no longer provided.
 
+### Apple macOS support
+
+Use of `ddtrace` on macOS is supported for development, but not for production deployments.
+
+### Microsoft Windows support
+
+Using `ddtrace` on Microsoft Windows is currently unsupported. We'll still accept community contributions and issues,
+but will consider them as having low priority.
+
 ## Installation
 
 The following steps will help you quickly start tracing your Ruby application.
 
 ### Configure the Datadog Agent for APM
 
-Before downloading tracing on your application, install the Datadog Agent. The Ruby APM tracer sends trace data through the Datadog Agent.
+Before downloading tracing on your application, [install the Datadog Agent on the host](https://docs.datadoghq.com/agent/). The Ruby APM tracer sends trace data through the Datadog Agent.
 
 Install and configure the Datadog Agent to receive traces from your now instrumented application. By default the Datadog Agent is enabled in your `datadog.yaml` file under `apm_enabled: true` and listens for trace traffic at `localhost:8126`. For containerized environments, follow the steps below to enable trace collection within the Datadog Agent.
 
@@ -163,7 +176,7 @@ Install and configure the Datadog Agent to receive traces from your now instrume
 
 2. Install the gem with `bundle install`
 
-3. You can configure, override, or disable any specific integration settings by also adding a [Rails Manual Configuration](#rails-manual-configuration) file.
+3. You can configure, override, or disable any specific integration settings by also adding a Rails manual instrumentation configuration file (next).
 
 #### Manual instrumentation
 
@@ -203,7 +216,7 @@ Install and configure the Datadog Agent to receive traces from your now instrume
     require 'ddtrace/auto_instrument'
     ```
 
-    You can configure, override, or disable any specific integration settings by also adding a [Ruby Manual Configuration Block](#ruby-manual-configuration).
+    You can configure, override, or disable any specific integration settings by also adding a Ruby manual configuration block (next).
 
 #### Manual instrumentation
 
@@ -386,14 +399,16 @@ For a list of available integrations, and their configuration options, please re
 | Name                     | Key                        | Versions Supported: MRI  | Versions Supported: JRuby | How to configure                    | Gem source                                                                     |
 | ------------------------ | -------------------------- | ------------------------ | --------------------------| ----------------------------------- | ------------------------------------------------------------------------------ |
 | Action Cable             | `action_cable`             | `>= 5.0`                 | `>= 5.0`                  | *[Link](#action-cable)*             | *[Link](https://github.com/rails/rails/tree/master/actioncable)*               |
+| Action Mailer            | `action_mailer`            | `>= 5.0`                 | `>= 5.0`                  | *[Link](#action-mailer)*            | *[Link](https://github.com/rails/rails/tree/master/actionmailer)*              |
 | Action View              | `action_view`              | `>= 3.0`                 | `>= 3.0`                  | *[Link](#action-view)*              | *[Link](https://github.com/rails/rails/tree/master/actionview)*                |
 | Active Model Serializers | `active_model_serializers` | `>= 0.9`                 | `>= 0.9`                  | *[Link](#active-model-serializers)* | *[Link](https://github.com/rails-api/active_model_serializers)*                |
 | Action Pack              | `action_pack`              | `>= 3.0`                 | `>= 3.0`                  | *[Link](#action-pack)*              | *[Link](https://github.com/rails/rails/tree/master/actionpack)*                |
+| Active Job               | `active_job`               | `>= 4.2`                 | `>= 4.2`                  | *[Link](#active-job)*               | *[Link](https://github.com/rails/rails/tree/master/activejob)*             |
 | Active Record            | `active_record`            | `>= 3.0`                 | `>= 3.0`                  | *[Link](#active-record)*            | *[Link](https://github.com/rails/rails/tree/master/activerecord)*              |
 | Active Support           | `active_support`           | `>= 3.0`                 | `>= 3.0`                  | *[Link](#active-support)*           | *[Link](https://github.com/rails/rails/tree/master/activesupport)*             |
 | AWS                      | `aws`                      | `>= 2.0`                 | `>= 2.0`                  | *[Link](#aws)*                      | *[Link](https://github.com/aws/aws-sdk-ruby)*                                  |
 | Concurrent Ruby          | `concurrent_ruby`          | `>= 0.9`                 | `>= 0.9`                  | *[Link](#concurrent-ruby)*          | *[Link](https://github.com/ruby-concurrency/concurrent-ruby)*                  |
-| Cucumber                 | `cucumber`                 | `>= 3.0`                 | `>= 1.7.16`               | *[Link](#cucumber)*                | *[Link](https://github.com/cucumber/cucumber-ruby)*                            |
+| Cucumber                 | `cucumber`                 | `>= 3.0`                 | `>= 1.7.16`               | *[Link](#cucumber)*                 | *[Link](https://github.com/cucumber/cucumber-ruby)*                            |
 | Dalli                    | `dalli`                    | `>= 2.0`                 | `>= 2.0`                  | *[Link](#dalli)*                    | *[Link](https://github.com/petergoldstein/dalli)*                              |
 | DelayedJob               | `delayed_job`              | `>= 4.1`                 | `>= 4.1`                  | *[Link](#delayedjob)*               | *[Link](https://github.com/collectiveidea/delayed_job)*                        |
 | Elasticsearch            | `elasticsearch`            | `>= 1.0`                 | `>= 1.0`                  | *[Link](#elasticsearch)*            | *[Link](https://github.com/elastic/elasticsearch-ruby)*                        |
@@ -403,7 +418,7 @@ For a list of available integrations, and their configuration options, please re
 | Grape                    | `grape`                    | `>= 1.0`                 | `>= 1.0`                  | *[Link](#grape)*                    | *[Link](https://github.com/ruby-grape/grape)*                                  |
 | GraphQL                  | `graphql`                  | `>= 1.7.9`               | `>= 1.7.9`                | *[Link](#graphql)*                  | *[Link](https://github.com/rmosolgo/graphql-ruby)*                             |
 | gRPC                     | `grpc`                     | `>= 1.7`                 | *gem not available*       | *[Link](#grpc)*                     | *[Link](https://github.com/grpc/grpc/tree/master/src/rubyc)*                   |
-| http.rb                  | `httprb`                   | `>= 2.0`                 | `>= 2.0`                  | *[Link](#http-rb)*                  | *[Link](https://github.com/httprb/http)*                                       |
+| http.rb                  | `httprb`                   | `>= 2.0`                 | `>= 2.0`                  | *[Link](#httprb)*                  | *[Link](https://github.com/httprb/http)*                                       |
 | httpclient                | `httpclient`              | `>= 2.2`                 | `>= 2.2`                  | *[Link](#httpclient)*               | *[Link](https://github.com/nahi/httpclient)*                                     |
 | httpx                     | `httpx`                   | `>= 0.11`                | `>= 0.11`                 | *[Link](#httpx)*                    | *[Link](https://gitlab.com/honeyryderchuck/httpx)*                             |
 | Kafka                    | `ruby-kafka`               | `>= 0.7.10`              | `>= 0.7.10`               | *[Link](#kafka)*                    | *[Link](https://github.com/zendesk/ruby-kafka)*                                |
@@ -469,6 +484,27 @@ Where `options` is an optional `Hash` that accepts the following parameters:
 | `service_name` | Service name used for rendering instrumentation. | `action_view` |
 | `template_base_path` | Used when the template name is parsed. If you don't store your templates in the `views/` folder, you may need to change this value | `'views/'` |
 
+### Action Mailer
+
+The Action Mailer integration provides tracing for Rails 5 ActionMailer actions.
+
+You can enable it through `Datadog.configure`:
+
+```ruby
+require 'ddtrace'
+ Datadog.configure do |c|
+  c.use :action_mailer, options
+end
+```
+
+Where `options` is an optional `Hash` that accepts the following parameters:
+
+| Key | Description | Default |
+| --- | ----------- | ------- |
+| `analytics_enabled` | Enable analytics for spans produced by this integration. `true` for on, `nil` to defer to global setting, `false` for off. | `false` |
+| `service_name` | Service name used for `action_mailer` instrumentation | `'action_mailer'` |
+| `email_data` | Whether or not to append additional email payload metadata to `action_mailer.deliver` spans. Fields include `['subject', 'to', 'from', 'bcc', 'cc', 'date', 'perform_deliveries']`. | `false` |
+
 ### Active Model Serializers
 
 The Active Model Serializers integration traces the `serialize` event for version 0.9+ and the `render` event for version 0.10+.
@@ -507,6 +543,28 @@ Where `options` is an optional `Hash` that accepts the following parameters:
 | Key | Description | Default |
 | ---| --- | --- |
 | `service_name` | Service name used for rendering instrumentation. | `action_pack` |
+
+### Active Job
+
+Most of the time, Active Job is set up as part of Rails, but it can be activated separately:
+
+```ruby
+require 'active_job'
+require 'ddtrace'
+
+Datadog.configure do |c|
+  c.use :active_job, options
+end
+
+ExampleJob.perform_later
+```
+
+Where `options` is an optional `Hash` that accepts the following parameters:
+
+| Key | Description | Default |
+| --- | ----------- | ------- |
+| `service_name` | Service name used for `active_job` instrumentation | `'active_job'` |
+| `log_injection` | Automatically enables injection [Trace Correlation](#trace-correlation) information, such as `dd.trace_id`, into Active Job logs. Supports the default logger (`ActiveSupport::TaggedLogging`) and `Lograge`. Details on the format of Trace Correlation information can be found in the [Trace Correlation](#trace-correlation) section. | `false` |
 
 ### Active Record
 
@@ -1028,6 +1086,7 @@ Where `options` is an optional `Hash` that accepts the following parameters:
 | Key | Description | Default |
 | --- | ----------- | ------- |
 | `service_name` | Service name used for `grpc` instrumentation | `'grpc'` |
+| `error_handler` | Custom error handler invoked when a request is an error. A `Proc` that accepts `span` and `error` parameters. Sets error on the span by default. | `proc { |span, error| span.set_error(error) unless span.nil? }` |
 
 **Configuring clients to use different settings**
 
@@ -1166,6 +1225,37 @@ Where `options` is an optional `Hash` that accepts the following parameters:
 | --- | ----------- | ------- |
 | `quantize` | Hash containing options for quantization. May include `:show` with an Array of keys to not quantize (or `:all` to skip quantization), or `:exclude` with Array of keys to exclude entirely. | `{ show: [:collection, :database, :operation] }` |
 | `service_name` | Service name used for `mongo` instrumentation | `'mongodb'` |
+
+**Configuring trace settings per connection**
+
+You can configure trace settings per connection by using the `describes` option:
+
+```ruby
+# Provide a `:describes` option with a connection key.
+# Any of the following keys are acceptable and equivalent to one another.
+# If a block is provided, it yields a Settings object that
+# accepts any of the configuration options listed above.
+
+Datadog.configure do |c|
+  # Network connection string
+  c.use :mongo, describes: '127.0.0.1:27017', service_name: 'mongo-primary'
+
+  # Network connection regular expression
+  c.use :mongo, describes: /localhost.*/, service_name: 'mongo-secondary'
+end
+
+client = Mongo::Client.new([ '127.0.0.1:27017' ], :database => 'artists')
+collection = client[:people]
+collection.insert_one({ name: 'Steve' })
+# Traced call will belong to `mongo-primary` service
+
+client = Mongo::Client.new([ 'localhost:27017' ], :database => 'artists')
+collection = client[:people]
+collection.insert_one({ name: 'Steve' })
+# Traced call will belong to `mongo-secondary` service
+```
+
+When multiple `describes` configurations match a connection, the latest configured rule that matches will be applied.
 
 ### MySQL2
 
@@ -1421,6 +1511,7 @@ Where `options` is an optional `Hash` that accepts the following parameters:
 | `database_service` | Database service name used when tracing database activity | `'<app_name>-<adapter_name>'` |
 | `distributed_tracing` | Enables [distributed tracing](#distributed-tracing) so that this service trace is connected with a trace of another service if tracing headers are received | `true` |
 | `exception_controller` | Class or Module which identifies a custom exception controller class. Tracer provides improved error behavior when it can identify custom exception controllers. By default, without this option, it 'guesses' what a custom exception controller looks like. Providing this option aids this identification. | `nil` |
+| `job_service` | Service name used when tracing ActiveJob activity. | `<app_name>-active_job` |
 | `middleware` | Add the trace middleware to the Rails application. Set to `false` if you don't want the middleware to load. | `true` |
 | `middleware_names` | Enables any short-circuited middleware requests to display the middleware name as a resource for the trace. | `false` |
 | `service_name` | Service name used when tracing application requests (on the `rack` level) | `'<app_name>'` (inferred from your Rails application namespace) |
@@ -1431,7 +1522,6 @@ Where `options` is an optional `Hash` that accepts the following parameters:
 
 | MRI Versions  | JRuby Versions | Rails Versions |
 | ------------- | -------------- | -------------- |
-|  2.0          |                |  3.0 - 3.2     |
 |  2.1          |                |  3.0 - 4.2     |
 |  2.2 - 2.3    |                |  3.0 - 5.2     |
 |  2.4          |                |  4.2.8 - 5.2   |
@@ -2122,7 +2212,7 @@ For more details on how to activate distributed tracing for integrations, see th
 - [Rack](#rack)
 - [Rails](#rails)
 - [Sinatra](#sinatra)
-- [http.rb](#http-rb)
+- [http.rb](#httprb)
 - [httpclient](#httpclient)
 - [httpx](#httpx)
 
@@ -2340,7 +2430,9 @@ Datadog.tracer.trace('my.operation') { logger.warn('This is a traced operation.'
 
 ### Configuring the transport layer
 
-By default, the tracer submits trace data using `Net::HTTP` to `127.0.0.1:8126`, the default location for the Datadog trace agent process. However, the tracer can be configured to send its trace data to alternative destinations, or by alternative protocols.
+By default, the tracer submits trace data using the Unix socket `/var/run/datadog/apm.socket`, if one is created by the Agent. Otherwise, it connects via HTTP to `127.0.0.1:8126`, the default TCP location the Agent listens on.
+
+However, the tracer can be configured to send its trace data to alternative destinations, or by alternative protocols.
 
 Some basic settings, such as hostname and port, can be configured using [tracer settings](#tracer-settings).
 
@@ -2366,7 +2458,7 @@ To use, first configure your trace agent to listen by Unix socket, then configur
 ```ruby
 Datadog.configure do |c|
   c.tracer.transport_options = proc { |t|
-    # Provide filepath to trace agent Unix socket
+    # Provide local path to trace agent Unix socket
     t.adapter :unix, '/tmp/ddagent/trace.sock'
   }
 end
@@ -2410,7 +2502,7 @@ The tracer and its integrations can produce some additional metrics that can pro
 To configure your application for metrics collection:
 
 1. [Configure your Datadog agent for StatsD](https://docs.datadoghq.com/developers/dogstatsd/#setup)
-2. Add `gem 'dogstatsd-ruby', '~> 5.2'` to your Gemfile
+2. Add `gem 'dogstatsd-ruby', '~> 5.3'` to your Gemfile
 
 #### For application runtime
 
@@ -2439,11 +2531,13 @@ See the [Dogstatsd documentation](https://www.rubydoc.info/github/DataDog/dogsta
 
 The stats are VM specific and will include:
 
-| Name                        | Type    | Description                                              |
-| --------------------------  | ------- | -------------------------------------------------------- |
-| `runtime.ruby.class_count`  | `gauge` | Number of classes in memory space.                       |
-| `runtime.ruby.thread_count` | `gauge` | Number of threads.                                       |
-| `runtime.ruby.gc.*`.        | `gauge` | Garbage collection statistics: collected from `GC.stat`. |
+| Name                        | Type    | Description                                              | Available on |
+| --------------------------  | ------- | -------------------------------------------------------- | ------------ |
+| `runtime.ruby.class_count`  | `gauge` | Number of classes in memory space.                       | CRuby        |
+| `runtime.ruby.gc.*`         | `gauge` | Garbage collection statistics: collected from `GC.stat`. | All runtimes |
+| `runtime.ruby.thread_count` | `gauge` | Number of threads.                                       | All runtimes |
+| `runtime.ruby.global_constant_state` | `gauge` | Global constant cache generation.               | CRuby        |
+| `runtime.ruby.global_method_state`   | `gauge` | [Global method cache generation.](https://tenderlovemaking.com/2015/12/23/inline-caching-in-mri.html) | [CRuby < 3.0.0](https://docs.ruby-lang.org/en/3.0.0/NEWS_md.html#label-Implementation+improvements) |
 
 In addition, all metrics include the following tags:
 
@@ -2489,7 +2583,11 @@ However, additional instrumentation provided by Datadog can be activated alongsi
 
 **Setup**
 
-To get started with profiling, follow the [Profiler Getting Started Guide](https://docs.datadoghq.com/tracing/profiler/getting_started/?code-lang=ruby).
+To get started with profiling, follow the [Enabling the Ruby Profiler](https://docs.datadoghq.com/tracing/profiler/enabling/ruby/) guide.
+
+#### Troubleshooting
+
+If you run into issues with profiling, please check the [Profiler Troubleshooting Guide](https://docs.datadoghq.com/tracing/profiler/profiler_troubleshooting/?code-lang=ruby).
 
 #### Profiling Resque jobs
 

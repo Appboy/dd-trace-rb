@@ -1,3 +1,4 @@
+# typed: false
 require 'datadog/ci/spec_helper'
 
 require 'datadog/ci/test'
@@ -119,6 +120,18 @@ RSpec.describe Datadog::CI::Test do
       it do
         expect(span.get_tag(Datadog::CI::Ext::Test::TAG_FRAMEWORK))
           .to eq(framework)
+      end
+    end
+
+    context 'when :framework_version is given' do
+      let(:tags) { { framework_version: framework_version } }
+      let(:framework_version) { 'framework_version' }
+
+      before { set_tags! }
+
+      it do
+        expect(span.get_tag(Datadog::CI::Ext::Test::TAG_FRAMEWORK_VERSION))
+          .to eq(framework_version)
       end
     end
 

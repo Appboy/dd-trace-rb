@@ -1,3 +1,4 @@
+# typed: true
 require 'ddtrace/configuration/agent_settings_resolver'
 require 'ddtrace/diagnostics/health'
 require 'ddtrace/logger'
@@ -57,7 +58,14 @@ module Datadog
             default_service: settings.service,
             enabled: settings.tracer.enabled,
             partial_flush: settings.tracer.partial_flush.enabled,
-            tags: build_tracer_tags(settings)
+            tags: build_tracer_tags(settings),
+            sampler: PrioritySampler.new(
+              base_sampler: AllSampler.new,
+              post_sampler: Sampling::RuleSampler.new(
+                rate_limit: settings.sampling.rate_limit,
+                default_sample_rate: settings.sampling.default_rate
+              )
+            )
           )
 
           # TODO: We reconfigure the tracer here because it has way too many
@@ -70,7 +78,7 @@ module Datadog
           tracer
         end
 
-        def build_profiler(settings, agent_settings)
+        def build_profiler(settings, agent_settings, tracer)
           return unless Datadog::Profiling.supported? && settings.profiling.enabled
 
           unless defined?(Datadog::Profiling::Tasks::Setup)
@@ -107,8 +115,13 @@ module Datadog
 
           # NOTE: Please update the Initialization section of ProfilingDevelopment.md with any changes to this method
 
+          trace_identifiers_helper = Datadog::Profiling::TraceIdentifiers::Helper.new(
+            tracer: tracer,
+            endpoint_collection_enabled: settings.profiling.advanced.endpoint.collection.enabled
+          )
+
           recorder = build_profiler_recorder(settings)
-          collectors = build_profiler_collectors(settings, recorder)
+          collectors = build_profiler_collectors(settings, recorder, trace_identifiers_helper)
           exporters = build_profiler_exporters(settings, agent_settings)
           scheduler = build_profiler_scheduler(settings, recorder, exporters)
 
@@ -161,14 +174,15 @@ module Datadog
         def build_profiler_recorder(settings)
           event_classes = [Datadog::Profiling::Events::StackSample]
 
-          Datadog::Profiling::Recorder.new(event_classes, settings.profiling.max_events)
+          Datadog::Profiling::Recorder.new(event_classes, settings.profiling.advanced.max_events)
         end
 
-        def build_profiler_collectors(settings, recorder)
+        def build_profiler_collectors(settings, recorder, trace_identifiers_helper)
           [
             Datadog::Profiling::Collectors::Stack.new(
               recorder,
-              max_frames: settings.profiling.max_frames
+              trace_identifiers_helper: trace_identifiers_helper,
+              max_frames: settings.profiling.advanced.max_frames
               # TODO: Provide proc that identifies Datadog worker threads?
               # ignore_thread: settings.profiling.ignore_profiler
             )
@@ -209,7 +223,7 @@ module Datadog
         @tracer = self.class.build_tracer(settings, agent_settings)
 
         # Profiler
-        @profiler = self.class.build_profiler(settings, agent_settings)
+        @profiler = self.class.build_profiler(settings, agent_settings, @tracer)
 
         # Runtime metrics
         @runtime_metrics = self.class.build_runtime_metrics_worker(settings)

@@ -1,3 +1,4 @@
+# typed: false
 require 'ddtrace/logger'
 require 'ddtrace/transport/http'
 
@@ -36,7 +37,7 @@ module Datadog
         flush_traces(traces)
       rescue StandardError => e
         Datadog.logger.error(
-          "Error while writing traces: dropped #{traces.length} items. Cause: #{e} Location: #{e.backtrace.first}"
+          "Error while writing traces: dropped #{traces.length} items. Cause: #{e} Location: #{Array(e.backtrace).first}"
         )
       end
 

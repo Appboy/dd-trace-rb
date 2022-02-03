@@ -1,3 +1,4 @@
+# typed: false
 require 'spec_helper'
 
 require 'datadog/statsd'
@@ -35,7 +36,7 @@ RSpec.describe Datadog::Configuration::Components do
         .and_return(tracer)
 
       expect(described_class).to receive(:build_profiler)
-        .with(settings, instance_of(Datadog::Configuration::AgentSettingsResolver::AgentSettings))
+        .with(settings, instance_of(Datadog::Configuration::AgentSettingsResolver::AgentSettings), tracer)
         .and_return(profiler)
 
       expect(described_class).to receive(:build_runtime_metrics_worker)
@@ -335,7 +336,12 @@ RSpec.describe Datadog::Configuration::Components do
             default_service: settings.service,
             enabled: settings.tracer.enabled,
             partial_flush: settings.tracer.partial_flush.enabled,
-            tags: settings.tags
+            tags: settings.tags,
+            sampler: lambda do |sampler|
+              expect(sampler.pre_sampler).to be_a(Datadog::AllSampler)
+              expect(sampler.priority_sampler.rate_limiter.rate).to eq(settings.sampling.rate_limit)
+              expect(sampler.priority_sampler.default_sampler).to be_a(Datadog::RateByServiceSampler)
+            end
           }
         end
         let(:options) { {} }
@@ -666,8 +672,9 @@ RSpec.describe Datadog::Configuration::Components do
   describe '::build_profiler' do
     let(:agent_settings) { Datadog::Configuration::AgentSettingsResolver.call(settings, logger: nil) }
     let(:profiler) { build_profiler }
+    let(:tracer) { instance_double(Datadog::Tracer) }
 
-    subject(:build_profiler) { described_class.build_profiler(settings, agent_settings) }
+    subject(:build_profiler) { described_class.build_profiler(settings, agent_settings, tracer) }
 
     context 'when profiling is not supported' do
       before { allow(Datadog::Profiling).to receive(:supported?).and_return(false) }
@@ -677,7 +684,8 @@ RSpec.describe Datadog::Configuration::Components do
 
     context 'given settings' do
       before do
-        skip 'Profiling is not supported.' unless Datadog::Profiling.supported?
+        skip 'Profiling is not supported on JRuby' if PlatformHelpers.jruby?
+        skip 'Profiling is not supported on TruffleRuby' if PlatformHelpers.truffleruby?
       end
 
       shared_examples_for 'disabled profiler' do
@@ -703,7 +711,7 @@ RSpec.describe Datadog::Configuration::Components do
             enabled?: true,
             started?: false,
             ignore_thread: nil,
-            max_frames: settings.profiling.max_frames,
+            max_frames: settings.profiling.advanced.max_frames,
             max_time_usage_pct: 2.0
           )
         end
@@ -726,12 +734,16 @@ RSpec.describe Datadog::Configuration::Components do
         subject(:recorder) { profiler.scheduler.recorder }
 
         it do
-          is_expected.to have_attributes(max_size: settings.profiling.max_events)
+          is_expected.to have_attributes(max_size: settings.profiling.advanced.max_events)
         end
       end
 
       shared_examples_for 'profiler with default exporters' do
         subject(:http_exporter) { profiler.scheduler.exporters.first }
+
+        before do
+          allow(File).to receive(:exist?).with('/var/run/datadog/apm.socket').and_return(false)
+        end
 
         it 'has an HTTP exporter' do
           expect(profiler.scheduler.exporters).to have(1).item
@@ -783,48 +795,17 @@ RSpec.describe Datadog::Configuration::Components do
 
             build_profiler
           end
-        end
 
-        context 'and :site + :api_key' do
-          context 'are set' do
-            let(:site) { 'test.datadoghq.com' }
-            let(:api_key) { SecureRandom.uuid }
+          [true, false].each do |value|
+            context "when endpoint_collection_enabled is #{value}" do
+              before { settings.profiling.advanced.endpoint.collection.enabled = value }
 
-            before do
-              allow(settings)
-                .to receive(:site)
-                .and_return(site)
+              it "initializes the TraceIdentifiers::Helper with endpoint_collection_enabled: #{value}" do
+                expect(Datadog::Profiling::TraceIdentifiers::Helper)
+                  .to receive(:new).with(tracer: tracer, endpoint_collection_enabled: value)
 
-              allow(settings)
-                .to receive(:api_key)
-                .and_return(api_key)
-            end
-
-            it_behaves_like 'profiler with default collectors'
-            it_behaves_like 'profiler with default scheduler'
-            it_behaves_like 'profiler with default recorder'
-
-            it 'configures agentless transport' do
-              expect(profiler.scheduler.exporters).to have(1).item
-              expect(profiler.scheduler.exporters).to include(kind_of(Datadog::Profiling::Exporter))
-              http_exporter = profiler.scheduler.exporters.first
-
-              expect(http_exporter).to have_attributes(
-                transport: kind_of(Datadog::Profiling::Transport::HTTP::Client)
-              )
-
-              # Should be configured for agentless transport
-              default_api = Datadog::Profiling::Transport::HTTP::API::V1
-              expect(http_exporter.transport.api).to have_attributes(
-                adapter: kind_of(Datadog::Transport::HTTP::Adapters::Net),
-                spec: Datadog::Profiling::Transport::HTTP::API.api_defaults[default_api]
-              )
-              expect(http_exporter.transport.api.adapter).to have_attributes(
-                hostname: "intake.profile.#{site}",
-                port: 443,
-                ssl: true,
-                timeout: settings.profiling.upload.timeout_seconds
-              )
+                build_profiler
+              end
             end
           end
         end

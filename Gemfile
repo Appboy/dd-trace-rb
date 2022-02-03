@@ -12,9 +12,6 @@ gem 'climate_control', '~> 0.2.0'
 # Leave it open as we also have it as an integration and want Appraisal to control the version under test.
 gem 'concurrent-ruby'
 gem 'memory_profiler', '~> 0.9'
-gem 'minitest', '= 5.10.1'
-gem 'minitest-around', '0.5.0'
-gem 'minitest-stub_any_instance', '1.0.2'
 gem 'os', '~> 1.1'
 gem 'pimpmychangelog', '>= 0.1.2'
 gem 'pry'
@@ -26,11 +23,17 @@ if RUBY_PLATFORM != 'java'
 else
   gem 'pry-debugger-jruby'
 end
-gem 'rake', '>= 10.5', '< 13.0.4' # Locking rake until https://github.com/thoughtbot/appraisal/pull/184 is released
+gem 'rake', '>= 10.5'
+gem 'rake-compiler', '~> 1.1', '>= 1.1.1' # To compile native extensions
 gem 'redcarpet', '~> 3.4' if RUBY_PLATFORM != 'java'
 gem 'rspec', '~> 3.10'
 gem 'rspec-collection_matchers', '~> 1.1'
-gem 'rspec_junit_formatter', '>= 0.4.1'
+if RUBY_VERSION >= '2.3.0'
+  gem 'rspec_junit_formatter', '>= 0.5.1'
+else
+  # Newer versions do not support Ruby < 2.3.
+  gem 'rspec_junit_formatter', '<= 0.4.1'
+end
 gem 'rspec_n', '~> 1.3' if RUBY_VERSION >= '2.4.0'
 gem 'ruby-prof', '~> 1.4' if RUBY_PLATFORM != 'java' && RUBY_VERSION >= '2.4.0'
 if RUBY_VERSION >= '2.5.0'
@@ -69,4 +72,20 @@ gem 'opentracing', '>= 0.4.1'
 #       lib/ddtrace/profiling.rb: it breaks for some older rubies in CI without BUNDLE_FORCE_RUBY_PLATFORM=true.
 #       Since most of our customers won't have BUNDLE_FORCE_RUBY_PLATFORM=true, it's not something we want to add
 #       to our CI, so we just shortcut and exclude specific versions that were affecting our CI.
-gem 'google-protobuf', ['~> 3.0', '!= 3.7.0', '!= 3.7.1'] if RUBY_PLATFORM != 'java'
+if RUBY_PLATFORM != 'java'
+  if RUBY_VERSION >= '2.4.0' # Bundler 1.x fails to recognize that version >= 3.19.2 is not compatible with older rubies
+    gem 'google-protobuf', ['~> 3.0', '!= 3.7.0', '!= 3.7.1']
+  else
+    gem 'google-protobuf', ['~> 3.0', '!= 3.7.0', '!= 3.7.1', '< 3.19.2']
+  end
+end
+
+# For type checking
+# Sorbet releases almost daily, with new checks introduced that can make a
+# previously-passing codebase start failing. Thus, we need to lock to a specific
+# version and bump it from time to time.
+# Also, there's no support for windows
+if RUBY_VERSION >= '2.4.0' && !Gem.win_platform?
+  gem 'sorbet', '= 0.5.9120'
+  gem 'spoom', '~> 1.1'
+end

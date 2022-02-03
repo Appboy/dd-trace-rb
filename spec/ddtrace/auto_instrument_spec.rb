@@ -1,3 +1,4 @@
+# typed: ignore
 require 'ddtrace/contrib/support/spec_helper'
 require 'rack/test'
 
@@ -111,9 +112,10 @@ RSpec.describe 'Profiler startup' do
   end
 
   it 'starts the profiler' do
-    skip 'Profiler not supported on JRuby' if PlatformHelpers.jruby?
+    skip 'Profiling is not supported on JRuby' if PlatformHelpers.jruby?
+    skip 'Profiling is not supported on TruffleRuby' if PlatformHelpers.truffleruby?
 
-    profiler = instance_double(Datadog::Profiler)
+    profiler = instance_double('Datadog::Profiler')
 
     expect(Datadog).to receive(:profiler).and_return(profiler).at_least(:once)
     expect(profiler).to receive(:start)

@@ -1,3 +1,4 @@
+# typed: true
 require 'ddtrace/contrib/patcher'
 require 'ddtrace/contrib/httpclient/instrumentation'
 require 'ddtrace/utils/only_once'
@@ -28,7 +29,7 @@ module Datadog
             begin
               ::HTTPClient.include(Instrumentation)
             rescue StandardError => e
-              Datadog::Logger.error("Unable to apply httpclient integration: #{e}")
+              Datadog.logger.error("Unable to apply httpclient integration: #{e}")
             end
           end
         end

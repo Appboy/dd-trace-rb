@@ -28,7 +28,14 @@ Gem::Specification.new do |spec|
     raise 'RubyGems 2.0 or newer is required to protect against public gem pushes.'
   end
 
-  spec.files         = `git ls-files -z`.split("\x0").reject { |f| f.match(%r{^(test|spec|features)/}) }
+  spec.files =
+    `git ls-files -z`
+    .split("\x0")
+    .reject { |f| f.match(%r{^(test|spec|features|[.]circleci|[.]github|[.]dd-ci|benchmarks|gemfiles|integration|tasks|sorbet)/}) }
+    .reject do |f|
+      ['.dockerignore', '.env', '.gitattributes', '.gitlab-ci.yml', '.rspec', '.rubocop.yml',
+       '.rubocop_todo.yml', '.simplecov', 'Appraisals', 'Gemfile', 'Rakefile', 'docker-compose.yml', '.pryrc'].include?(f)
+    end
   spec.executables   = ['ddtracerb']
   spec.require_paths = ['lib']
 
@@ -39,6 +46,11 @@ Gem::Specification.new do |spec|
     spec.add_dependency 'msgpack', '< 1.4'
   end
 
-  # Used by the profiler
-  spec.add_dependency 'ffi', '~> 1.0'
+  # Used by the profiler native extension to support older Rubies (see NativeExtensionDesign.md for notes)
+  #
+  # Because we only use this for older Rubies, and we consider it "feature-complete" for those older Rubies,
+  # we're pinning it at the latest available version and will manually bump the dependency as needed.
+  spec.add_dependency 'debase-ruby_core_source', '<= 0.10.14'
+
+  spec.extensions = ['ext/ddtrace_profiling_native_extension/extconf.rb']
 end

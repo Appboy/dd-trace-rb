@@ -1,3 +1,4 @@
+# typed: false
 require 'ddtrace/profiling/pprof/payload'
 require 'ddtrace/profiling/pprof/message_set'
 require 'ddtrace/profiling/pprof/builder'
@@ -79,8 +80,8 @@ module Datadog
           converters.values.map(&:debug_statistics).join(', ')
         end
 
-        def to_pprof
-          profile = builder.build_profile
+        def to_pprof(start:, finish:)
+          profile = builder.build_profile(start: start, finish: finish)
           data = builder.encode_profile(profile)
           types = sample_type_mappings.keys
 

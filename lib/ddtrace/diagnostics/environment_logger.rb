@@ -1,3 +1,4 @@
+# typed: true
 require 'date'
 require 'json'
 require 'rbconfig'
@@ -22,7 +23,7 @@ module Datadog
           log_environment!(data.to_json)
           log_error!('Agent Error'.freeze, data[:agent_error]) if data[:agent_error]
         rescue => e
-          Datadog.logger.warn("Failed to collect environment information: #{e} location: #{e.backtrace.first}")
+          Datadog.logger.warn("Failed to collect environment information: #{e} Location: #{Array(e.backtrace).first}")
         end
 
         private

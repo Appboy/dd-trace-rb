@@ -1,3 +1,4 @@
+# typed: false
 require 'spec_helper'
 
 require 'ddtrace/profiling'
@@ -6,7 +7,8 @@ require 'ddtrace/profiling/pprof/builder'
 
 RSpec.describe Datadog::Profiling::Pprof::Builder do
   before do
-    skip 'Profiling is not supported.' unless Datadog::Profiling.supported?
+    skip 'Profiling is not supported on JRuby' if PlatformHelpers.jruby?
+    skip 'Profiling is not supported on TruffleRuby' if PlatformHelpers.truffleruby?
   end
 
   subject(:builder) { described_class.new }
@@ -44,7 +46,10 @@ RSpec.describe Datadog::Profiling::Pprof::Builder do
   end
 
   describe '#build_profile' do
-    subject(:build_profile) { builder.build_profile }
+    let(:start) { Time.utc(2022) }
+    let(:finish) { Time.utc(2023) }
+
+    subject(:build_profile) { builder.build_profile(start: start, finish: finish) }
 
     before do
       expect(Perftools::Profiles::Profile)
@@ -55,7 +60,9 @@ RSpec.describe Datadog::Profiling::Pprof::Builder do
           mapping: builder.mappings.messages,
           location: builder.locations.values,
           function: builder.functions.messages,
-          string_table: builder.string_table.strings
+          string_table: builder.string_table.strings,
+          time_nanos: start.to_i * 1_000_000_000,
+          duration_nanos: (finish - start).to_i * 1_000_000_000,
         )
         .and_call_original
     end

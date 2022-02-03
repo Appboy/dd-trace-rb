@@ -1,4 +1,6 @@
+# typed: false
 require 'ddtrace/contrib/integration'
+require 'ddtrace/contrib/configuration/resolvers/pattern_resolver'
 require 'ddtrace/contrib/mongodb/configuration/settings'
 require 'ddtrace/contrib/mongodb/patcher'
 
@@ -31,6 +33,10 @@ module Datadog
 
         def patcher
           Patcher
+        end
+
+        def resolver
+          @resolver ||= Contrib::Configuration::Resolvers::PatternResolver.new
         end
       end
     end

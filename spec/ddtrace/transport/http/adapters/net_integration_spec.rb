@@ -1,3 +1,4 @@
+# typed: false
 require 'spec_helper'
 
 require 'stringio'
@@ -9,7 +10,7 @@ require 'ddtrace/transport/http/adapters/net'
 RSpec.describe 'Adapters::Net tracing integration tests' do
   before { skip unless ENV['TEST_DATADOG_INTEGRATION'] }
 
-  subject(:adapter) { Datadog::Transport::HTTP::Adapters::Net.new(hostname, port) }
+  subject(:adapter) { Datadog::Transport::HTTP::Adapters::Net.new(hostname: hostname, port: port) }
 
   shared_context 'HTTP server' do
     # HTTP
@@ -43,8 +44,13 @@ RSpec.describe 'Adapters::Net tracing integration tests' do
     end
 
     after do
-      server.shutdown
-      @server_thread.join
+      unless RSpec.current_example.skipped?
+        # When the test is skipped, server has not been initialized and @server_thread would be nil; thus we only
+        # want to touch them when the test actually run, otherwise we would cause the server to start (incorrectly)
+        # and join to be called on a nil @server_thread
+        server.shutdown
+        @server_thread.join
+      end
     end
   end
 

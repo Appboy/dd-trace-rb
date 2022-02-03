@@ -1,24 +1,25 @@
-require 'ddtrace'
+# typed: false
 require 'ddtrace/utils/only_once'
 require 'ddtrace/profiling'
-require 'ddtrace/profiling/ext/cpu'
 require 'ddtrace/profiling/ext/forking'
 
 module Datadog
   module Profiling
     module Tasks
-      # Takes care of loading our extensions/monkey patches to handle fork() and CPU profiling.
+      # Takes care of loading our extensions/monkey patches to handle fork() and validating if CPU-time profiling is usable
       class Setup
         ACTIVATE_EXTENSIONS_ONLY_ONCE = Datadog::Utils::OnlyOnce.new
 
         def run
           ACTIVATE_EXTENSIONS_ONLY_ONCE.run do
             begin
+              check_if_cpu_time_profiling_is_supported
               activate_forking_extensions
-              activate_cpu_extensions
               setup_at_fork_hooks
             rescue StandardError, ScriptError => e
-              Datadog.logger.warn { "Profiler extensions unavailable. Cause: #{e.message} Location: #{e.backtrace.first}" }
+              Datadog.logger.warn do
+                "Profiler extensions unavailable. Cause: #{e.message} Location: #{Array(e.backtrace).first}"
+              end
             end
           end
         end
@@ -33,22 +34,18 @@ module Datadog
           end
         rescue StandardError, ScriptError => e
           Datadog.logger.warn do
-            "Profiler forking extensions unavailable. Cause: #{e.message} Location: #{e.backtrace.first}"
+            "Profiler forking extensions unavailable. Cause: #{e.message} Location: #{Array(e.backtrace).first}"
           end
         end
 
-        def activate_cpu_extensions
-          if Ext::CPU.supported?
-            Ext::CPU.apply!
-          elsif Datadog.configuration.profiling.enabled
+        def check_if_cpu_time_profiling_is_supported
+          unsupported = cpu_time_profiling_unsupported_reason
+
+          if unsupported
             Datadog.logger.info do
               'CPU time profiling skipped because native CPU time is not supported: ' \
-              "#{Ext::CPU.unsupported_reason}. Profiles containing Wall time will still be reported."
+              "#{unsupported}. Profiles containing 'Wall time' data will still be reported."
             end
-          end
-        rescue StandardError, ScriptError => e
-          Datadog.logger.warn do
-            "Profiler CPU profiling extensions unavailable. Cause: #{e.message} Location: #{e.backtrace.first}"
           end
         end
 
@@ -66,9 +63,25 @@ module Datadog
                 # Restart profiler, if enabled
                 Datadog.profiler.start if Datadog.profiler
               rescue StandardError => e
-                Datadog.logger.warn { "Error during post-fork hooks. Cause: #{e.message} Location: #{e.backtrace.first}" }
+                Datadog.logger.warn do
+                  "Error during post-fork hooks. Cause: #{e.message} Location: #{Array(e.backtrace).first}"
+                end
               end
             end
+          end
+        end
+
+        def cpu_time_profiling_unsupported_reason
+          # NOTE: Only the first matching reason is returned, so try to keep a nice order on reasons
+
+          if RUBY_ENGINE == 'jruby'
+            'JRuby is not supported'
+          elsif RUBY_PLATFORM.include?('darwin')
+            'Feature requires Linux; macOS is not supported'
+          elsif RUBY_PLATFORM =~ /(mswin|mingw)/
+            'Feature requires Linux; Windows is not supported'
+          elsif !RUBY_PLATFORM.include?('linux')
+            "Feature requires Linux; #{RUBY_PLATFORM} is not supported"
           end
         end
       end

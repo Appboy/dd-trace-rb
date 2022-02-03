@@ -1,3 +1,4 @@
+# typed: false
 module Datadog
   module Contrib
     module Grape
@@ -23,7 +24,7 @@ module Datadog
         # InstanceMethods - implementing instrumentation
         module InstanceMethods
           def run(*args)
-            ::ActiveSupport::Notifications.instrument('endpoint_run.grape.start_process')
+            ::ActiveSupport::Notifications.instrument('endpoint_run.grape.start_process', endpoint: self, env: env)
             super
           end
         end

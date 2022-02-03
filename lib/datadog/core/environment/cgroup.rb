@@ -1,3 +1,4 @@
+# typed: true
 require 'datadog/core/environment/ext'
 
 module Datadog
@@ -8,6 +9,8 @@ module Datadog
       # about the current Linux container identity.
       # @see https://man7.org/linux/man-pages/man7/cgroups.7.html
       module Cgroup
+        include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
+
         LINE_REGEX = /^(\d+):([^:]*):(.+)$/.freeze
 
         Descriptor = Struct.new(
@@ -31,7 +34,7 @@ module Datadog
                 end
               end
             rescue StandardError => e
-              Datadog.logger.error("Error while parsing cgroup. Cause: #{e.message} Location: #{e.backtrace.first}")
+              Datadog.logger.error("Error while parsing cgroup. Cause: #{e.message} Location: #{Array(e.backtrace).first}")
             end
           end
         end

@@ -1,9 +1,12 @@
+# typed: false
 module Datadog
   module Core
     # Namespace for handling application environment
     module Environment
       # Defines helper methods for environment
       module VariableHelpers
+        extend self
+
         def env_to_bool(var, default = nil)
           var = decode_array(var)
           var && ENV.key?(var) ? ENV[var].to_s.strip.downcase == 'true' : default

@@ -1,9 +1,11 @@
+# typed: false
 require 'ddtrace/pin'
 require 'ddtrace/ext/app_types'
 
 require 'ddtrace/contrib/active_record/integration'
 require 'ddtrace/contrib/active_support/integration'
 require 'ddtrace/contrib/action_cable/integration'
+require 'ddtrace/contrib/action_mailer/integration'
 require 'ddtrace/contrib/action_pack/integration'
 require 'ddtrace/contrib/action_view/integration'
 require 'ddtrace/contrib/grape/endpoint'
@@ -20,7 +22,7 @@ module Datadog
       # Rails framework code, used to essentially:
       # - handle configuration entries which are specific to Datadog tracing
       # - instrument parts of the framework when needed
-      module Framework
+      module Framework # rubocop:disable Metrics/ModuleLength
         # After the Rails application finishes initializing, we configure the Rails
         # integration and all its sub-components with the application information
         # available.
@@ -44,9 +46,11 @@ module Datadog
 
             activate_rack!(datadog_config, rails_config)
             activate_action_cable!(datadog_config, rails_config)
+            activate_action_mailer!(datadog_config, rails_config)
             activate_active_support!(datadog_config, rails_config)
             activate_action_pack!(datadog_config, rails_config)
             activate_action_view!(datadog_config, rails_config)
+            activate_active_job!(datadog_config, rails_config)
             activate_active_record!(datadog_config, rails_config)
             activate_lograge!(datadog_config, rails_config)
             activate_semantic_logger!(datadog_config, rails_config)
@@ -61,6 +65,7 @@ module Datadog
             config[:database_service] ||= "#{config[:service_name]}-#{Contrib::ActiveRecord::Utils.adapter_name}"
             config[:controller_service] ||= config[:service_name]
             config[:cache_service] ||= "#{config[:service_name]}-cache"
+            config[:job_service] ||= "#{config[:service_name]}-#{Contrib::ActiveJob::Ext::SERVICE_NAME}"
           end
         end
 
@@ -92,6 +97,15 @@ module Datadog
           )
         end
 
+        def self.activate_action_mailer!(datadog_config, rails_config)
+          return unless defined?(::ActionMailer)
+
+          datadog_config.use(
+            :action_mailer,
+            service_name: "#{rails_config[:service_name]}-#{Contrib::ActionMailer::Ext::SERVICE_NAME}"
+          )
+        end
+
         def self.activate_action_pack!(datadog_config, rails_config)
           return unless defined?(::ActionPack)
 
@@ -111,6 +125,16 @@ module Datadog
           datadog_config.use(
             :action_view,
             service_name: rails_config[:service_name]
+          )
+        end
+
+        def self.activate_active_job!(datadog_config, rails_config)
+          return unless defined?(::ActiveJob)
+
+          datadog_config.use(
+            :active_job,
+            service_name: rails_config[:job_service],
+            log_injection: rails_config[:log_injection]
           )
         end
 
