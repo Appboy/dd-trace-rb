@@ -16,7 +16,7 @@ module Datadog
         end
 
         def self.present?
-          super && defined?(::PG)
+          !defined?(::Pg).nil?
         end
 
         def default_configuration
