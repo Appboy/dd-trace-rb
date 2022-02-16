@@ -1,3 +1,4 @@
+# typed: false
 require 'ddtrace/contrib/configuration/resolver'
 require 'ddtrace/vendor/active_record/connection_specification'
 require_relative 'makara_resolver'
@@ -66,7 +67,7 @@ module Datadog
           rescue => e
             Datadog.logger.error(
               "Failed to resolve ActiveRecord configuration key #{db_config.inspect}. " \
-              "Cause: #{e.message} Source: #{e.backtrace.first}"
+              "Cause: #{e.message} Source: #{Array(e.backtrace).first}"
             )
 
             nil
@@ -85,7 +86,7 @@ module Datadog
           rescue => e
             Datadog.logger.error(
               "Failed to resolve ActiveRecord configuration key #{matcher.inspect}. " \
-              "Cause: #{e.message} Source: #{e.backtrace.first}"
+              "Cause: #{e.message} Source: #{Array(e.backtrace).first}"
             )
           end
 

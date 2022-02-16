@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require 'ddtrace/contrib/analytics'
@@ -37,10 +38,14 @@ module Datadog
         span.context.origin = Ext::Test::CONTEXT_ORIGIN if span.context
         Datadog::Contrib::Analytics.set_measured(span)
         span.set_tag(Ext::Test::TAG_SPAN_KIND, Ext::AppTypes::TEST)
-        Ext::Environment.tags(ENV).each { |k, v| span.set_tag(k, v) }
+
+        # Set environment tags
+        @environment_tags ||= Ext::Environment.tags(ENV)
+        @environment_tags.each { |k, v| span.set_tag(k, v) }
 
         # Set contextual tags
         span.set_tag(Ext::Test::TAG_FRAMEWORK, tags[:framework]) if tags[:framework]
+        span.set_tag(Ext::Test::TAG_FRAMEWORK_VERSION, tags[:framework_version]) if tags[:framework_version]
         span.set_tag(Ext::Test::TAG_NAME, tags[:test_name]) if tags[:test_name]
         span.set_tag(Ext::Test::TAG_SUITE, tags[:test_suite]) if tags[:test_suite]
         span.set_tag(Ext::Test::TAG_TYPE, tags[:test_type]) if tags[:test_type]

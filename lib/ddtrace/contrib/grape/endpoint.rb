@@ -1,3 +1,4 @@
+# typed: false
 require 'ddtrace/ext/http'
 require 'ddtrace/ext/errors'
 require 'ddtrace/contrib/analytics'
@@ -33,16 +34,26 @@ module Datadog
             end
           end
 
-          def endpoint_start_process(*)
+          def endpoint_start_process(_name, _start, _finish, _id, payload)
             return if Thread.current[KEY_RUN]
             return unless enabled?
 
+            # collect endpoint details
+            endpoint = payload.fetch(:endpoint)
+            api_view = api_view(endpoint.options[:for])
+            request_method = endpoint.options.fetch(:method).first
+            path = endpoint_expand_path(endpoint)
+            resource = "#{api_view} #{request_method} #{path}"
+
             # Store the beginning of a trace
-            tracer.trace(
+            span = tracer.trace(
               Ext::SPAN_ENDPOINT_RUN,
               service: service_name,
-              span_type: Datadog::Ext::HTTP::TYPE_INBOUND
+              span_type: Datadog::Ext::HTTP::TYPE_INBOUND,
+              resource: resource,
             )
+
+            try_setting_rack_request_resource(payload, span.resource)
 
             Thread.current[KEY_RUN] = true
           rescue StandardError => e
@@ -61,26 +72,20 @@ module Datadog
 
             begin
               # collect endpoint details
-              api = payload[:endpoint].options[:for]
+              endpoint = payload.fetch(:endpoint)
 
               # BRAZE MODIFICATION
               # The changes here https://github.com/ruby-grape/grape/issues/1825 don't work with the way we use grape
+              api = endpoint.options[:for]
               api_view = api.to_s
-
               if api_view.blank?
                 api_view = api_view(api)
               end
 
-              request_method = payload[:endpoint].options[:method].first
-              path = endpoint_expand_path(payload[:endpoint])
-              resource = "#{api_view} #{request_method} #{path}"
-              span.resource = resource
+              request_method = endpoint.options.fetch(:method).first
+              path = endpoint_expand_path(endpoint)
 
-              # set the request span resource if it's a `rack.request` span
-              request_span = payload[:env][Datadog::Contrib::Rack::Ext::RACK_ENV_REQUEST_SPAN]
-              if !request_span.nil? && request_span.name == Datadog::Contrib::Rack::Ext::SPAN_REQUEST
-                request_span.resource = resource
-              end
+              try_setting_rack_request_resource(payload, span.resource)
 
               # Set analytics sample rate
               Contrib::Analytics.set_sample_rate(span, analytics_sample_rate) if analytics_enabled?
@@ -234,6 +239,13 @@ module Datadog
 
           def datadog_configuration
             Datadog.configuration[:grape]
+          end
+
+          def try_setting_rack_request_resource(payload, resource)
+            request_span = payload[:env][Datadog::Contrib::Rack::Ext::RACK_ENV_REQUEST_SPAN]
+            if !request_span.nil? && request_span.name == Datadog::Contrib::Rack::Ext::SPAN_REQUEST
+              request_span.resource = resource
+            end
           end
         end
       end

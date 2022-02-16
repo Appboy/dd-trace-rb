@@ -1,3 +1,4 @@
+# typed: ignore
 require 'spec_helper'
 
 require 'ddtrace'
@@ -6,16 +7,16 @@ require 'datadog/statsd'
 
 RSpec.describe 'Tracer integration tests' do
   shared_context 'agent-based test' do
-    before { skip unless ENV['TEST_DATADOG_INTEGRATION'] }
+    before do
+      skip unless ENV['TEST_DATADOG_INTEGRATION']
 
-    let(:tracer) do
-      Datadog::Tracer.new(initialize_options).tap do |t|
-        t.configure(configure_options)
+      Datadog.configure do |c|
+        c.tracer(**tracer_options)
       end
     end
 
-    let(:initialize_options) { {} }
-    let(:configure_options) { { enabled: true } }
+    let(:tracer_options) { {} }
+    let(:tracer) { Datadog.tracer }
   end
 
   shared_examples 'flushed trace' do
@@ -94,6 +95,32 @@ RSpec.describe 'Tracer integration tests' do
       success = agent_receives_span_step2
       agent_receives_span_step3(success)
     end
+
+    context 'using unix transport' do
+      before do
+        skip('ddtrace only supports unix socket connectivity on Linux') unless PlatformHelpers.linux?
+
+        # DEV: To connect to a unix socket in another docker container (the agent container in our case)
+        # we need to share a volume with that container. Our current CircleCI setup uses `docker` executors
+        # which don't support sharing volumes. We'd have to migrate to using `machine` executors
+        # and manage the docker lifecycle ourselves if we want to share unix sockets for testing.
+        # In the mean time, this test is being skipped in CI.
+        # @see https://support.circleci.com/hc/en-us/articles/360007324514-How-can-I-use-Docker-volume-mounting-on-CircleCI-
+        skip("Can't share docker volume to access unix socket in CircleCI currently") if PlatformHelpers.ci?
+
+        Datadog.configure do |c|
+          c.tracer.transport_options = proc { |t|
+            t.adapter :unix, ENV['TEST_DDAGENT_UNIX_SOCKET']
+          }
+        end
+      end
+
+      it do
+        agent_receives_span_step1
+        success = agent_receives_span_step2
+        agent_receives_span_step3(success)
+      end
+    end
   end
 
   describe 'agent receives short span' do
@@ -149,10 +176,10 @@ RSpec.describe 'Tracer integration tests' do
     end
 
     let(:stats) { tracer.writer.stats }
-    let(:initialize_options) { { sampler: Datadog::PrioritySampler.new(post_sampler: rule_sampler) } }
+    let(:tracer_options) { { sampler: Datadog::PrioritySampler.new(post_sampler: rule_sampler) } }
 
     context 'with default settings' do
-      let(:initialize_options) { {} }
+      let(:tracer_options) { {} }
 
       it_behaves_like 'flushed trace'
       it_behaves_like 'priority sampled', Datadog::Ext::Priority::AUTO_KEEP
@@ -173,7 +200,7 @@ RSpec.describe 'Tracer integration tests' do
     end
 
     context 'with rate set through DD_TRACE_SAMPLE_RATE environment variable' do
-      let(:initialize_options) { {} }
+      let(:tracer_options) { {} }
 
       around do |example|
         ClimateControl.modify('DD_TRACE_SAMPLE_RATE' => '1.0') do
@@ -182,7 +209,7 @@ RSpec.describe 'Tracer integration tests' do
       end
 
       it_behaves_like 'flushed trace'
-      it_behaves_like 'priority sampled', Datadog::Ext::Priority::AUTO_KEEP
+      it_behaves_like 'priority sampled', Datadog::Ext::Priority::USER_KEEP
       it_behaves_like 'rule sampling rate metric', 1.0
       it_behaves_like 'rate limit metric', 1.0
 
@@ -196,7 +223,7 @@ RSpec.describe 'Tracer integration tests' do
       let(:rule_sampler) { Datadog::Sampling::RuleSampler.new(default_sample_rate: Float::MIN) }
 
       it_behaves_like 'flushed trace'
-      it_behaves_like 'priority sampled', Datadog::Ext::Priority::AUTO_REJECT
+      it_behaves_like 'priority sampled', Datadog::Ext::Priority::USER_REJECT
       it_behaves_like 'rule sampling rate metric', Float::MIN
       it_behaves_like 'rate limit metric', nil # Rate limiter is never reached, thus has no value to provide
     end
@@ -209,7 +236,7 @@ RSpec.describe 'Tracer integration tests' do
         let(:rule) { Datadog::Sampling::SimpleRule.new(name: 'my.op') }
 
         it_behaves_like 'flushed trace'
-        it_behaves_like 'priority sampled', Datadog::Ext::Priority::AUTO_KEEP
+        it_behaves_like 'priority sampled', Datadog::Ext::Priority::USER_KEEP
         it_behaves_like 'rule sampling rate metric', 1.0
         it_behaves_like 'rate limit metric', 1.0
 
@@ -217,7 +244,7 @@ RSpec.describe 'Tracer integration tests' do
           let(:rule) { Datadog::Sampling::SimpleRule.new(sample_rate: Float::MIN) }
 
           it_behaves_like 'flushed trace'
-          it_behaves_like 'priority sampled', Datadog::Ext::Priority::AUTO_REJECT
+          it_behaves_like 'priority sampled', Datadog::Ext::Priority::USER_REJECT
           it_behaves_like 'rule sampling rate metric', Float::MIN
           it_behaves_like 'rate limit metric', nil # Rate limiter is never reached, thus has no value to provide
         end
@@ -226,7 +253,7 @@ RSpec.describe 'Tracer integration tests' do
           let(:rule_sampler_opt) { { rate_limit: Float::MIN } }
 
           it_behaves_like 'flushed trace'
-          it_behaves_like 'priority sampled', Datadog::Ext::Priority::AUTO_REJECT
+          it_behaves_like 'priority sampled', Datadog::Ext::Priority::USER_REJECT
           it_behaves_like 'rule sampling rate metric', 1.0
           it_behaves_like 'rate limit metric', 0.0
         end
@@ -236,9 +263,10 @@ RSpec.describe 'Tracer integration tests' do
         let(:rule) { Datadog::Sampling::SimpleRule.new(name: 'not.my.op') }
 
         it_behaves_like 'flushed trace'
+        # The PrioritySampler was responsible for the sampling decision, not the Rule Sampler.
         it_behaves_like 'priority sampled', Datadog::Ext::Priority::AUTO_KEEP
-        it_behaves_like 'rule sampling rate metric', nil # Rule sampler is never reached, thus has no value to provide
-        it_behaves_like 'rate limit metric', nil # Rate limiter is never reached, thus has no value to provide
+        it_behaves_like 'rule sampling rate metric', nil
+        it_behaves_like 'rate limit metric', nil
       end
     end
   end
@@ -503,7 +531,7 @@ RSpec.describe 'Tracer integration tests' do
 
     let(:tracer) { Datadog::Tracer.new }
     let(:hostname) { double('hostname') }
-    let(:port) { double('port') }
+    let(:port) { 34567 }
     let(:settings) { Datadog::Configuration::Settings.new }
     let(:agent_settings) { Datadog::Configuration::AgentSettingsResolver.call(settings, logger: nil) }
 

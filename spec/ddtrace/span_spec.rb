@@ -1,3 +1,4 @@
+# typed: ignore
 require 'spec_helper'
 require 'ddtrace/ext/forced_tracing'
 require 'ddtrace/span'
@@ -19,7 +20,33 @@ RSpec.describe Datadog::Span do
   end
 
   after do
-    Datadog.configuration.reset!
+    without_warnings { Datadog.configuration.reset! }
+  end
+
+  describe '#initialize' do
+    context 'resource' do
+      context 'with no value provided' do
+        it 'defaults to name' do
+          expect(span.resource).to eq(name)
+        end
+      end
+
+      context 'with nil' do
+        let(:span_options) { { resource: nil } }
+
+        it 'respects the explicitly provided nil' do
+          expect(span.resource).to be_nil
+        end
+      end
+
+      context 'with a value' do
+        let(:span_options) { { resource: 'my resource' } }
+
+        it 'honors provided value' do
+          expect(span.resource).to eq('my resource')
+        end
+      end
+    end
   end
 
   context 'ids' do
@@ -271,9 +298,9 @@ RSpec.describe Datadog::Span do
         end
       end
 
-      after { Datadog.configuration.reset! }
+      after { without_warnings { Datadog.configuration.reset! } }
 
-      let(:time_now) { ::Time.new(2020, 1, 1) }
+      let(:time_now) { ::Time.utc(2020, 1, 1) }
 
       it 'sets the start time to the provider time' do
         span.start

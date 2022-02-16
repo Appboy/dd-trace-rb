@@ -1,14 +1,18 @@
+# typed: true
 module Datadog
   module Ext
     module Profiling
       ENV_ENABLED = 'DD_PROFILING_ENABLED'.freeze
       ENV_UPLOAD_TIMEOUT = 'DD_PROFILING_UPLOAD_TIMEOUT'.freeze
       ENV_MAX_FRAMES = 'DD_PROFILING_MAX_FRAMES'.freeze
+      ENV_AGENTLESS = 'DD_PROFILING_AGENTLESS'.freeze
+      ENV_ENDPOINT_COLLECTION_ENABLED = 'DD_PROFILING_ENDPOINT_COLLECTION_ENABLED'.freeze
 
       module Pprof
+        LABEL_KEY_LOCAL_ROOT_SPAN_ID = 'local root span id'.freeze
         LABEL_KEY_SPAN_ID = 'span id'.freeze
         LABEL_KEY_THREAD_ID = 'thread id'.freeze
-        LABEL_KEY_TRACE_ID = 'trace id'.freeze
+        LABEL_KEY_TRACE_ENDPOINT = 'trace endpoint'.freeze
         SAMPLE_VALUE_NO_VALUE = 0
         VALUE_TYPE_CPU = 'cpu-time'.freeze
         VALUE_TYPE_WALL = 'wall-time'.freeze
@@ -19,13 +23,9 @@ module Datadog
         module HTTP
           URI_TEMPLATE_DD_API = 'https://intake.profile.%s/'.freeze
 
-          FORM_FIELD_DATA = 'data[0]'.freeze
-          FORM_FIELD_FORMAT = 'format'.freeze
-          FORM_FIELD_FORMAT_PPROF = 'pprof'.freeze
-          FORM_FIELD_RECORDING_END = 'recording-end'.freeze
-          FORM_FIELD_RECORDING_START = 'recording-start'.freeze
-          FORM_FIELD_RUNTIME = 'runtime'.freeze
-          FORM_FIELD_RUNTIME_ID = 'runtime-id'.freeze
+          FORM_FIELD_RECORDING_START = 'start'.freeze
+          FORM_FIELD_RECORDING_END = 'end'.freeze
+          FORM_FIELD_FAMILY = 'family'.freeze
           FORM_FIELD_TAG_ENV = 'env'.freeze
           FORM_FIELD_TAG_HOST = 'host'.freeze
           FORM_FIELD_TAG_LANGUAGE = 'language'.freeze
@@ -39,13 +39,13 @@ module Datadog
           FORM_FIELD_TAG_SERVICE = 'service'.freeze
           FORM_FIELD_TAG_VERSION = 'version'.freeze
           FORM_FIELD_TAGS = 'tags'.freeze
-          FORM_FIELD_TYPES = 'types[0]'.freeze
-          FORM_FIELD_TYPES_AUTO = 'auto'.freeze
+          FORM_FIELD_INTAKE_VERSION = 'version'.freeze
 
           HEADER_CONTENT_TYPE = 'Content-Type'.freeze
           HEADER_CONTENT_TYPE_OCTET_STREAM = 'application/octet-stream'.freeze
 
-          PPROF_DEFAULT_FILENAME = 'profile.pb.gz'.freeze
+          FORM_FIELD_PPROF_DATA = 'data[rubyprofile.pprof]'.freeze
+          PPROF_DEFAULT_FILENAME = 'rubyprofile.pprof.gz'.freeze
         end
       end
     end

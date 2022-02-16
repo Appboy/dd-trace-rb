@@ -1,3 +1,4 @@
+# typed: false
 require 'datadog/core/environment/ext'
 
 module Datadog
@@ -73,7 +74,7 @@ module Datadog
             # in case.
             Datadog.logger.debug(
               "connection_id #{connection_id} does not represent a valid object. " \
-                      "Cause: #{e.message} Source: #{e.backtrace.first}"
+                      "Cause: #{e.message} Source: #{Array(e.backtrace).first}"
             )
           end
         else

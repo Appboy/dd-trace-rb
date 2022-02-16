@@ -1,3 +1,4 @@
+# typed: false
 require 'spec_helper'
 require 'ddtrace'
 require 'ddtrace/runtime/metrics'
@@ -166,6 +167,38 @@ RSpec.describe Datadog::Runtime::Metrics do
           runtime_metrics.gc_metrics.each_key do |metric_name|
             expect(runtime_metrics).to have_received(:gauge)
               .with(metric_name, kind_of(Numeric))
+              .once
+          end
+        end
+      end
+
+      context 'including VMCache stats' do
+        before do
+          skip('This feature is only supported in CRuby') unless PlatformHelpers.mri?
+
+          allow(runtime_metrics).to receive(:gauge)
+        end
+
+        context 'with Ruby < 3', if: RUBY_VERSION < '3.0.0' do
+          it 'records global cache counters' do
+            flush
+
+            expect(runtime_metrics).to have_received(:gauge)
+              .with(Datadog::Ext::Runtime::Metrics::METRIC_GLOBAL_CONSTANT_STATE, kind_of(Numeric))
+              .once
+
+            expect(runtime_metrics).to have_received(:gauge)
+              .with(Datadog::Ext::Runtime::Metrics::METRIC_GLOBAL_METHOD_STATE, kind_of(Numeric))
+              .once
+          end
+        end
+
+        context 'with Ruby >= 3', if: RUBY_VERSION >= '3.0.0' do
+          it 'records constant cache counter' do
+            flush
+
+            expect(runtime_metrics).to have_received(:gauge)
+              .with(Datadog::Ext::Runtime::Metrics::METRIC_GLOBAL_CONSTANT_STATE, kind_of(Numeric))
               .once
           end
         end

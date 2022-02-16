@@ -1,3 +1,4 @@
+# typed: false
 require 'ddtrace/transport/traces'
 
 require 'ddtrace/transport/io/response'
@@ -20,6 +21,8 @@ module Datadog
 
         # Extensions for HTTP client
         module Client
+          include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
+
           def send_traces(traces)
             # Build a request
             req = Transport::Traces::Request.new(Parcel.new(traces))

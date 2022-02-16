@@ -1,16 +1,18 @@
+# typed: true
 module Datadog
   module Utils
     # Common database-related utility functions.
     module Time
+      include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
+
       module_function
 
-      # Current monotonic time.
-      # Falls back to `now` if monotonic clock
-      # is not available.
+      # Current monotonic time
       #
-      # @return [Float] in seconds, since some unspecified starting point
-      def get_time
-        Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      # @param unit [Symbol] unit for the resulting value, same as ::Process#clock_gettime, defaults to :float_second
+      # @return [Numeric] timestamp in the requested unit, since some unspecified starting point
+      def get_time(unit = :float_second)
+        Process.clock_gettime(Process::CLOCK_MONOTONIC, unit)
       end
 
       # Current wall time.
@@ -37,6 +39,12 @@ module Datadog
         yield
         after = get_time
         after - before
+      end
+
+      def as_utc_epoch_ns(time)
+        # we use #to_r instead of #to_f because Float doesn't have enough precision to represent exact nanoseconds, see
+        # https://rubyapi.org/3.0/o/time#method-i-to_f
+        (time.to_r * 1_000_000_000).to_i
       end
     end
   end

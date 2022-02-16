@@ -1,6 +1,15 @@
+# typed: true
+
+# Used to quickly run benchmark under RSpec as part of the usual test suite, to validate it didn't bitrot
+VALIDATE_BENCHMARK_MODE = ENV['VALIDATE_BENCHMARK'] == 'true'
+
+return unless __FILE__ == $PROGRAM_NAME || VALIDATE_BENCHMARK_MODE
+
 require 'benchmark/ips'
 require 'ddtrace'
 require 'pry'
+require 'digest'
+require_relative 'dogstatsd_reporter'
 
 # This benchmark measures the performance of encoding pprofs and trying to submit them
 #
@@ -36,31 +45,31 @@ class ProfilerSubmission
   end
 
   def check_valid_pprof
-    output_pprof = @adapter_buffer.last[:form]["data[0]"].io
+    output_pprof = @adapter_buffer.last[:form]["data[rubyprofile.pprof]"].io
 
     expected_hashes = [
-      "75c65dec2d5d750faca3e905486c39ba44219636ac1bea15d5d624b741d4b62a",
-      "6780c47b3e271f2abe0346fd40ac358f6a34270b3a8f5743aacd1970bbbbc6f5"
+      "395dd7e65b35be6eede78ac9be072df8d6d79653f8c248691ad9bdd1d8b507de",
     ]
     current_hash = Digest::SHA256.hexdigest(Zlib::GzipReader.new(output_pprof).read)
 
     if expected_hashes.include?(current_hash)
       puts "Output hash #{current_hash} matches known signature"
     else
-      puts "WARNING: Unexpected pprof output -- unknown hash. Hashes seem to differ due to some of our dependencies changing, " \
+      puts "WARNING: Unexpected pprof output -- unknown hash (#{current_hash}). Hashes seem to differ due to some of our dependencies changing, " \
         "but it can also indicate that encoding output has become corrupted."
     end
   end
 
   def run_benchmark
     Benchmark.ips do |x|
-      x.config(time: 10, warmup: 2)
+      benchmark_time = VALIDATE_BENCHMARK_MODE ? {time: 0.01, warmup: 0} : {time: 70, warmup: 2}
+      x.config(**benchmark_time, suite: report_to_dogstatsd_if_enabled_via_environment_variable(benchmark_name: 'profiler_submission_v2'))
 
       x.report("exporter #{ENV['CONFIG']}") do
         run_once
       end
 
-      x.save! 'profiler-submission-results.json'
+      x.save! 'profiler-submission-results.json' unless VALIDATE_BENCHMARK_MODE
       x.compare!
     end
   end

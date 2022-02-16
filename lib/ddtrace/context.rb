@@ -1,3 +1,4 @@
+# typed: true
 require 'ddtrace/diagnostics/health'
 
 require 'ddtrace/context_flush'
@@ -77,13 +78,21 @@ module Datadog
     # earlier while child spans still need to finish their traced execution.
     def current_span
       @mutex.synchronize do
-        return @current_span
+        @current_span
       end
     end
 
     def current_root_span
       @mutex.synchronize do
-        return @current_root_span
+        @current_root_span
+      end
+    end
+
+    # Same as calling #current_span and #current_root_span, but works atomically thus preventing races when we need to
+    # retrieve both
+    def current_span_and_root_span
+      @mutex.synchronize do
+        [@current_span, @current_root_span]
       end
     end
 

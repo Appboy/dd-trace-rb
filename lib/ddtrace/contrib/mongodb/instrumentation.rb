@@ -1,3 +1,4 @@
+# typed: false
 require 'ddtrace/pin'
 require 'ddtrace/ext/net'
 require 'ddtrace/ext/app_types'
@@ -51,7 +52,7 @@ module Datadog
           module InstanceMethods
             def datadog_pin
               @datadog_pin ||= begin
-                service = Datadog.configuration[:mongo][:service_name]
+                service = Datadog.configuration[:mongo, seed][:service_name]
 
                 Datadog::Pin.new(
                   service,

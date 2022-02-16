@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require 'ddtrace/ext/git'
@@ -10,6 +11,8 @@ module Datadog
       # Defines constants for CI tags
       # rubocop:disable Metrics/ModuleLength:
       module Environment
+        include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
+
         TAG_JOB_NAME = 'ci.job.name'
         TAG_JOB_URL = 'ci.job.url'
         TAG_PIPELINE_ID = 'ci.pipeline.id'
@@ -37,22 +40,27 @@ module Datadog
         module_function
 
         def tags(env)
+          # Extract metadata from CI provider environment variables
           _, extractor = PROVIDERS.find { |provider_env_var, _| env.key?(provider_env_var) }
-          if extractor
-            tags = public_send(extractor, env)
+          tags = extractor ? public_send(extractor, env).reject { |_, v| v.nil? || v.strip.empty? } : {}
+          tags.delete(Datadog::Ext::Git::TAG_BRANCH) unless tags[Datadog::Ext::Git::TAG_TAG].nil?
 
-            tags[Datadog::Ext::Git::TAG_TAG] = normalize_ref(tags[Datadog::Ext::Git::TAG_TAG])
-            tags.delete(Datadog::Ext::Git::TAG_BRANCH) unless tags[Datadog::Ext::Git::TAG_TAG].nil?
-            tags[Datadog::Ext::Git::TAG_BRANCH] = normalize_ref(tags[Datadog::Ext::Git::TAG_BRANCH])
-            tags[Datadog::Ext::Git::TAG_REPOSITORY_URL] = filter_sensitive_info(tags[Datadog::Ext::Git::TAG_REPOSITORY_URL])
+          # If user defined metadata is defined, overwrite
+          tags.merge!(extract_user_defined_git(env))
+          if !tags[Datadog::Ext::Git::TAG_BRANCH].nil? && tags[Datadog::Ext::Git::TAG_BRANCH].include?('tags/')
+            tags[Datadog::Ext::Git::TAG_TAG] = tags[Datadog::Ext::Git::TAG_BRANCH]
+            tags.delete(Datadog::Ext::Git::TAG_BRANCH)
+          end
 
-            # Expand ~
-            workspace_path = tags[TAG_WORKSPACE_PATH]
-            if !workspace_path.nil? && (workspace_path == '~' || workspace_path.start_with?('~/'))
-              tags[TAG_WORKSPACE_PATH] = File.expand_path(workspace_path)
-            end
-          else
-            tags = {}
+          # Normalize Git references
+          tags[Datadog::Ext::Git::TAG_TAG] = normalize_ref(tags[Datadog::Ext::Git::TAG_TAG])
+          tags[Datadog::Ext::Git::TAG_BRANCH] = normalize_ref(tags[Datadog::Ext::Git::TAG_BRANCH])
+          tags[Datadog::Ext::Git::TAG_REPOSITORY_URL] = filter_sensitive_info(tags[Datadog::Ext::Git::TAG_REPOSITORY_URL])
+
+          # Expand ~
+          workspace_path = tags[TAG_WORKSPACE_PATH]
+          if !workspace_path.nil? && (workspace_path == '~' || workspace_path.start_with?('~/'))
+            tags[TAG_WORKSPACE_PATH] = File.expand_path(workspace_path)
           end
 
           # Fill out tags from local git as fallback
@@ -128,6 +136,8 @@ module Datadog
             TAG_PIPELINE_NUMBER => build_id,
             TAG_PIPELINE_URL => pipeline_url,
             TAG_JOB_URL => job_url,
+            TAG_STAGE_NAME => env['SYSTEM_STAGEDISPLAYNAME'],
+            TAG_JOB_NAME => env['SYSTEM_JOBDISPLAYNAME'],
             Datadog::Ext::Git::TAG_REPOSITORY_URL =>
               env['SYSTEM_PULLREQUEST_SOURCEREPOSITORYURI'] || env['BUILD_REPOSITORY_URI'],
             Datadog::Ext::Git::TAG_COMMIT_SHA => env['SYSTEM_PULLREQUEST_SOURCECOMMITID'] || env['BUILD_SOURCEVERSION'],
@@ -199,18 +209,23 @@ module Datadog
         end
 
         def extract_github_actions(env)
-          branch, tag = branch_or_tag(env['GITHUB_HEAD_REF'] || env['GITHUB_REF'])
+          ref = env['GITHUB_HEAD_REF']
+          ref = env['GITHUB_REF'] if ref.nil? || ref.empty?
+          branch, tag = branch_or_tag(ref)
+
+          pipeline_url = "#{env['GITHUB_SERVER_URL']}/#{env['GITHUB_REPOSITORY']}/actions/runs/#{env['GITHUB_RUN_ID']}"
+          pipeline_url = "#{pipeline_url}/attempts/#{env['GITHUB_RUN_ATTEMPT']}" if env['GITHUB_RUN_ATTEMPT']
 
           {
             Datadog::Ext::Git::TAG_BRANCH => branch,
             Datadog::Ext::Git::TAG_COMMIT_SHA => env['GITHUB_SHA'],
-            Datadog::Ext::Git::TAG_REPOSITORY_URL => "https://github.com/#{env['GITHUB_REPOSITORY']}.git",
+            Datadog::Ext::Git::TAG_REPOSITORY_URL => "#{env['GITHUB_SERVER_URL']}/#{env['GITHUB_REPOSITORY']}.git",
             Datadog::Ext::Git::TAG_TAG => tag,
-            TAG_JOB_URL => "https://github.com/#{env['GITHUB_REPOSITORY']}/commit/#{env['GITHUB_SHA']}/checks",
+            TAG_JOB_URL => "#{env['GITHUB_SERVER_URL']}/#{env['GITHUB_REPOSITORY']}/commit/#{env['GITHUB_SHA']}/checks",
             TAG_PIPELINE_ID => env['GITHUB_RUN_ID'],
             TAG_PIPELINE_NAME => env['GITHUB_WORKFLOW'],
             TAG_PIPELINE_NUMBER => env['GITHUB_RUN_NUMBER'],
-            TAG_PIPELINE_URL => "https://github.com/#{env['GITHUB_REPOSITORY']}/commit/#{env['GITHUB_SHA']}/checks",
+            TAG_PIPELINE_URL => pipeline_url,
             TAG_PROVIDER_NAME => 'github',
             TAG_WORKSPACE_PATH => env['GITHUB_WORKSPACE'],
             Datadog::Ext::Git::TAG_COMMIT_AUTHOR_NAME => env['BUILD_REQUESTEDFORID'],
@@ -220,12 +235,17 @@ module Datadog
         end
 
         def extract_gitlab(env)
+          commit_author_name, commit_author_email = extract_name_email(env['CI_COMMIT_AUTHOR'])
+
           url = env['CI_PIPELINE_URL']
           {
-            Datadog::Ext::Git::TAG_BRANCH => env['CI_COMMIT_BRANCH'],
+            Datadog::Ext::Git::TAG_BRANCH => env['CI_COMMIT_REF_NAME'],
             Datadog::Ext::Git::TAG_COMMIT_SHA => env['CI_COMMIT_SHA'],
             Datadog::Ext::Git::TAG_REPOSITORY_URL => env['CI_REPOSITORY_URL'],
             Datadog::Ext::Git::TAG_TAG => env['CI_COMMIT_TAG'],
+            Datadog::Ext::Git::TAG_COMMIT_AUTHOR_NAME => commit_author_name,
+            Datadog::Ext::Git::TAG_COMMIT_AUTHOR_EMAIL => commit_author_email,
+            Datadog::Ext::Git::TAG_COMMIT_AUTHOR_DATE => env['CI_COMMIT_TIMESTAMP'],
             TAG_STAGE_NAME => env['CI_JOB_STAGE'],
             TAG_JOB_NAME => env['CI_JOB_NAME'],
             TAG_JOB_URL => env['CI_JOB_URL'],
@@ -249,7 +269,7 @@ module Datadog
           {
             Datadog::Ext::Git::TAG_BRANCH => branch,
             Datadog::Ext::Git::TAG_COMMIT_SHA => env['GIT_COMMIT'],
-            Datadog::Ext::Git::TAG_REPOSITORY_URL => env['GIT_URL'],
+            Datadog::Ext::Git::TAG_REPOSITORY_URL => env['GIT_URL'] || env['GIT_URL_1'],
             Datadog::Ext::Git::TAG_TAG => tag,
             TAG_PIPELINE_ID => env['BUILD_TAG'],
             TAG_PIPELINE_NAME => name,
@@ -307,7 +327,7 @@ module Datadog
           {
             TAG_PROVIDER_NAME => 'bitrise',
             TAG_PIPELINE_ID => env['BITRISE_BUILD_SLUG'],
-            TAG_PIPELINE_NAME => env['BITRISE_APP_TITLE'],
+            TAG_PIPELINE_NAME => env['BITRISE_TRIGGERED_WORKFLOW_ID'],
             TAG_PIPELINE_NUMBER => env['BITRISE_BUILD_NUMBER'],
             TAG_PIPELINE_URL => env['BITRISE_BUILD_URL'],
             TAG_WORKSPACE_PATH => env['BITRISE_SOURCE_DIR'],
@@ -317,6 +337,22 @@ module Datadog
             Datadog::Ext::Git::TAG_TAG => env['BITRISE_GIT_TAG'],
             Datadog::Ext::Git::TAG_COMMIT_MESSAGE => env['BITRISE_GIT_MESSAGE']
           }
+        end
+
+        def extract_user_defined_git(env)
+          {
+            Datadog::Ext::Git::TAG_REPOSITORY_URL => env[Datadog::Ext::Git::ENV_REPOSITORY_URL],
+            Datadog::Ext::Git::TAG_COMMIT_SHA => env[Datadog::Ext::Git::ENV_COMMIT_SHA],
+            Datadog::Ext::Git::TAG_BRANCH => env[Datadog::Ext::Git::ENV_BRANCH],
+            Datadog::Ext::Git::TAG_TAG => env[Datadog::Ext::Git::ENV_TAG],
+            Datadog::Ext::Git::TAG_COMMIT_MESSAGE => env[Datadog::Ext::Git::ENV_COMMIT_MESSAGE],
+            Datadog::Ext::Git::TAG_COMMIT_AUTHOR_NAME => env[Datadog::Ext::Git::ENV_COMMIT_AUTHOR_NAME],
+            Datadog::Ext::Git::TAG_COMMIT_AUTHOR_EMAIL => env[Datadog::Ext::Git::ENV_COMMIT_AUTHOR_EMAIL],
+            Datadog::Ext::Git::TAG_COMMIT_AUTHOR_DATE => env[Datadog::Ext::Git::ENV_COMMIT_AUTHOR_DATE],
+            Datadog::Ext::Git::TAG_COMMIT_COMMITTER_NAME => env[Datadog::Ext::Git::ENV_COMMIT_COMMITTER_NAME],
+            Datadog::Ext::Git::TAG_COMMIT_COMMITTER_EMAIL => env[Datadog::Ext::Git::ENV_COMMIT_COMMITTER_EMAIL],
+            Datadog::Ext::Git::TAG_COMMIT_COMMITTER_DATE => env[Datadog::Ext::Git::ENV_COMMIT_COMMITTER_DATE]
+          }.reject { |_, v| v.nil? || v.strip.empty? }
         end
 
         def git_commit_users
@@ -339,49 +375,49 @@ module Datadog
             committer_date: Time.at(fields[5].to_i).utc.to_datetime.iso8601
           }
         rescue => e
-          Datadog.logger.debug("Unable to read git commit users: #{e.message} at #{e.backtrace.first}")
+          Datadog.logger.debug("Unable to read git commit users: #{e.message} at #{Array(e.backtrace).first}")
           nil
         end
 
         def git_repository_url
           exec_git_command('git ls-remote --get-url')
         rescue => e
-          Datadog.logger.debug("Unable to read git repository url: #{e.message} at #{e.backtrace.first}")
+          Datadog.logger.debug("Unable to read git repository url: #{e.message} at #{Array(e.backtrace).first}")
           nil
         end
 
         def git_commit_message
           exec_git_command('git show -s --format=%s')
         rescue => e
-          Datadog.logger.debug("Unable to read git commit message: #{e.message} at #{e.backtrace.first}")
+          Datadog.logger.debug("Unable to read git commit message: #{e.message} at #{Array(e.backtrace).first}")
           nil
         end
 
         def git_branch
           exec_git_command('git rev-parse --abbrev-ref HEAD')
         rescue => e
-          Datadog.logger.debug("Unable to read git branch: #{e.message} at #{e.backtrace.first}")
+          Datadog.logger.debug("Unable to read git branch: #{e.message} at #{Array(e.backtrace).first}")
           nil
         end
 
         def git_commit_sha
           exec_git_command('git rev-parse HEAD')
         rescue => e
-          Datadog.logger.debug("Unable to read git commit SHA: #{e.message} at #{e.backtrace.first}")
+          Datadog.logger.debug("Unable to read git commit SHA: #{e.message} at #{Array(e.backtrace).first}")
           nil
         end
 
         def git_tag
           exec_git_command('git tag --points-at HEAD')
         rescue => e
-          Datadog.logger.debug("Unable to read git tag: #{e.message} at #{e.backtrace.first}")
+          Datadog.logger.debug("Unable to read git tag: #{e.message} at #{Array(e.backtrace).first}")
           nil
         end
 
         def git_base_directory
           exec_git_command('git rev-parse --show-toplevel')
         rescue => e
-          Datadog.logger.debug("Unable to read git base directory: #{e.message} at #{e.backtrace.first}")
+          Datadog.logger.debug("Unable to read git base directory: #{e.message} at #{Array(e.backtrace).first}")
           nil
         end
 
@@ -423,13 +459,24 @@ module Datadog
 
         def branch_or_tag(branch_or_tag)
           branch = tag = nil
-          if branch_or_tag.include?('tags/')
+          if branch_or_tag && branch_or_tag.include?('tags/')
             tag = branch_or_tag
           else
             branch = branch_or_tag
           end
 
           [branch, tag]
+        end
+
+        def extract_name_email(name_and_email)
+          if name_and_email.include?('<') && (match = /^([^<]*)<([^>]*)>$/.match(name_and_email))
+            name = match[1]
+            name = name.strip if name
+            email = match[2]
+            return [name, email] if name && email
+          end
+
+          [nil, name_and_email]
         end
       end
       # rubocop:enable Metrics/ModuleLength:

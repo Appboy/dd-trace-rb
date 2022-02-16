@@ -1,3 +1,4 @@
+# typed: true
 require 'ddtrace/utils/time'
 
 require 'ddtrace/worker'
@@ -11,7 +12,16 @@ module Datadog
       include Workers::Polling
 
       DEFAULT_INTERVAL_SECONDS = 60
-      MIN_INTERVAL_SECONDS = 0
+      MINIMUM_INTERVAL_SECONDS = 0
+
+      # Profiles with duration less than this will not be reported
+      PROFILE_DURATION_THRESHOLD_SECONDS = 1
+
+      # We sleep for at most this duration seconds before reporting data to avoid multi-process applications all
+      # reporting profiles at the exact same time
+      DEFAULT_FLUSH_JITTER_MAXIMUM_SECONDS = 3
+
+      private_constant :DEFAULT_INTERVAL_SECONDS, :MINIMUM_INTERVAL_SECONDS, :PROFILE_DURATION_THRESHOLD_SECONDS
 
       attr_reader \
         :exporters,
@@ -56,10 +66,6 @@ module Datadog
         end
       end
 
-      def loop_back_off?
-        false
-      end
-
       def after_fork
         # Clear recorder's buffers by flushing events.
         # Objects from parent process will copy-on-write,
@@ -89,12 +95,36 @@ module Datadog
 
         # Update wait time to try to wake consistently on time.
         # Don't drop below the minimum interval.
-        self.loop_wait_time = [loop_base_interval - run_time, MIN_INTERVAL_SECONDS].max
+        self.loop_wait_time = [loop_base_interval - run_time, MINIMUM_INTERVAL_SECONDS].max
       end
 
       def flush_events
         # Get events from recorder
         flush = recorder.flush
+
+        if duration_below_threshold?(flush)
+          Datadog.logger.debug do
+            "Skipped exporting profiling events as profile duration is below minimum (#{flush.event_count} events skipped)"
+          end
+
+          return flush
+        end
+
+        # Sleep for a bit to cause misalignment between profilers in multi-process applications
+        #
+        # When not being run in a loop, it means the scheduler has not been started or was stopped, and thus
+        # a) it's being shutting down (and is trying to report the last profile)
+        # b) it's being run as a one-shot, usually in a test
+        # ...so in those cases we don't sleep
+        #
+        # During PR review (https://github.com/DataDog/dd-trace-rb/pull/1807) we discussed the possible alternative of
+        # just sleeping before starting the scheduler loop. We ended up not going with that option to avoid the first
+        # profile containing up to DEFAULT_INTERVAL_SECONDS + DEFAULT_FLUSH_JITTER_MAXIMUM_SECONDS instead of the
+        # usual DEFAULT_INTERVAL_SECONDS size.
+        if run_loop?
+          jitter_seconds = rand * DEFAULT_FLUSH_JITTER_MAXIMUM_SECONDS # floating point number between (0.0...maximum)
+          sleep(jitter_seconds)
+        end
 
         # Send events to each exporter
         if flush.event_count > 0
@@ -103,13 +133,17 @@ module Datadog
               exporter.export(flush)
             rescue StandardError => e
               Datadog.logger.error(
-                "Unable to export #{flush.event_count} profiling events. Cause: #{e} Location: #{e.backtrace.first}"
+                "Unable to export #{flush.event_count} profiling events. Cause: #{e} Location: #{Array(e.backtrace).first}"
               )
             end
           end
         end
 
         flush
+      end
+
+      def duration_below_threshold?(flush)
+        (flush.finish - flush.start) < PROFILE_DURATION_THRESHOLD_SECONDS
       end
     end
   end

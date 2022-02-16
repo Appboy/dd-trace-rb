@@ -1,3 +1,4 @@
+# typed: false
 require 'ddtrace/contrib/configuration/settings'
 
 module Datadog
@@ -69,6 +70,13 @@ module Datadog
             o.on_set do |value|
               # Update ActionPack exception controller too
               Datadog.configuration[:action_pack][:exception_controller] = value
+            end
+          end
+
+          option :job_service do |o|
+            o.on_set do |value|
+              # Update ActiveJob service name too
+              Datadog.configuration[:active_job][:service_name] = value
             end
           end
 

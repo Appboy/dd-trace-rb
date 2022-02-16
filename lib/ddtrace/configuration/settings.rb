@@ -1,3 +1,4 @@
+# typed: false
 require 'logger'
 require 'ddtrace/configuration/base'
 
@@ -159,13 +160,29 @@ module Datadog
           end
         end
 
-        option :max_events, default: 32768
+        settings :advanced do
+          # This should never be reduced, as it can cause the resulting profiles to become biased.
+          # The current default should be enough for most services, allowing 16 threads to be sampled around 30 times
+          # per second for a 60 second period.
+          option :max_events, default: 32768
 
-        # Controls the maximum number of frames for each thread sampled. Can be tuned to avoid omitted frames in the
-        # produced profiles. Increasing this may increase the overhead of profiling.
-        option :max_frames do |o|
-          o.default { env_to_int(Ext::Profiling::ENV_MAX_FRAMES, 400) }
-          o.lazy
+          # Controls the maximum number of frames for each thread sampled. Can be tuned to avoid omitted frames in the
+          # produced profiles. Increasing this may increase the overhead of profiling.
+          option :max_frames do |o|
+            o.default { env_to_int(Ext::Profiling::ENV_MAX_FRAMES, 400) }
+            o.lazy
+          end
+
+          settings :endpoint do
+            settings :collection do
+              # When using profiling together with tracing, this controls if endpoint names
+              # are gathered and reported together with profiles.
+              option :enabled do |o|
+                o.default { env_to_bool(Ext::Profiling::ENV_ENDPOINT_COLLECTION_ENABLED, true) }
+                o.lazy
+              end
+            end
+          end
         end
 
         settings :upload do

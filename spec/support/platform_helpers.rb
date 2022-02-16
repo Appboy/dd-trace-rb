@@ -1,3 +1,4 @@
+# typed: true
 require 'os'
 
 module PlatformHelpers
@@ -30,5 +31,17 @@ module PlatformHelpers
 
   def mac?
     OS.mac?
+  end
+
+  # Environment
+
+  def ci?
+    ENV.key?('CI')
+  end
+
+  # Feature support
+
+  def supports_fork?
+    Process.respond_to?(:fork)
   end
 end

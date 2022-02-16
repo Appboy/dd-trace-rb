@@ -1,3 +1,4 @@
+# typed: false
 require 'ddtrace/contrib/integration'
 
 require 'datadog/ci/contrib/rspec/configuration/settings'
@@ -16,8 +17,8 @@ module Datadog
           register_as :rspec, auto_patch: true
 
           def self.version
-            Gem.loaded_specs['rspec'] \
-              && Gem.loaded_specs['rspec'].version
+            Gem.loaded_specs['rspec-core'] \
+              && Gem.loaded_specs['rspec-core'].version
           end
 
           def self.loaded?

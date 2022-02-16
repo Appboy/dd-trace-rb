@@ -8,6 +8,7 @@ AllCops:
   TargetRubyVersion: 2.5 # Lowest version supported as of Rubocop 0.13.0
   Include:
     - 'lib/**/*.rb'
+    - 'ext/**/*.rb'
     - 'test/**/*.rb'
     - 'spec/**/*.rb'
     - 'Gemfile'
@@ -25,6 +26,8 @@ AllCops:
 # code for the sake of changing it to conform to a length set in 1928 (IBM).
 Layout/LineLength:
   Max: 124
+  Exclude:
+    - 'Rakefile'
 
 # These exceptions are good goals to attain, and probably will over time,
 # so periodic disabling and re-running to inspect values is suggested.
@@ -176,6 +179,10 @@ Performance/Sum: # (new in 1.8)
 
 # Requires Ruby 2.2
 Style/HashSyntax:
+  Enabled: false
+
+# Requires Ruby 2.3
+Layout/HeredocIndentation:
   Enabled: false
 
 # Requires Ruby 2.3
@@ -348,4 +355,28 @@ Naming/FileName:
 
 # Enforces boolean parameters with default to be keyword arguments.
 Style/OptionalBooleanParameter:
+  Enabled: false
+
+Lint/UnusedBlockArgument:
+  # Required keyword arguments normally cannot be omitted or renamed:
+  # Example: in `proc{|unused:|}`, `unused` cannot be renamed to `_unused`.
+  AllowUnusedKeywordArguments: true
+
+Style/TrailingCommaInArguments:
+  Enabled: false
+
+Style/TrailingCommaInArrayLiteral:
+  Enabled: false
+
+Style/TrailingCommaInBlockArgs:
+  Enabled: false
+
+Style/TrailingCommaInHashLiteral:
+  Enabled: false
+
+Style/GlobalVars:
+  Exclude:
+    - 'ext/ddtrace_profiling_native_extension/extconf.rb'
+
+Naming/VariableNumber:
   Enabled: false

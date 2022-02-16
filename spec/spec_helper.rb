@@ -1,3 +1,4 @@
+# typed: ignore
 $LOAD_PATH.unshift File.expand_path('..', __dir__)
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
 require 'pry'
@@ -26,6 +27,7 @@ require 'support/http_helpers'
 require 'support/log_helpers'
 require 'support/metric_helpers'
 require 'support/network_helpers'
+require 'support/object_space_helper'
 require 'support/platform_helpers'
 require 'support/span_helpers'
 require 'support/spy_transport'
@@ -97,7 +99,7 @@ RSpec.configure do |config|
       # successive failures. The output is very verbose and, at that point,
       # it's better to work on fixing the very first occurrences.
       $background_thread_leak_reports ||= 0
-      if $background_thread_leak_reports >= 10
+      if $background_thread_leak_reports >= 3
         unless $background_thread_leak_warned ||= false
           warn RSpec::Core::Formatters::ConsoleCodes.wrap(
             "Too many leaky thread reports! Suppressing further reports.\n" \
@@ -144,6 +146,7 @@ RSpec.configure do |config|
         # They currently flood the output, making our test
         # suite output unreadable.
         if example.file_path.start_with?('./spec/ddtrace/workers/')
+          puts # Add newline so we get better output when the progress formatter is being used
           RSpec.warning("FIXME: #{example.file_path}:#{example.metadata[:line_number]} is leaking threads")
           next
         end
@@ -176,7 +179,7 @@ RSpec.configure do |config|
 
         # Warn about leakly thread
         warn RSpec::Core::Formatters::ConsoleCodes.wrap(
-          "Spec leaked #{background_threads.size} threads in \"#{example.full_description}\".\n" \
+          "\nSpec leaked #{background_threads.size} threads in \"#{example.full_description}\".\n" \
           "Ensure all threads are terminated when test finishes.\n" \
           "For help fixing this issue, see \"Ensuring tests don't leak resources\" in docs/DevelopmentGuide.md.\n" \
           "\n" \
@@ -217,7 +220,7 @@ module DatadogThreadDebugger
     wrapped = lambda do |*thread_args|
       block.call(*thread_args) # rubocop:disable Performance/RedundantBlockCall
     end
-    wrapped.ruby2_keywords if wrapped.respond_to?(:ruby2_keywords, true)
+    wrapped.send(:ruby2_keywords) if wrapped.respond_to?(:ruby2_keywords, true)
 
     super(*args, &wrapped)
   end
