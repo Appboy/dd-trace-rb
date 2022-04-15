@@ -40,7 +40,15 @@ module Datadog
 
             # collect endpoint details
             endpoint = payload.fetch(:endpoint)
-            api_view = api_view(endpoint.options[:for])
+
+            # BRAZE MODIFICATION
+            # The changes here https://github.com/ruby-grape/grape/issues/1825 don't work with the way we use grape
+            api = endpoint.options[:for]
+            api_view = api.to_s
+            if api_view.blank?
+              api_view = api_view(api)
+            end
+
             request_method = endpoint.options.fetch(:method).first
             path = endpoint_expand_path(endpoint)
             resource = "#{api_view} #{request_method} #{path}"
