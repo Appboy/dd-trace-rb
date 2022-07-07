@@ -19,6 +19,9 @@ module Datadog
           TYPE = 'redis'.freeze
           TAG_COMPONENT = 'redis'.freeze
           TAG_OPERATION_COMMAND = 'command'.freeze
+          # BRAZE MODIFICATION
+          METRIC_RAW_COMMAND_LEN = 'redis.raw_command_length'.freeze
+          # END BRAZE MODIFICATION
         end
       end
     end
