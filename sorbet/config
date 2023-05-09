@@ -1,3 +1,6 @@
 --dir
 .
+--ignore=/.git
 --ignore=/integration
+--ignore=/yard
+--ignore=/vendor/bundle

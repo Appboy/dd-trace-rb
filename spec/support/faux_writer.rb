@@ -1,10 +1,11 @@
 # typed: true
-require 'ddtrace/writer'
+
+require 'datadog/tracing/writer'
 
 require 'support/faux_transport'
 
 # FauxWriter is a dummy writer that buffers spans locally.
-class FauxWriter < Datadog::Writer
+class FauxWriter < Datadog::Tracing::Writer
   def initialize(options = {})
     options[:transport] ||= FauxTransport.new
     options[:call_original] ||= true
@@ -14,22 +15,29 @@ class FauxWriter < Datadog::Writer
     @mutex = Mutex.new
 
     # easy access to registered components
-    @spans = []
+    @traces = []
   end
 
   def write(trace)
     @mutex.synchronize do
       super(trace) if @options[:call_original]
-      @spans << trace
+      @traces << trace
     end
+  end
+
+  def traces(action = :clear)
+    traces = @traces
+    @traces = [] if action == :clear
+    traces
   end
 
   def spans(action = :clear)
     @mutex.synchronize do
-      spans = @spans
-      @spans = [] if action == :clear
-      spans.flatten!
+      traces = @traces
+      @traces = [] if action == :clear
+      spans = traces.collect(&:spans).flatten
       # sort the spans to avoid test flakiness
+
       spans.sort! do |a, b|
         if a.name == b.name
           if a.resource == b.resource
@@ -45,17 +53,6 @@ class FauxWriter < Datadog::Writer
           a.name <=> b.name
         end
       end
-    end
-  end
-
-  def trace0_spans
-    @mutex.synchronize do
-      return [] unless @spans
-      return [] if @spans.empty?
-
-      spans = @spans[0]
-      @spans = @spans[1..@spans.size]
-      spans
     end
   end
 end

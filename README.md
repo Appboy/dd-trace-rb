@@ -1,7 +1,11 @@
+***Version 1.0.0 has recently been released. Check out our [upgrade guide](https://github.com/DataDog/dd-trace-rb/blob/master/docs/UpgradeGuide.md#from-0x-to-10) for more details.***
+
 # Datadog Trace Client
 
+[![Gem](https://img.shields.io/gem/v/ddtrace)](https://rubygems.org/gems/ddtrace/)
 [![CircleCI](https://circleci.com/gh/DataDog/dd-trace-rb/tree/master.svg?style=svg&circle-token=b0bd5ef866ec7f7b018f48731bb495f2d1372cc1)](https://circleci.com/gh/DataDog/dd-trace-rb/tree/master)
 [![codecov](https://codecov.io/gh/DataDog/dd-trace-rb/branch/master/graph/badge.svg)](https://app.codecov.io/gh/DataDog/dd-trace-rb/branch/master)
+[![YARD documentation](https://img.shields.io/badge/YARD-documentation-blue)](https://www.rubydoc.info/gems/ddtrace/)
 
 ``ddtrace`` is Datadog’s tracing client for Ruby. It is used to trace requests as they flow across web servers,
 databases and microservices so that developers have great visiblity into bottlenecks and troublesome requests.

@@ -1,15 +1,21 @@
 # typed: false
+
 require 'datadog/ci/spec_helper'
+
 require 'datadog/ci/configuration/components'
+require 'datadog/ci/configuration/settings'
+require 'datadog/ci/flush'
+require 'datadog/core/configuration/components'
+require 'datadog/core/configuration/settings'
 
 RSpec.describe Datadog::CI::Configuration::Components do
-  context 'when used to extend Datadog::Configuration::Components' do
+  context 'when used to extend Datadog::Core::Configuration::Components' do
     subject(:components) do
       # When 'datadog/ci' is required, it automatically extends Components.
-      components = if Datadog::Configuration::Components <= described_class
-                     Datadog::Configuration::Components.new(settings)
+      components = if Datadog::Core::Configuration::Components <= described_class
+                     Datadog::Core::Configuration::Components.new(settings)
                    else
-                     components_class = Datadog::Configuration::Components.dup
+                     components_class = Datadog::Core::Configuration::Components.dup
                      components_class.prepend(described_class)
                      components_class.new(settings)
                    end
@@ -19,10 +25,10 @@ RSpec.describe Datadog::CI::Configuration::Components do
 
     let(:settings) do
       # When 'datadog/ci' is required, it automatically extends Settings.
-      if Datadog::Configuration::Settings <= Datadog::CI::Configuration::Settings
-        Datadog::Configuration::Settings.new
+      if Datadog::Core::Configuration::Settings <= Datadog::CI::Configuration::Settings
+        Datadog::Core::Configuration::Settings.new
       else
-        Datadog::Configuration::Settings.new.tap do |settings|
+        Datadog::Core::Configuration::Settings.new.tap do |settings|
           settings.extend(Datadog::CI::Configuration::Settings)
         end
       end
@@ -31,21 +37,21 @@ RSpec.describe Datadog::CI::Configuration::Components do
     after { components.shutdown! }
 
     describe '::new' do
-      context 'when #ci_mode' do
+      context 'when #ci' do
         before do
           # Stub CI mode behavior
-          allow(settings.ci_mode)
+          allow(settings.ci)
             .to receive(:enabled)
             .and_return(enabled)
 
           # Spy on test mode behavior
-          allow(settings.test_mode)
+          allow(settings.tracing.test_mode)
             .to receive(:enabled=)
 
-          allow(settings.test_mode)
-            .to receive(:context_flush=)
+          allow(settings.tracing.test_mode)
+            .to receive(:trace_flush=)
 
-          allow(settings.test_mode)
+          allow(settings.tracing.test_mode)
             .to receive(:writer_options=)
 
           components
@@ -55,21 +61,21 @@ RSpec.describe Datadog::CI::Configuration::Components do
           let(:enabled) { true }
 
           it do
-            expect(settings.test_mode)
+            expect(settings.tracing.test_mode)
               .to have_received(:enabled=)
               .with(true)
           end
 
           it do
-            expect(settings.test_mode)
-              .to have_received(:context_flush=)
-              .with(settings.ci_mode.context_flush || kind_of(Datadog::CI::ContextFlush::Finished))
+            expect(settings.tracing.test_mode)
+              .to have_received(:trace_flush=)
+              .with(settings.ci.trace_flush || kind_of(Datadog::CI::Flush::Finished))
           end
 
           it do
-            expect(settings.test_mode)
+            expect(settings.tracing.test_mode)
               .to have_received(:writer_options=)
-              .with(settings.ci_mode.writer_options)
+              .with(settings.ci.writer_options)
           end
         end
 
@@ -77,17 +83,17 @@ RSpec.describe Datadog::CI::Configuration::Components do
           let(:enabled) { false }
 
           it do
-            expect(settings.test_mode)
+            expect(settings.tracing.test_mode)
               .to_not have_received(:enabled=)
           end
 
           it do
-            expect(settings.test_mode)
-              .to_not have_received(:context_flush=)
+            expect(settings.tracing.test_mode)
+              .to_not have_received(:trace_flush=)
           end
 
           it do
-            expect(settings.test_mode)
+            expect(settings.tracing.test_mode)
               .to_not have_received(:writer_options=)
           end
         end

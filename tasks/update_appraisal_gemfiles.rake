@@ -8,8 +8,10 @@ TRACER_VERSIONS = %w[
   2.7
   3.0
   3.1
-  jruby-9.2.0.0
+  3.2
+  jruby-9.2.8.0
   jruby-9.2-latest
+  jruby-9.3-latest
 ].freeze
 # ADD NEW RUBIES HERE
 
@@ -20,7 +22,7 @@ task :install_appraisal_gemfiles do |_task, args|
   versions = tracer_version_arg.empty? ? TRACER_VERSIONS : tracer_version_arg
 
   versions.each do |version|
-    sh "docker-compose run --rm tracer-#{version} /bin/bash -c " \
+    sh "docker-compose run -e APPRAISAL_GROUP --no-deps --rm tracer-#{version} /bin/bash -c " \
       "'rm -f Gemfile.lock && bundle install && bundle exec appraisal install'"
   end
 end
@@ -32,7 +34,7 @@ task :update_appraisal_gemfiles do |_task, args|
   versions = tracer_version_arg.empty? ? TRACER_VERSIONS : tracer_version_arg
 
   versions.each do |version|
-    sh "docker-compose run --rm tracer-#{version} /bin/bash -c " \
+    sh "docker-compose run -e APPRAISAL_GROUP --no-deps --rm tracer-#{version} /bin/bash -c " \
       "'rm -f Gemfile.lock && bundle install && bundle exec appraisal update'"
   end
 end

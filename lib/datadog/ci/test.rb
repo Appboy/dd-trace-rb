@@ -1,7 +1,8 @@
-# typed: true
 # frozen_string_literal: true
 
-require 'ddtrace/contrib/analytics'
+# typed: false
+
+require 'datadog/tracing/contrib/analytics'
 
 require 'datadog/ci/ext/app_types'
 require 'datadog/ci/ext/test'
@@ -13,31 +14,32 @@ module Datadog
     # Common behavior for CI tests
     module Test
       # Creates a new span for a CI test
-      def self.trace(tracer, span_name, options = {})
+      def self.trace(span_name, options = {})
         span_options = {
-          span_type: Ext::AppTypes::TEST
+          span_type: Ext::AppTypes::TYPE_TEST
         }.merge(options[:span_options] || {})
 
         if block_given?
-          tracer.trace(span_name, span_options) do |span|
-            set_tags!(span, options)
-            yield(span)
+          Tracing.trace(span_name, **span_options) do |span, trace|
+            set_tags!(trace, span, options)
+            yield(span, trace)
           end
         else
-          span = tracer.trace(span_name, span_options)
-          set_tags!(span, options)
+          span = Tracing.trace(span_name, **span_options)
+          trace = Tracing.active_trace
+          set_tags!(trace, span, options)
           span
         end
       end
 
       # Adds tags to a CI test span.
-      def self.set_tags!(span, tags = {})
+      def self.set_tags!(trace, span, tags = {})
         tags ||= {}
 
         # Set default tags
-        span.context.origin = Ext::Test::CONTEXT_ORIGIN if span.context
-        Datadog::Contrib::Analytics.set_measured(span)
-        span.set_tag(Ext::Test::TAG_SPAN_KIND, Ext::AppTypes::TEST)
+        trace.origin = Ext::Test::CONTEXT_ORIGIN if trace
+        Datadog::Tracing::Contrib::Analytics.set_measured(span)
+        span.set_tag(Ext::Test::TAG_SPAN_KIND, Ext::AppTypes::TYPE_TEST)
 
         # Set environment tags
         @environment_tags ||= Ext::Environment.tags(ENV)

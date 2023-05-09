@@ -1,4 +1,5 @@
 # typed: true
+
 require 'datadog/core/environment/cgroup'
 
 module Datadog
@@ -80,7 +81,8 @@ module Datadog
               end
             rescue StandardError => e
               Datadog.logger.error(
-                "Error while parsing container info. Cause: #{e.message} Location: #{Array(e.backtrace).first}"
+                "Error while parsing container info. Cause: #{e.class.name} #{e.message} " \
+                "Location: #{Array(e.backtrace).first}"
               )
             end
           end

@@ -1,5 +1,6 @@
 # typed: false
-require 'ddtrace/contrib/configuration/settings'
+
+require 'datadog/tracing/contrib/configuration/settings'
 require 'datadog/ci/contrib/cucumber/ext'
 
 module Datadog
@@ -8,7 +9,8 @@ module Datadog
       module Cucumber
         module Configuration
           # Custom settings for the Cucumber integration
-          class Settings < Datadog::Contrib::Configuration::Settings
+          # TODO: mark as `@public_api` when GA
+          class Settings < Datadog::Tracing::Contrib::Configuration::Settings
             option :enabled do |o|
               o.default { env_to_bool(Ext::ENV_ENABLED, true) }
               o.lazy

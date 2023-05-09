@@ -9,6 +9,15 @@ def ruby_version?(version)
     Gem::Version.new(RUBY_VERSION) < Gem::Version.new(full_version).bump
 end
 
+alias original_appraise appraise
+
+def appraise(group, &block)
+  # Specify the environment variable APPRAISAL_GROUP to load only a specific appraisal group.
+  if ENV['APPRAISAL_GROUP'].nil? || ENV['APPRAISAL_GROUP'] == group
+    original_appraise(group, &block)
+  end
+end
+
 def self.gem_cucumber(version)
   appraise "cucumber#{version}" do
     gem 'cucumber', ">=#{version}.0.0", "<#{version + 1}.0.0"
@@ -16,21 +25,6 @@ def self.gem_cucumber(version)
 end
 
 if ruby_version?('2.1')
-  appraise 'rails30-postgres' do
-    gem 'test-unit'
-    gem 'rails', '3.0.20'
-    gem 'pg', '0.15.1'
-    gem 'rack-cache', '1.7.1'
-  end
-
-  appraise 'rails30-postgres-sidekiq' do
-    gem 'test-unit'
-    gem 'rails', '3.0.20'
-    gem 'pg', '0.15.1'
-    gem 'sidekiq', '4.0.0'
-    gem 'rack-cache', '1.7.1'
-  end
-
   appraise 'rails32-mysql2' do
     gem 'test-unit'
     gem 'rails', '3.2.22.5'
@@ -101,10 +95,10 @@ if ruby_version?('2.1')
     gem 'activerecord-mysql-adapter'
     gem 'aws-sdk', '~> 2.0'
     gem 'concurrent-ruby'
-    gem 'dalli'
+    gem 'dalli', '< 3.0.0' # Dalli 3.0 dropped support for Ruby < 2.5
     gem 'delayed_job'
     gem 'delayed_job_active_record'
-    gem 'elasticsearch-transport'
+    gem 'elasticsearch'
     gem 'presto-client', '>=  0.5.14'
     gem 'ethon'
     gem 'excon'
@@ -140,21 +134,6 @@ if ruby_version?('2.1')
   end
 # ----------------------------------------------------------------------------------------------------------------------
 elsif ruby_version?('2.2')
-  appraise 'rails30-postgres' do
-    gem 'test-unit'
-    gem 'rails', '3.0.20'
-    gem 'pg', '0.15.1'
-    gem 'rack-cache', '1.7.1'
-  end
-
-  appraise 'rails30-postgres-sidekiq' do
-    gem 'test-unit'
-    gem 'rails', '3.0.20'
-    gem 'pg', '0.15.1'
-    gem 'sidekiq', '4.0.0'
-    gem 'rack-cache', '1.7.1'
-  end
-
   appraise 'rails32-mysql2' do
     gem 'test-unit'
     gem 'rails', '3.2.22.5'
@@ -287,17 +266,17 @@ elsif ruby_version?('2.2')
     gem 'activerecord', '< 5.1.5'
     gem 'aws-sdk'
     gem 'concurrent-ruby'
-    gem 'dalli'
+    gem 'dalli', '< 3.0.0' # Dalli 3.0 dropped support for Ruby < 2.5
     gem 'delayed_job'
     gem 'delayed_job_active_record'
-    gem 'elasticsearch-transport'
+    gem 'elasticsearch'
     gem 'pg'
     gem 'presto-client', '>=  0.5.14'
     gem 'ethon'
     gem 'excon'
     gem 'faraday'
     gem 'grape'
-    gem 'graphql', '>= 1.12.0'
+    gem 'graphql'
     gem 'grpc', '~> 1.19.0' # Last version to support Ruby < 2.3 & google-protobuf < 3.7
     gem 'hiredis'
     gem 'http'
@@ -325,7 +304,7 @@ elsif ruby_version?('2.2')
     gem 'sqlite3', '~> 1.3.6'
     gem 'sucker_punch'
     gem 'typhoeus'
-    gem 'que', '>= 1.0.0.beta2'
+    gem 'que', '>= 1.0.0'
   end
 
   appraise 'core-old' do
@@ -333,21 +312,6 @@ elsif ruby_version?('2.2')
   end
 # ----------------------------------------------------------------------------------------------------------------------
 elsif ruby_version?('2.3')
-  appraise 'rails30-postgres' do
-    gem 'test-unit'
-    gem 'rails', '3.0.20'
-    gem 'pg', '0.15.1'
-    gem 'rack-cache', '1.7.1'
-  end
-
-  appraise 'rails30-postgres-sidekiq' do
-    gem 'test-unit'
-    gem 'rails', '3.0.20'
-    gem 'pg', '0.15.1'
-    gem 'sidekiq', '4.0.0'
-    gem 'rack-cache', '1.7.1'
-  end
-
   appraise 'rails32-mysql2' do
     gem 'test-unit'
     gem 'rails', '3.2.22.5'
@@ -487,15 +451,14 @@ elsif ruby_version?('2.3')
     gem 'activerecord', '< 5.1.5'
     gem 'aws-sdk'
     gem 'concurrent-ruby'
-    gem 'dalli'
+    gem 'dalli', '< 3.0.0' # Dalli 3.0 dropped support for Ruby < 2.5
     gem 'delayed_job'
     gem 'delayed_job_active_record'
-    gem 'elasticsearch-transport'
     gem 'ethon'
     gem 'excon'
-    gem 'faraday'
+    gem 'faraday', '>= 1.0'
     gem 'grape'
-    gem 'graphql', '>= 1.12.0'
+    gem 'graphql'
     gem 'grpc'
     gem 'google-protobuf', '~> 3.11.0' # Last version to support Ruby < 2.5
     gem 'hiredis'
@@ -506,7 +469,6 @@ elsif ruby_version?('2.3')
     gem 'mongo', '>= 2.8.0', '< 2.15.0' # TODO: FIX TEST BREAKAGES ON >= 2.15 https://github.com/DataDog/dd-trace-rb/issues/1596
     gem 'mysql2', '< 0.5'
     gem 'pg'
-    gem 'presto-client', '>=  0.5.14'
     gem 'qless'
     gem 'racecar', '>= 0.3.5'
     gem 'rack', '< 2.1.0' # Locked due to grape incompatibility: https://github.com/ruby-grape/grape/issues/1980
@@ -526,11 +488,13 @@ elsif ruby_version?('2.3')
     gem 'sqlite3', '~> 1.3.6'
     gem 'sucker_punch'
     gem 'typhoeus'
-    gem 'que', '>= 1.0.0.beta2'
+    gem 'que', '>= 1.0.0'
   end
 
   appraise 'contrib-old' do
+    gem 'elasticsearch', '< 8.0.0' # Dependency elasticsearch-transport renamed to elastic-transport in >= 8.0
     gem 'faraday', '0.17'
+    gem 'presto-client', '>= 0.5.14' # Renamed to trino-client in >= 1.0
   end
 
   appraise 'core-old' do
@@ -605,15 +569,14 @@ elsif ruby_version?('2.4')
     gem 'aws-sdk'
     gem 'concurrent-ruby'
     gem 'cucumber'
-    gem 'dalli'
+    gem 'dalli', '< 3.0.0' # Dalli 3.0 dropped support for Ruby < 2.5
     gem 'delayed_job'
     gem 'delayed_job_active_record'
-    gem 'elasticsearch-transport'
     gem 'ethon'
     gem 'excon'
-    gem 'faraday'
+    gem 'faraday', '>= 1.0'
     gem 'grape'
-    gem 'graphql', '>= 1.12.0'
+    gem 'graphql', '>= 2.0'
     gem 'grpc'
     gem 'google-protobuf', '~> 3.11.0' # Last version to support Ruby < 2.5
     gem 'hiredis'
@@ -624,7 +587,6 @@ elsif ruby_version?('2.4')
     gem 'mongo', '>= 2.8.0', '< 2.15.0' # TODO: FIX TEST BREAKAGES ON >= 2.15 https://github.com/DataDog/dd-trace-rb/issues/1596
     gem 'mysql2', '< 0.5'
     gem 'pg'
-    gem 'presto-client', '>=  0.5.14'
     gem 'qless'
     gem 'racecar', '>= 0.3.5'
     gem 'rack'
@@ -644,11 +606,14 @@ elsif ruby_version?('2.4')
     gem 'sqlite3', '~> 1.3.6'
     gem 'sucker_punch'
     gem 'typhoeus'
-    gem 'que', '>= 1.0.0.beta2'
+    gem 'que', '>= 1.0.0'
   end
 
   appraise 'contrib-old' do
+    gem 'elasticsearch', '< 8.0.0' # Dependency elasticsearch-transport renamed to elastic-transport in >= 8.0
     gem 'faraday', '0.17'
+    gem 'graphql', '>= 1.12.0', '< 2.0'
+    gem 'presto-client', '>= 0.5.14' # Renamed to trino-client in >= 1.0
   end
 
   appraise 'core-old' do
@@ -841,15 +806,23 @@ elsif ruby_version?('2.5')
     gem 'aws-sdk'
     gem 'concurrent-ruby'
     gem 'cucumber'
-    gem 'dalli'
+    gem 'dalli', '>= 3.0.0'
     gem 'delayed_job'
     gem 'delayed_job_active_record'
-    gem 'elasticsearch-transport'
-    gem 'ethon'
+    gem 'elasticsearch', '>= 8.0.0'
+    # Workaround bundle of JRuby/ethon issues:
+    # * ethon 0.15.0 is incompatible with most JRuby 9.2 versions (fixed in 9.2.20.0),
+    #   see https://github.com/typhoeus/ethon/issues/205
+    # * we test with 9.2.18.0 because ethon is completely broken on JRuby 9.2.19.0+ WHEN RUN on a Java 8 VM,
+    #   see https://github.com/jruby/jruby/issues/7033
+    #
+    # Thus let's keep our JRuby testing on 9.2.18.0 with Java 8, and avoid pulling in newer ethon versions until
+    # either the upstream issues are fixed OR we end up moving to Java 11.
+    gem 'ethon', (RUBY_PLATFORM == 'java' ? '< 0.15.0' : '>= 0')
     gem 'excon'
-    gem 'faraday'
+    gem 'faraday', '>= 1.0'
     gem 'grape'
-    gem 'graphql', '>= 1.12.0'
+    gem 'graphql', '>= 2.0'
     gem 'grpc', platform: :ruby
     gem 'hiredis'
     gem 'http'
@@ -862,7 +835,6 @@ elsif ruby_version?('2.5')
     gem 'activerecord-jdbcmysql-adapter', '>= 60.2', platform: :jruby
     gem 'pg', platform: :ruby
     gem 'activerecord-jdbcpostgresql-adapter', '>= 60.2', platform: :jruby
-    gem 'presto-client', '>=  0.5.14'
     gem 'qless', (RUBY_PLATFORM == 'java' ? '0.10.0' : '>= 0') # Newer releases require `rusage`, which is not available for JRuby
     gem 'racecar', '>= 0.3.5'
     gem 'rack'
@@ -883,11 +855,15 @@ elsif ruby_version?('2.5')
     gem 'jdbc-sqlite3', '>= 3.28', platform: :jruby
     gem 'sucker_punch'
     gem 'typhoeus'
-    gem 'que', '>= 1.0.0.beta2'
+    gem 'que', '>= 1.0.0'
   end
 
   appraise 'contrib-old' do
+    gem 'dalli', '< 3.0.0'
+    gem 'elasticsearch', '< 8.0.0' # Dependency elasticsearch-transport renamed to elastic-transport in >= 8.0
     gem 'faraday', '0.17'
+    gem 'graphql', '>= 1.12.0', '< 2.0'
+    gem 'presto-client', '>= 0.5.14' # Renamed to trino-client in >= 1.0
   end
 
   appraise 'core-old' do
@@ -895,10 +871,10 @@ elsif ruby_version?('2.5')
   end
 # ----------------------------------------------------------------------------------------------------------------------
 elsif ruby_version?('2.6')
-  if RUBY_PLATFORM != 'java'
     appraise 'rails5-mysql2' do
       gem 'rails', '~> 5.2.1'
       gem 'mysql2', '< 1', platform: :ruby
+      gem 'activerecord-jdbcmysql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
     end
@@ -906,6 +882,7 @@ elsif ruby_version?('2.6')
     appraise 'rails5-postgres' do
       gem 'rails', '~> 5.2.1'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
     end
@@ -913,6 +890,7 @@ elsif ruby_version?('2.6')
     appraise 'rails5-semantic-logger' do
       gem 'rails', '~> 5.2.1'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'rails_semantic_logger', '~> 4.0'
     end
@@ -920,6 +898,7 @@ elsif ruby_version?('2.6')
     appraise 'rails5-postgres-redis' do
       gem 'rails', '~> 5.2.1'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'redis', '>= 4.0.1'
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
@@ -928,6 +907,7 @@ elsif ruby_version?('2.6')
     appraise 'rails5-postgres-redis-activesupport' do
       gem 'rails', '~> 5.2.1'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'redis', '>= 4.0.1'
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
@@ -937,6 +917,7 @@ elsif ruby_version?('2.6')
     appraise 'rails5-postgres-sidekiq' do
       gem 'rails', '~> 5.2.1'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sidekiq'
       gem 'activejob'
       gem 'sprockets', '< 4'
@@ -946,6 +927,7 @@ elsif ruby_version?('2.6')
     appraise 'rails6-mysql2' do
       gem 'rails', '~> 6.0.0'
       gem 'mysql2', '< 1', platform: :ruby
+      gem 'activerecord-jdbcmysql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
     end
@@ -953,6 +935,7 @@ elsif ruby_version?('2.6')
     appraise 'rails6-postgres' do
       gem 'rails', '~> 6.0.0'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
     end
@@ -960,6 +943,7 @@ elsif ruby_version?('2.6')
     appraise 'rails6-semantic-logger' do
       gem 'rails', '~> 6.0.0'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'rails_semantic_logger', '~> 4.0'
     end
@@ -967,6 +951,7 @@ elsif ruby_version?('2.6')
     appraise 'rails6-postgres-redis' do
       gem 'rails', '~> 6.0.0'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'redis', '>= 4.0.1'
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
@@ -975,6 +960,7 @@ elsif ruby_version?('2.6')
     appraise 'rails6-postgres-redis-activesupport' do
       gem 'rails', '~> 6.0.0'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'redis', '>= 4.0.1'
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
@@ -984,6 +970,7 @@ elsif ruby_version?('2.6')
     appraise 'rails6-postgres-sidekiq' do
       gem 'rails', '~> 6.0.0'
       gem 'pg', '< 1.0', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sidekiq'
       gem 'activejob'
       gem 'sprockets', '< 4'
@@ -993,6 +980,7 @@ elsif ruby_version?('2.6')
     appraise 'rails61-mysql2' do
       gem 'rails', '~> 6.1.0'
       gem 'mysql2', '~> 0.5', platform: :ruby
+      gem 'activerecord-jdbcmysql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
     end
@@ -1000,6 +988,7 @@ elsif ruby_version?('2.6')
     appraise 'rails61-postgres' do
       gem 'rails', '~> 6.1.0'
       gem 'pg', '>= 1.1', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
     end
@@ -1007,6 +996,7 @@ elsif ruby_version?('2.6')
     appraise 'rails61-postgres-redis' do
       gem 'rails', '~> 6.1.0'
       gem 'pg', '>= 1.1', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'redis', '>= 4.2.5'
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
@@ -1015,6 +1005,7 @@ elsif ruby_version?('2.6')
     appraise 'rails61-postgres-sidekiq' do
       gem 'rails', '~> 6.1.0'
       gem 'pg', '>= 1.1', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sidekiq', '>= 6.1.2'
       gem 'sprockets', '< 4'
       gem 'lograge', '~> 0.11'
@@ -1023,6 +1014,7 @@ elsif ruby_version?('2.6')
     appraise 'rails61-semantic-logger' do
       gem 'rails', '~> 6.1.0'
       gem 'pg', '>= 1.1', platform: :ruby
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
       gem 'sprockets', '< 4'
       gem 'rails_semantic_logger', '~> 4.0'
     end
@@ -1047,16 +1039,16 @@ elsif ruby_version?('2.6')
       gem 'aws-sdk'
       gem 'concurrent-ruby'
       gem 'cucumber'
-      gem 'dalli'
+      gem 'dalli', '>= 3.0.0'
       gem 'delayed_job'
       gem 'delayed_job_active_record'
-      gem 'elasticsearch-transport'
+      gem 'elasticsearch', '>= 8.0.0'
       gem 'ethon'
       gem 'excon'
-      gem 'faraday'
+      gem 'faraday', '>= 1.0'
       gem 'grape'
-      gem 'graphql', '>= 1.12.0'
-      gem 'grpc'
+      gem 'graphql', '>= 2.0'
+      gem 'grpc', platform: :ruby
       gem 'hiredis'
       gem 'http'
       gem 'httpclient'
@@ -1064,9 +1056,10 @@ elsif ruby_version?('2.6')
       gem 'makara'
       gem 'mongo', '>= 2.8.0', '< 2.15.0' # TODO: FIX TEST BREAKAGES ON >= 2.15 https://github.com/DataDog/dd-trace-rb/issues/1596
       gem 'mysql2', '< 1', platform: :ruby
+      gem 'activerecord-jdbcmysql-adapter', platform: :jruby
       gem 'pg', platform: :ruby
-      gem 'presto-client', '>=  0.5.14'
-      gem 'qless'
+      gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
+      gem 'qless', (RUBY_PLATFORM == 'java' ? '0.10.0' : '>= 0') # Newer releases require `rusage`, which is not available for JRuby
       gem 'racecar', '>= 0.3.5'
       gem 'rack'
       gem 'rack-test'
@@ -1082,23 +1075,26 @@ elsif ruby_version?('2.6')
       gem 'sidekiq'
       gem 'sinatra', '>= 1.4'
       gem 'sneakers', '>= 2.12.0'
-      gem 'sqlite3', '~> 1.4.1'
+      gem 'sqlite3', '~> 1.4.1', platform: :ruby
+      gem 'jdbc-sqlite3', '>= 3.28', platform: :jruby
       gem 'sucker_punch'
       gem 'typhoeus'
-      gem 'que', '>= 1.0.0.beta2'
+      gem 'que', '>= 1.0.0'
     end
 
     appraise 'contrib-old' do
+      gem 'dalli', '< 3.0.0'
+      gem 'elasticsearch', '< 8.0.0' # Dependency elasticsearch-transport renamed to elastic-transport in >= 8.0
       gem 'faraday', '0.17'
+      gem 'graphql', '>= 1.12.0', '< 2.0'
+      gem 'presto-client', '>= 0.5.14' # Renamed to trino-client in >= 1.0
     end
 
     appraise 'core-old' do
       gem 'dogstatsd-ruby', '~> 4'
     end
-  end
 # ----------------------------------------------------------------------------------------------------------------------
 elsif ruby_version?('2.7')
-  if RUBY_PLATFORM != 'java'
     appraise 'rails5-mysql2' do
       gem 'rails', '~> 5.2.1'
       gem 'mysql2', '< 1', platform: :ruby
@@ -1165,7 +1161,7 @@ elsif ruby_version?('2.7')
       gem 'pg', '< 1.0', platform: :ruby
       gem 'sprockets', '< 4'
       gem 'rails_semantic_logger', '~> 4.0'
-    end    
+    end
 
     appraise 'rails6-postgres-redis' do
       gem 'rails', '~> 6.0.0'
@@ -1250,14 +1246,14 @@ elsif ruby_version?('2.7')
       gem 'aws-sdk'
       gem 'concurrent-ruby'
       gem 'cucumber'
-      gem 'dalli'
+      gem 'dalli', '>= 3.0.0'
       gem 'delayed_job'
       gem 'delayed_job_active_record'
-      gem 'elasticsearch-transport'
+      gem 'elasticsearch', '>= 8.0.0'
       gem 'ethon'
       gem 'excon'
       gem 'grape'
-      gem 'graphql', '>= 1.12.0'
+      gem 'graphql', '>= 2.0'
       gem 'grpc'
       gem 'hiredis'
       gem 'http'
@@ -1267,7 +1263,6 @@ elsif ruby_version?('2.7')
       gem 'mongo', '>= 2.8.0', '< 2.15.0' # TODO: FIX TEST BREAKAGES ON >= 2.15 https://github.com/DataDog/dd-trace-rb/issues/1596
       gem 'mysql2', '< 1', platform: :ruby
       gem 'pg', platform: :ruby
-      gem 'presto-client', '>=  0.5.14'
       gem 'qless'
       gem 'racecar', '>= 0.3.5'
       gem 'rack'
@@ -1287,17 +1282,20 @@ elsif ruby_version?('2.7')
       gem 'sqlite3', '~> 1.4.1'
       gem 'sucker_punch'
       gem 'typhoeus'
-      gem 'que', '>= 1.0.0.beta2'
+      gem 'que', '>= 1.0.0'
     end
 
     appraise 'contrib-old' do
+      gem 'dalli', '< 3.0.0'
+      gem 'elasticsearch', '< 8.0.0' # Dependency elasticsearch-transport renamed to elastic-transport in >= 8.0
       gem 'faraday', '0.17'
+      gem 'graphql', '>= 1.12.0', '< 2.0'
+      gem 'presto-client', '>= 0.5.14' # Renamed to trino-client in >= 1.0
     end
 
     appraise 'core-old' do
       gem 'dogstatsd-ruby', '~> 4'
     end
-  end
 # ----------------------------------------------------------------------------------------------------------------------
 elsif ruby_version?('3.0') || ruby_version?('3.1')
   appraise 'rails61-mysql2' do
@@ -1363,14 +1361,14 @@ elsif ruby_version?('3.0') || ruby_version?('3.1')
     gem 'aws-sdk'
     gem 'concurrent-ruby'
     gem 'cucumber'
-    gem 'dalli'
+    gem 'dalli', '>= 3.0.0'
     gem 'delayed_job'
     gem 'delayed_job_active_record'
-    gem 'elasticsearch-transport'
+    gem 'elasticsearch', '>= 8.0.0'
     gem 'ethon'
     gem 'excon'
     gem 'grape'
-    gem 'graphql', '>= 1.12.0'
+    gem 'graphql', '>= 2.0'
     gem 'grpc', '>= 1.38.0' # Minimum version with Ruby 3.0 support
     gem 'hiredis'
     gem 'http'
@@ -1380,7 +1378,6 @@ elsif ruby_version?('3.0') || ruby_version?('3.1')
     gem 'mongo', '>= 2.8.0', '< 2.15.0' # TODO: FIX TEST BREAKAGES ON >= 2.15 https://github.com/DataDog/dd-trace-rb/issues/1596
     gem 'mysql2', '>= 0.5.3', platform: :ruby
     gem 'pg', '>= 1.1', platform: :ruby
-    gem 'presto-client', '>=  0.5.14'
     gem 'qless'
     # gem 'racecar', '>= 0.3.5' # Pending release of our fix: https://github.com/appsignal/rdkafka-ruby/pull/144
     gem 'rack'
@@ -1400,8 +1397,130 @@ elsif ruby_version?('3.0') || ruby_version?('3.1')
     gem 'sqlite3', '>= 1.4.2'
     gem 'sucker_punch'
     gem 'typhoeus'
-    gem 'que', '>= 1.0.0.beta2'
+    gem 'que', '>= 1.0.0'
     gem 'net-smtp'
+  end
+
+  appraise 'contrib-old' do
+    gem 'dalli', '< 3.0.0'
+    gem 'elasticsearch', '< 8.0.0' # Dependency elasticsearch-transport renamed to elastic-transport in >= 8.0
+    gem 'graphql', '>= 1.12.0', '< 2.0'
+    gem 'presto-client', '>= 0.5.14' # Renamed to trino-client in >= 1.0
+  end
+
+  appraise 'core-old' do
+    gem 'dogstatsd-ruby', '~> 4'
+  end
+# ----------------------------------------------------------------------------------------------------------------------
+elsif ruby_version?('3.2')
+  appraise 'rails61-mysql2' do
+    gem 'rails', '~> 6.1.0'
+    # gem 'mysql2', '~> 0.5', platform: :ruby # broken on Ruby 3.2.0-preview1
+    gem 'sprockets', '< 4'
+    gem 'lograge', '~> 0.11'
+    gem 'net-smtp'
+  end
+
+  appraise 'rails61-postgres' do
+    gem 'rails', '~> 6.1.0'
+    gem 'pg', '>= 1.1', platform: :ruby
+    gem 'sprockets', '< 4'
+    gem 'lograge', '~> 0.11'
+    gem 'net-smtp'
+  end
+
+  appraise 'rails61-postgres-redis' do
+    gem 'rails', '~> 6.1.0'
+    gem 'pg', '>= 1.1', platform: :ruby
+    gem 'redis', '>= 4.2.5'
+    gem 'sprockets', '< 4'
+    gem 'lograge', '~> 0.11'
+    gem 'net-smtp'
+  end
+
+  appraise 'rails61-postgres-sidekiq' do
+    gem 'rails', '~> 6.1.0'
+    gem 'pg', '>= 1.1', platform: :ruby
+    gem 'sidekiq', '>= 6.1.2'
+    gem 'sprockets', '< 4'
+    gem 'lograge', '~> 0.11'
+    gem 'rails_semantic_logger', '~> 4.0'
+    gem 'net-smtp'
+  end
+
+  appraise 'rails61-semantic-logger' do
+    gem 'rails', '~> 6.1.0'
+    gem 'pg', '>= 1.1', platform: :ruby
+    gem 'sprockets', '< 4'
+    gem 'rails_semantic_logger', '~> 4.0'
+    gem 'net-smtp'
+  end
+
+  appraise 'resque2-redis3' do
+    gem 'redis', '< 4.0'
+    gem 'resque', '>= 2.0'
+  end
+
+  appraise 'resque2-redis4' do
+    gem 'redis', '>= 4.0'
+    gem 'resque', '>= 2.0'
+  end
+
+  (3..5).each { |v| gem_cucumber(v) }
+
+  appraise 'contrib' do
+    gem 'actionpack'
+    gem 'actionview'
+    gem 'active_model_serializers', '>= 0.10.0'
+    gem 'activerecord'
+    gem 'aws-sdk'
+    gem 'concurrent-ruby'
+    gem 'cucumber'
+    gem 'dalli', '>= 3.0.0'
+    gem 'delayed_job'
+    gem 'delayed_job_active_record'
+    gem 'elasticsearch', '>= 8.0.0'
+    gem 'ethon'
+    gem 'excon'
+    gem 'grape'
+    gem 'graphql', '>= 2.0'
+    gem 'grpc', '>= 1.38.0' # Minimum version with Ruby 3.0 support
+    gem 'hiredis'
+    gem 'http'
+    gem 'httpclient'
+    # gem 'lograge', '~> 0.11'  # creates conflict with qless dependancy on thor ~0.19.1
+    gem 'makara', '>= 0.6.0.pre' # Ruby 3 requires >= 0.6.0, which is currently in pre-release: https://rubygems.org/gems/makara/versions
+    gem 'mongo', '>= 2.8.0', '< 2.15.0' # TODO: FIX TEST BREAKAGES ON >= 2.15 https://github.com/DataDog/dd-trace-rb/issues/1596
+    # gem 'mysql2', '>= 0.5.3', platform: :ruby # broken on Ruby 3.2.0-preview1
+    gem 'pg', '>= 1.1', platform: :ruby
+    gem 'qless'
+    # gem 'racecar', '>= 0.3.5' # Pending release of our fix: https://github.com/appsignal/rdkafka-ruby/pull/144
+    gem 'rack'
+    gem 'rack-test'
+    gem 'rake', '>= 12.3'
+    gem 'redis', '< 4.0'
+    gem 'rest-client'
+    gem 'resque'
+    gem 'ruby-kafka', '>= 0.7.10'
+    gem 'rspec', '>= 3.0.0'
+    gem 'semantic_logger', '~> 4.0'
+    gem 'sequel'
+    gem 'shoryuken'
+    gem 'sidekiq'
+    gem 'sinatra'
+    gem 'sneakers', '>= 2.12.0'
+    gem 'sqlite3', '>= 1.4.2'
+    gem 'sucker_punch'
+    gem 'typhoeus'
+    gem 'que', '>= 1.0.0'
+    gem 'net-smtp'
+  end
+
+  appraise 'contrib-old' do
+    gem 'dalli', '< 3.0.0'
+    gem 'elasticsearch', '< 8.0.0' # Dependency elasticsearch-transport renamed to elastic-transport in >= 8.0
+    gem 'graphql', '>= 1.12.0', '< 2.0'
+    gem 'presto-client', '>= 0.5.14' # Renamed to trino-client in >= 1.0
   end
 
   appraise 'core-old' do

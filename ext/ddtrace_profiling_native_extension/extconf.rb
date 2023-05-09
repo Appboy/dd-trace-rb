@@ -1,91 +1,40 @@
 # typed: ignore
+
 # rubocop:disable Style/StderrPuts
+# rubocop:disable Style/GlobalVars
 
-# Older Rubies don't have the MJIT header, used by the JIT compiler, so we need to use a different approach
-CAN_USE_MJIT_HEADER = RUBY_VERSION >= '2.6'
+require_relative 'native_extension_helpers'
 
-def on_jruby?
-  # We don't support JRuby for profiling, and JRuby doesn't support native extensions, so let's just skip this entire
-  # thing so that JRuby users of dd-trace-rb aren't impacted.
-  RUBY_ENGINE == 'jruby'
-end
+SKIPPED_REASON_FILE = "#{__dir__}/skipped_reason.txt".freeze
+# Not a problem if the file doesn't exist or we can't delete it
+File.delete(SKIPPED_REASON_FILE) rescue nil
 
-def on_truffleruby?
-  # We don't officially support TruffleRuby for dd-trace-rb at all BUT let's not break adventurous customers that
-  # want to give it a try.
-  RUBY_ENGINE == 'truffleruby'
-end
+def skip_building_extension!(reason)
+  $stderr.puts(Datadog::Profiling::NativeExtensionHelpers::Supported.failure_banner_for(**reason))
+  File.write(
+    SKIPPED_REASON_FILE,
+    Datadog::Profiling::NativeExtensionHelpers::Supported.render_skipped_reason_file(**reason),
+  )
 
-def on_windows?
-  # Microsoft Windows is unsupported, so let's not build the extension there.
-  Gem.win_platform?
-end
-
-def expected_to_use_mjit_but_mjit_is_disabled?
-  # On some Rubies, we require the mjit header to be present. If Ruby was installed without MJIT support, we also skip
-  # building the extension.
-  mjit_disabled = CAN_USE_MJIT_HEADER && RbConfig::CONFIG['MJIT_SUPPORT'] != 'yes'
-
-  if mjit_disabled
-    $stderr.puts(%(
-+------------------------------------------------------------------------------+
-| Your Ruby has been compiled without JIT support (--disable-jit-support).     |
-| The profiling native extension requires a Ruby compiled with JIT support,    |
-| even if the JIT is not in use by the application itself.                     |
-|                                                                              |
-| WARNING: Without the profiling native extension, some profiling features     |
-| will not be available.                                                       |
-+------------------------------------------------------------------------------+
-
-))
-  end
-
-  mjit_disabled
-end
-
-def disabled_via_env?
-  # Experimental toggle to disable building the extension.
-  # Disabling the extension will lead to the profiler not working in future releases.
-  # If you needed to use this, please tell us why on <https://github.com/DataDog/dd-trace-rb/issues/new>.
-  ENV['DD_PROFILING_NO_EXTENSION'].to_s.downcase == 'true'
-end
-
-def skip_building_extension?
-  disabled_via_env? || on_jruby? || on_truffleruby? || on_windows? || expected_to_use_mjit_but_mjit_is_disabled?
-end
-
-# IMPORTANT: When adding flags, remember that our customers compile with a wide range of gcc/clang versions, so
-# doublecheck that what you're adding can be reasonably expected to work on their systems.
-def add_compiler_flag(flag)
-  $CFLAGS << ' ' << flag
-end
-
-def skip_building_extension!
   File.write('Makefile', 'all install clean: # dummy makefile that does nothing')
   exit
 end
 
-if skip_building_extension?
-  $stderr.puts(%(
-+------------------------------------------------------------------------------+
-| Skipping build of profiling native extension and replacing it with a no-op   |
-| Makefile                                                                     |
-+------------------------------------------------------------------------------+
-
-))
-  skip_building_extension!
+unless Datadog::Profiling::NativeExtensionHelpers::Supported.supported?
+  skip_building_extension!(Datadog::Profiling::NativeExtensionHelpers::Supported.unsupported_reason)
 end
 
 $stderr.puts(%(
 +------------------------------------------------------------------------------+
-| ** Preparing to build the ddtrace native extension... **                     |
+| ** Preparing to build the ddtrace profiling native extension... **           |
 |                                                                              |
 | If you run into any failures during this step, you can set the               |
 | `DD_PROFILING_NO_EXTENSION` environment variable to `true` e.g.              |
 | `$ DD_PROFILING_NO_EXTENSION=true bundle install` to skip this step.         |
 |                                                                              |
-| Disabling the extension will lead to the ddtrace profiling features not      |
-| working in future releases.                                                  |
+| If you disable this extension, the Datadog Continuous Profiler will          |
+| not be available, but all other ddtrace features will work fine!             |
+|                                                                              |
 | If you needed to use this, please tell us why on                             |
 | <https://github.com/DataDog/dd-trace-rb/issues/new> so we can fix it :\)      |
 |                                                                              |
@@ -98,6 +47,22 @@ $stderr.puts(%(
 # that may fail on an environment not properly setup for building Ruby extensions.
 require 'mkmf'
 
+# mkmf on modern Rubies actually has an append_cflags that does something similar
+# (see https://github.com/ruby/ruby/pull/5760), but as usual we need a bit more boilerplate to deal with legacy Rubies
+def add_compiler_flag(flag)
+  if try_cflags(flag)
+    $CFLAGS << ' ' << flag
+  else
+    $stderr.puts("WARNING: '#{flag}' not accepted by compiler, skipping it")
+  end
+end
+
+# Older gcc releases may not default to C99 and we need to ask for this. This is also used:
+# * by upstream Ruby -- search for gnu99 in the codebase
+# * by msgpack, another ddtrace dependency
+#   (https://github.com/msgpack/msgpack-ruby/blob/18ce08f6d612fe973843c366ac9a0b74c4e50599/ext/msgpack/extconf.rb#L8)
+add_compiler_flag '-std=gnu99'
+
 # Gets really noisy when we include the MJIT header, let's omit it
 add_compiler_flag '-Wno-unused-function'
 
@@ -107,6 +72,14 @@ add_compiler_flag '-Wno-declaration-after-statement'
 # If we forget to include a Ruby header, the function call may still appear to work, but then
 # cause a segfault later. Let's ensure that never happens.
 add_compiler_flag '-Werror-implicit-function-declaration'
+
+# The native extension is not intended to expose any symbols/functions for other native libraries to use;
+# the sole exception being `Init_ddtrace_profiling_native_extension` which needs to be visible for Ruby to call it when
+# it `dlopen`s the library.
+#
+# By setting this compiler flag, we tell it to assume that everything is private unless explicitly stated.
+# For more details see https://gcc.gnu.org/wiki/Visibility
+add_compiler_flag '-fvisibility=hidden'
 
 if RUBY_PLATFORM.include?('linux')
   # Supposedly, the correct way to do this is
@@ -119,13 +92,41 @@ if RUBY_PLATFORM.include?('linux')
   $defs << '-DHAVE_PTHREAD_GETCPUCLOCKID'
 end
 
+# On older Rubies, we need to use a backported version of this function. See private_vm_api_access.h for details.
+$defs << '-DUSE_BACKPORTED_RB_PROFILE_FRAME_METHOD_NAME' if RUBY_VERSION < '3'
+
+# On older Rubies, we need to use rb_thread_t instead of rb_execution_context_t
+$defs << '-DUSE_THREAD_INSTEAD_OF_EXECUTION_CONTEXT' if RUBY_VERSION < '2.5'
+
+# On older Rubies...
+if RUBY_VERSION < '2.4'
+  # ...we need to use RUBY_VM_NORMAL_ISEQ_P instead of VM_FRAME_RUBYFRAME_P
+  $defs << '-DUSE_ISEQ_P_INSTEAD_OF_RUBYFRAME_P'
+  # ...we use a legacy copy of rb_vm_frame_method_entry
+  $defs << '-DUSE_LEGACY_RB_VM_FRAME_METHOD_ENTRY'
+end
+
+# For REALLY OLD Rubies...
+if RUBY_VERSION < '2.3'
+  # ...there was no rb_time_timespec_new function
+  $defs << '-DNO_RB_TIME_TIMESPEC_NEW'
+  # ...the VM changed enough that we need an alternative legacy rb_profile_frames
+  $defs << '-DUSE_LEGACY_RB_PROFILE_FRAMES'
+end
+
+# If we got here, libddprof is available and loaded
+ENV['PKG_CONFIG_PATH'] = "#{ENV['PKG_CONFIG_PATH']}:#{Libddprof.pkgconfig_folder}"
+unless pkg_config('ddprof_ffi_with_rpath')
+  skip_building_extension!(Datadog::Profiling::NativeExtensionHelpers::Supported::FAILED_TO_CONFIGURE_LIBDDPROF)
+end
+
 # Tag the native extension library with the Ruby version and Ruby platform.
 # This makes it easier for development (avoids "oops I forgot to rebuild when I switched my Ruby") and ensures that
 # the wrong library is never loaded.
 # When requiring, we need to use the exact same string, including the version and the platform.
 EXTENSION_NAME = "ddtrace_profiling_native_extension.#{RUBY_VERSION}_#{RUBY_PLATFORM}".freeze
 
-if CAN_USE_MJIT_HEADER
+if Datadog::Profiling::NativeExtensionHelpers::CAN_USE_MJIT_HEADER
   mjit_header_file_name = "rb_mjit_min_header-#{RUBY_VERSION}.h"
 
   # Validate that the mjit header can actually be compiled on this system. We learned via
@@ -137,41 +138,14 @@ if CAN_USE_MJIT_HEADER
   original_common_headers = MakeMakefile::COMMON_HEADERS
   MakeMakefile::COMMON_HEADERS = ''.freeze
   unless have_macro('RUBY_MJIT_H', mjit_header_file_name)
-    $stderr.puts(%(
-+------------------------------------------------------------------------------+
-| WARNING: Unable to compile a needed component for ddtrace native extension.  |
-| Your C compiler or Ruby VM just-in-time compiler seems to be broken.         |
-|                                                                              |
-| You will be NOT be able to use ddtrace profiling features,                   |
-| but all other features will work fine!                                       |
-|                                                                              |
-| For help solving this issue, please contact Datadog support at               |
-| <https://docs.datadoghq.com/help/>.                                          |
-+------------------------------------------------------------------------------+
-
-))
-    skip_building_extension!
+    skip_building_extension!(Datadog::Profiling::NativeExtensionHelpers::Supported::COMPILATION_BROKEN)
   end
   MakeMakefile::COMMON_HEADERS = original_common_headers
 
-  $defs << '-DUSE_MJIT_HEADER'
+  $defs << "-DRUBY_MJIT_HEADER='\"#{mjit_header_file_name}\"'"
 
   # NOTE: This needs to come after all changes to $defs
   create_header
-
-  # The MJIT header is always (afaik?) suffixed with the exact Ruby VM version,
-  # including patch (e.g. 2.7.2). Thus, we add to the header file a definition
-  # containing the exact file, so that it can be used in a #include in the C code.
-  header_contents =
-    File.read($extconf_h)
-        .sub('#endif',
-             <<-EXTCONF_H.strip
-#define RUBY_MJIT_HEADER "#{mjit_header_file_name}"
-
-#endif
-             EXTCONF_H
-            )
-  File.open($extconf_h, 'w') { |file| file.puts(header_contents) }
 
   create_makefile EXTENSION_NAME
 else
@@ -192,6 +166,11 @@ else
   dir_config('ruby') # allow user to pass in non-standard core include directory
 
   Debase::RubyCoreSource
-    .create_makefile_with_core(proc { have_header('vm_core.h') && thread_native_for_ruby_2_1.call }, EXTENSION_NAME)
+    .create_makefile_with_core(
+      proc { have_header('vm_core.h') && have_header('iseq.h') && thread_native_for_ruby_2_1.call },
+      EXTENSION_NAME,
+    )
 end
+
+# rubocop:enable Style/GlobalVars
 # rubocop:enable Style/StderrPuts

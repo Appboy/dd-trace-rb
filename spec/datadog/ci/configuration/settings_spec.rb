@@ -1,23 +1,27 @@
 # typed: false
+
 require 'datadog/ci/spec_helper'
 require 'datadog/ci/configuration/settings'
 
+require 'datadog/core/configuration/settings'
+require 'datadog/tracing/flush'
+
 RSpec.describe Datadog::CI::Configuration::Settings do
-  context 'when used to extend Datadog::Configuration::Settings' do
+  context 'when used to extend Datadog::Core::Configuration::Settings' do
     subject(:settings) do
       # When 'datadog/ci' is required, it automatically extends Settings.
-      if Datadog::Configuration::Settings <= described_class
-        Datadog::Configuration::Settings.new
+      if Datadog::Core::Configuration::Settings <= described_class
+        Datadog::Core::Configuration::Settings.new
       else
-        Datadog::Configuration::Settings.new.tap do |settings|
+        Datadog::Core::Configuration::Settings.new.tap do |settings|
           settings.extend(described_class)
         end
       end
     end
 
-    describe '#ci_mode' do
+    describe '#ci' do
       describe '#enabled' do
-        subject(:enabled) { settings.ci_mode.enabled }
+        subject(:enabled) { settings.ci.enabled }
 
         it { is_expected.to be false }
 
@@ -50,42 +54,42 @@ RSpec.describe Datadog::CI::Configuration::Settings do
 
       describe '#enabled=' do
         it 'updates the #enabled setting' do
-          expect { settings.ci_mode.enabled = true }
-            .to change { settings.ci_mode.enabled }
+          expect { settings.ci.enabled = true }
+            .to change { settings.ci.enabled }
             .from(false)
             .to(true)
         end
       end
 
-      describe '#context_flush' do
-        subject(:context_flush) { settings.ci_mode.context_flush }
+      describe '#trace_flush' do
+        subject(:trace_flush) { settings.ci.trace_flush }
 
         context 'default' do
           it { is_expected.to be nil }
         end
       end
 
-      describe '#context_flush=' do
-        let(:context_flush) { instance_double(Datadog::ContextFlush::Finished) }
+      describe '#trace_flush=' do
+        let(:trace_flush) { instance_double(Datadog::Tracing::Flush::Finished) }
 
-        it 'updates the #context_flush setting' do
-          expect { settings.ci_mode.context_flush = context_flush }
-            .to change { settings.ci_mode.context_flush }
+        it 'updates the #trace_flush setting' do
+          expect { settings.ci.trace_flush = trace_flush }
+            .to change { settings.ci.trace_flush }
             .from(nil)
-            .to(context_flush)
+            .to(trace_flush)
         end
       end
 
       describe '#writer_options' do
-        subject(:writer_options) { settings.ci_mode.writer_options }
+        subject(:writer_options) { settings.ci.writer_options }
 
         it { is_expected.to eq({}) }
 
         context 'when modified' do
           it 'does not modify the default by reference' do
-            settings.ci_mode.writer_options[:foo] = :bar
-            expect(settings.ci_mode.writer_options).to_not be_empty
-            expect(settings.ci_mode.options[:writer_options].default_value).to be_empty
+            settings.ci.writer_options[:foo] = :bar
+            expect(settings.ci.writer_options).to_not be_empty
+            expect(settings.ci.options[:writer_options].default_value).to be_empty
           end
         end
       end
@@ -94,8 +98,8 @@ RSpec.describe Datadog::CI::Configuration::Settings do
         let(:options) { { priority_sampling: true } }
 
         it 'updates the #writer_options setting' do
-          expect { settings.ci_mode.writer_options = options }
-            .to change { settings.ci_mode.writer_options }
+          expect { settings.ci.writer_options = options }
+            .to change { settings.ci.writer_options }
             .from({})
             .to(options)
         end

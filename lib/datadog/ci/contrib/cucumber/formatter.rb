@@ -1,4 +1,5 @@
 # typed: true
+
 require 'datadog/ci/test'
 require 'datadog/ci/ext/app_types'
 require 'datadog/ci/ext/environment'
@@ -30,16 +31,14 @@ module Datadog
 
           def on_test_case_started(event)
             @current_feature_span = CI::Test.trace(
-              tracer,
               configuration[:operation_name],
               {
                 span_options: {
-                  app: Ext::APP,
                   resource: event.test_case.name,
                   service: configuration[:service_name]
                 },
                 framework: Ext::FRAMEWORK,
-                framework_version: Datadog::CI::Contrib::Cucumber::Integration.version.to_s,
+                framework_version: CI::Contrib::Cucumber::Integration.version.to_s,
                 test_name: event.test_case.name,
                 test_suite: event.test_case.location.file,
                 test_type: Ext::TEST_TYPE
@@ -66,7 +65,7 @@ module Datadog
               resource: event.test_step.to_s,
               span_type: Ext::STEP_SPAN_TYPE
             }
-            @current_step_span = tracer.trace(Ext::STEP_SPAN_TYPE, trace_options)
+            @current_step_span = Tracing.trace(Ext::STEP_SPAN_TYPE, **trace_options)
           end
 
           def on_test_step_finished(event)
@@ -86,11 +85,7 @@ module Datadog
           private
 
           def configuration
-            Datadog.configuration[:cucumber]
-          end
-
-          def tracer
-            configuration[:tracer]
+            Datadog.configuration.ci[:cucumber]
           end
         end
       end

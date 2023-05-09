@@ -1,25 +1,32 @@
 # typed: false
+
 require 'securerandom'
+
 require 'datadog/core/environment/ext'
-require 'ddtrace/utils/forking'
+require 'datadog/core/utils/forking'
 
 module Datadog
   module Core
     module Environment
       # For runtime identity
+      # @public_api
       module Identity
-        extend Datadog::Utils::Forking
+        extend Core::Utils::Forking
 
         module_function
 
         # Retrieves number of classes from runtime
         def id
-          @id ||= SecureRandom.uuid
+          @id ||= ::SecureRandom.uuid.freeze
 
           # Check if runtime has changed, e.g. forked.
-          after_fork! { @id = SecureRandom.uuid }
+          after_fork! { @id = ::SecureRandom.uuid.freeze }
 
           @id
+        end
+
+        def pid
+          ::Process.pid
         end
 
         def lang

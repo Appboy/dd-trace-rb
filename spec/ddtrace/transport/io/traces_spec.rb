@@ -1,6 +1,8 @@
 # typed: false
+
 require 'spec_helper'
 
+require 'datadog/core/encoding'
 require 'ddtrace/transport/io/traces'
 
 RSpec.describe Datadog::Transport::IO::Traces::Response do
@@ -34,7 +36,7 @@ RSpec.describe Datadog::Transport::IO::Client do
   subject(:client) { described_class.new(out, encoder) }
 
   let(:out) { instance_double(IO) }
-  let(:encoder) { instance_double(Datadog::Encoding::Encoder) }
+  let(:encoder) { instance_double(Datadog::Core::Encoding::Encoder) }
 
   describe '#send_traces' do
     context 'given traces' do
@@ -99,7 +101,7 @@ RSpec.describe Datadog::Transport::IO::Traces::Encoder do
     end
 
     let(:trace_encoder) { Class.new { include Datadog::Transport::IO::Traces::Encoder }.new }
-    let(:encoder) { Datadog::Encoding::JSONEncoder }
+    let(:encoder) { Datadog::Core::Encoding::JSONEncoder }
 
     describe '.encode_traces' do
       subject(:encode_traces) { trace_encoder.encode_traces(encoder, traces) }
@@ -125,7 +127,7 @@ RSpec.describe Datadog::Transport::IO::Traces::Encoder do
 
           it 'has IDs that are hex encoded' do
             compare_arrays(traces, encoded_traces) do |trace, encoded_trace|
-              compare_arrays(trace, encoded_trace) do |span, encoded_span|
+              compare_arrays(trace.spans, encoded_trace) do |span, encoded_span|
                 described_class::ENCODED_IDS.each do |id|
                   encoded_id = encoded_span[id.to_s].to_i(16)
                   original_id = span.send(id)
@@ -145,7 +147,7 @@ RSpec.describe Datadog::Transport::IO::Traces::Encoder do
         before do
           # Delete ID from each Span
           traces.each do |trace|
-            trace.each do |span|
+            trace.spans.each do |span|
               allow(span).to receive(:to_hash)
                 .and_wrap_original do |m, *_args|
                 m.call.tap { |h| h.delete(missing_id) }
@@ -156,7 +158,7 @@ RSpec.describe Datadog::Transport::IO::Traces::Encoder do
 
         it 'does not include the missing ID' do
           compare_arrays(traces, encoded_traces) do |trace, encoded_trace|
-            compare_arrays(trace, encoded_trace) do |_span, encoded_span|
+            compare_arrays(trace.spans, encoded_trace) do |_span, encoded_span|
               expect(encoded_span).to_not include(missing_id.to_s)
             end
           end

@@ -1,4 +1,5 @@
 # typed: false
+
 require 'spec_helper'
 
 require 'ddtrace/transport/http/builder'
@@ -17,7 +18,7 @@ RSpec.describe Datadog::Transport::HTTP::Builder do
       subject(:adapter) { builder.adapter(config) }
 
       let(:config) do
-        Datadog::Configuration::AgentSettingsResolver::AgentSettings.new(
+        Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings.new(
           adapter: config_adapter,
           ssl: nil,
           hostname: nil,
@@ -25,7 +26,6 @@ RSpec.describe Datadog::Transport::HTTP::Builder do
           uds_path: nil,
           timeout_seconds: nil,
           deprecated_for_removal_transport_configuration_proc: nil,
-          deprecated_for_removal_transport_configuration_options: nil,
         )
       end
       let(:config_adapter) { :adapter_foo }
@@ -52,11 +52,11 @@ RSpec.describe Datadog::Transport::HTTP::Builder do
     end
 
     context 'given a symbol' do
-      subject(:adapter) { builder.adapter(type, *args) }
+      subject(:adapter) { builder.adapter(type, *args, **kwargs) }
 
       let(:type) { :foo }
       let(:args) { [double('arg1'), double('arg2')] }
-      let(:kwargs) { {} }
+      let(:kwargs) { { kwarg: double('kwval') } }
 
       context 'that matches an adapter in the registry' do
         let(:adapter_class) { double('adapter class') }

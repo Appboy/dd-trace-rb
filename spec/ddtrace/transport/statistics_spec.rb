@@ -1,4 +1,5 @@
 # typed: false
+
 require 'spec_helper'
 
 require 'ddtrace'
@@ -41,7 +42,7 @@ RSpec.describe Datadog::Transport::Statistics do
             expect(Datadog.health_metrics).to have_received(:send_metrics) do |metrics|
               expect(metrics).to be_a_kind_of(Array)
               expect(metrics).to have(1).item
-              expect(metrics).to include(kind_of(Datadog::Metrics::Metric))
+              expect(metrics).to include(kind_of(Datadog::Core::Metrics::Metric))
               expect(metrics.first).to have_attributes(
                 type: :api_responses,
                 name: nil,
@@ -70,7 +71,7 @@ RSpec.describe Datadog::Transport::Statistics do
             expect(Datadog.health_metrics).to have_received(:send_metrics) do |metrics|
               expect(metrics).to be_a_kind_of(Array)
               expect(metrics).to have(1).item
-              expect(metrics).to include(kind_of(Datadog::Metrics::Metric))
+              expect(metrics).to include(kind_of(Datadog::Core::Metrics::Metric))
               expect(metrics.first).to have_attributes(
                 type: :api_responses,
                 name: nil,
@@ -99,7 +100,7 @@ RSpec.describe Datadog::Transport::Statistics do
             expect(Datadog.health_metrics).to have_received(:send_metrics) do |metrics|
               expect(metrics).to be_a_kind_of(Array)
               expect(metrics).to have(1).item
-              expect(metrics).to include(kind_of(Datadog::Metrics::Metric))
+              expect(metrics).to include(kind_of(Datadog::Core::Metrics::Metric))
               expect(metrics.first).to have_attributes(
                 type: :api_responses,
                 name: nil,
@@ -128,7 +129,7 @@ RSpec.describe Datadog::Transport::Statistics do
             expect(Datadog.health_metrics).to have_received(:send_metrics) do |metrics|
               expect(metrics).to be_a_kind_of(Array)
               expect(metrics).to have(1).item
-              expect(metrics).to include(kind_of(Datadog::Metrics::Metric))
+              expect(metrics).to include(kind_of(Datadog::Core::Metrics::Metric))
               expect(metrics.first).to have_attributes(
                 type: :api_errors,
                 name: nil,
@@ -244,7 +245,7 @@ RSpec.describe Datadog::Transport::Statistics do
         expect(Datadog.health_metrics).to have_received(:send_metrics) do |metrics|
           expect(metrics).to be_a_kind_of(Array)
           expect(metrics).to have(1).item
-          expect(metrics).to include(kind_of(Datadog::Metrics::Metric))
+          expect(metrics).to include(kind_of(Datadog::Core::Metrics::Metric))
           expect(metrics.first).to have_attributes(
             type: :api_errors,
             name: nil,

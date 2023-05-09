@@ -1,4 +1,5 @@
 # typed: false
+
 require 'spec_helper'
 
 require 'ddtrace'
@@ -58,7 +59,7 @@ RSpec.describe Datadog::Transport::HTTP::Client do
 
       context 'which raises an error' do
         let(:error_class) { stub_const('TestError', Class.new(StandardError)) }
-        let(:logger) { instance_double(Datadog::Logger) }
+        let(:logger) { instance_double(Datadog::Core::Logger) }
 
         before do
           allow(handler).to receive(:response).and_raise(error_class)

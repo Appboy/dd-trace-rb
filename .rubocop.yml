@@ -5,25 +5,26 @@ require:
   - rubocop-rspec
 
 AllCops:
-  TargetRubyVersion: 2.5 # Lowest version supported as of Rubocop 0.13.0
+  TargetRubyVersion: 2.6 # Lowest version supported as of Rubocop 1.29.0
   Include:
     - 'lib/**/*.rb'
     - 'ext/**/*.rb'
     - 'test/**/*.rb'
     - 'spec/**/*.rb'
+    - 'yard/**/*.rb'
     - 'Gemfile'
     - 'Rakefile'
   Exclude:
     - 'Appraisals'
     - '*.gemspec'
     - 'lib/ddtrace/**/vendor/**/*.rb'
+    - 'lib/datadog/**/vendor/**/*.rb'
     - 'integration/apps/*/bin/*'
     - 'integration/apps/*/Gemfile'
-    - 'lib/ddtrace/profiling/pprof/pprof_pb.rb'
+    - 'lib/datadog/profiling/pprof/pprof_pb.rb'
+    - 'spec/**/**/interesting_backtrace_helper.rb' # This file needs quite a few bizarre code patterns by design
   NewCops: disable # Don't allow new cops to be enabled implicitly.
 
-# 80 characters is a nice goal, but not worth currently changing in existing
-# code for the sake of changing it to conform to a length set in 1928 (IBM).
 Layout/LineLength:
   Max: 124
   Exclude:
@@ -50,6 +51,9 @@ Performance/Casecmp:
 Naming/AccessorMethodName:
   Enabled: false
 
+Naming/MemoizedInstanceVariableName:
+  Enabled: false
+
 Style/RescueModifier:
   Enabled: false
 
@@ -63,6 +67,10 @@ Metrics/BlockLength:
   Max: 42
   Exclude:
     - test/**/*
+    - spec/**/*
+
+Metrics/ModuleLength:
+  Exclude:
     - spec/**/*
 
 Metrics/ParameterLists:
@@ -213,6 +221,10 @@ Style/RedundantBegin:
 Style/HashTransformKeys:
   Enabled: false
 
+# Requires Ruby 2.6
+Style/SlicingWithRange:
+  Enabled: false
+
 # Enforces negative/positive branching order,
 # which can hurt readability.
 Style/NegatedIfElseCondition:
@@ -295,6 +307,10 @@ RSpec/NestedGroups:
 RSpec/MessageSpies:
   Enabled: false
 
+# Enforces use of `instance_double` over `double`
+RSpec/VerifiedDoubles:
+  Enabled: false
+
 # Enforces example line count limit.
 RSpec/ExampleLength:
   Enabled: false
@@ -373,10 +389,6 @@ Style/TrailingCommaInBlockArgs:
 
 Style/TrailingCommaInHashLiteral:
   Enabled: false
-
-Style/GlobalVars:
-  Exclude:
-    - 'ext/ddtrace_profiling_native_extension/extconf.rb'
 
 Naming/VariableNumber:
   Enabled: false

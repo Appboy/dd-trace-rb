@@ -15,16 +15,15 @@ require_relative 'dogstatsd_reporter'
 class ProfilerSampleLoopBenchmark
   def create_profiler
     Datadog.configure do |c|
-      # c.diagnostics.debug = true
       c.profiling.enabled = true
-      c.tracer.transport_options = proc { |t| t.adapter :test }
+      c.tracing.transport_options = proc { |t| t.adapter :test }
     end
 
     # Stop background threads
-    Datadog.profiler.shutdown!
+    Datadog.shutdown!
 
     # Call collection directly
-    @stack_collector = Datadog.profiler.collectors.first
+    @stack_collector = Datadog.send(:components).profiler.collectors.first
     @recorder = @stack_collector.recorder
   end
 

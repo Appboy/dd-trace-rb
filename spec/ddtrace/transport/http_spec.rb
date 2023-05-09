@@ -1,4 +1,5 @@
 # typed: false
+
 require 'spec_helper'
 
 require 'ddtrace/transport/http'
@@ -30,13 +31,13 @@ RSpec.describe Datadog::Transport::HTTP do
 
   describe '.default' do
     subject(:default) { described_class.default }
-    let(:env_agent_settings) { Datadog::Configuration::AgentSettingsResolver::ENVIRONMENT_AGENT_SETTINGS }
+    let(:env_agent_settings) { described_class::DO_NOT_USE_ENVIRONMENT_AGENT_SETTINGS }
 
     # This test changes based on the environment tests are running. We have other
     # tests around each specific environment scenario, while this one specifically
     # ensures that we are matching the default environment settings.
     #
-    # TODO: we should deprecate the use of Datadog::Configuration::AgentSettingsResolver::ENVIRONMENT_AGENT_SETTINGS
+    # TODO: we should deprecate the use of DO_NOT_USE_ENVIRONMENT_AGENT_SETTINGS
     # and thus remove this test scenario.
     it 'returns a transport with default configuration' do
       is_expected.to be_a_kind_of(Datadog::Transport::Traces::Transport)
@@ -46,7 +47,6 @@ RSpec.describe Datadog::Transport::HTTP do
         [
           Datadog::Transport::HTTP::API::V4,
           Datadog::Transport::HTTP::API::V3,
-          Datadog::Transport::HTTP::API::V2
         ]
       )
 
@@ -81,10 +81,9 @@ RSpec.describe Datadog::Transport::HTTP do
       let(:uds_path) { nil }
       let(:timeout_seconds) { nil }
       let(:deprecated_for_removal_transport_configuration_proc) { nil }
-      let(:deprecated_for_removal_transport_configuration_options) { nil }
 
       let(:agent_settings) do
-        Datadog::Configuration::AgentSettingsResolver::AgentSettings.new(
+        Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings.new(
           adapter: adapter,
           ssl: ssl,
           hostname: hostname,
@@ -92,7 +91,6 @@ RSpec.describe Datadog::Transport::HTTP do
           uds_path: uds_path,
           timeout_seconds: timeout_seconds,
           deprecated_for_removal_transport_configuration_proc: deprecated_for_removal_transport_configuration_proc,
-          deprecated_for_removal_transport_configuration_options: deprecated_for_removal_transport_configuration_options
         )
       end
 
@@ -109,55 +107,6 @@ RSpec.describe Datadog::Transport::HTTP do
             expect(api.adapter.port).to eq(port)
             expect(api.adapter.timeout).to be(timeout_seconds)
             expect(api.adapter.ssl).to be true
-          end
-        end
-      end
-
-      context 'that specifies an API version' do
-        let(:deprecated_for_removal_transport_configuration_options) { { api_version: api_version } }
-
-        context 'that is defined' do
-          let(:api_version) { Datadog::Transport::HTTP::API::V2 }
-
-          it { expect(default.current_api_id).to eq(api_version) }
-        end
-
-        context 'that is not defined' do
-          let(:api_version) { double('non-existent API') }
-
-          it { expect { default }.to raise_error(Datadog::Transport::HTTP::Builder::UnknownApiError) }
-        end
-
-        context 'when the options also try to set the api_version' do
-          let(:api_version) { Datadog::Transport::HTTP::API::V2 }
-          let(:options) { { api_version: Datadog::Transport::HTTP::API::V4 } }
-
-          it 'prioritizes the version in the agent_settings' do
-            expect(default.current_api_id).to eq(api_version)
-          end
-        end
-      end
-
-      context 'that specifies headers' do
-        let(:deprecated_for_removal_transport_configuration_options) { { headers: headers } }
-
-        let(:headers) { { 'Test-Header' => 'foo' } }
-
-        it do
-          default.apis.each_value do |api|
-            expect(api.headers).to include(described_class.default_headers)
-            expect(api.headers).to include(headers)
-          end
-        end
-
-        context 'when the options also try to set the headers' do
-          let(:options) { { headers: { 'Some-Other-Test-Header' => 'foo' } } }
-
-          it 'prioritizes the headers in the agent_settings' do
-            default.apis.each_value do |api|
-              expect(api.headers).to include(described_class.default_headers)
-              expect(api.headers).to include(headers)
-            end
           end
         end
       end
@@ -181,7 +130,7 @@ RSpec.describe Datadog::Transport::HTTP do
         let(:options) { { api_version: api_version } }
 
         context 'that is defined' do
-          let(:api_version) { Datadog::Transport::HTTP::API::V2 }
+          let(:api_version) { Datadog::Transport::HTTP::API::V4 }
 
           it { expect(default.current_api_id).to eq(api_version) }
         end
@@ -220,10 +169,10 @@ RSpec.describe Datadog::Transport::HTTP do
 
     it do
       is_expected.to include(
-        Datadog::Ext::Transport::HTTP::HEADER_META_LANG => Datadog::Core::Environment::Ext::LANG,
-        Datadog::Ext::Transport::HTTP::HEADER_META_LANG_VERSION => Datadog::Core::Environment::Ext::LANG_VERSION,
-        Datadog::Ext::Transport::HTTP::HEADER_META_LANG_INTERPRETER => Datadog::Core::Environment::Ext::LANG_INTERPRETER,
-        Datadog::Ext::Transport::HTTP::HEADER_META_TRACER_VERSION => Datadog::Core::Environment::Ext::TRACER_VERSION
+        Datadog::Transport::Ext::HTTP::HEADER_META_LANG => Datadog::Core::Environment::Ext::LANG,
+        Datadog::Transport::Ext::HTTP::HEADER_META_LANG_VERSION => Datadog::Core::Environment::Ext::LANG_VERSION,
+        Datadog::Transport::Ext::HTTP::HEADER_META_LANG_INTERPRETER => Datadog::Core::Environment::Ext::LANG_INTERPRETER,
+        Datadog::Transport::Ext::HTTP::HEADER_META_TRACER_VERSION => Datadog::Core::Environment::Ext::TRACER_VERSION
       )
     end
 
@@ -233,13 +182,13 @@ RSpec.describe Datadog::Transport::HTTP do
       context 'is not nil' do
         let(:container_id) { '3726184226f5d3147c25fdeab5b60097e378e8a720503a5e19ecfdf29f869860' }
 
-        it { is_expected.to include(Datadog::Ext::Transport::HTTP::HEADER_CONTAINER_ID => container_id) }
+        it { is_expected.to include(Datadog::Transport::Ext::HTTP::HEADER_CONTAINER_ID => container_id) }
       end
 
       context 'is nil' do
         let(:container_id) { nil }
 
-        it { is_expected.to_not include(Datadog::Ext::Transport::HTTP::HEADER_CONTAINER_ID) }
+        it { is_expected.to_not include(Datadog::Transport::Ext::HTTP::HEADER_CONTAINER_ID) }
       end
     end
   end
@@ -253,16 +202,16 @@ RSpec.describe Datadog::Transport::HTTP do
   describe '.default_hostname' do
     subject(:default_hostname) { described_class.default_hostname(logger: logger) }
 
-    let(:logger) { instance_double(Datadog::Logger, warn: nil) }
+    let(:logger) { instance_double(Datadog::Core::Logger, warn: nil) }
 
     before do
       stub_const(
-        'Datadog::Configuration::AgentSettingsResolver::ENVIRONMENT_AGENT_SETTINGS',
-        instance_double(Datadog::Configuration::AgentSettingsResolver::AgentSettings, hostname: 'example-hostname')
+        'Datadog::Transport::HTTP::DO_NOT_USE_ENVIRONMENT_AGENT_SETTINGS',
+        instance_double(Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings, hostname: 'example-hostname')
       )
     end
 
-    it 'returns the hostname from the ENVIRONMENT_AGENT_SETTINGS object' do
+    it 'returns the hostname from the DO_NOT_USE_ENVIRONMENT_AGENT_SETTINGS object' do
       expect(default_hostname).to eq 'example-hostname'
     end
 
@@ -276,16 +225,16 @@ RSpec.describe Datadog::Transport::HTTP do
   describe '.default_port' do
     subject(:default_port) { described_class.default_port(logger: logger) }
 
-    let(:logger) { instance_double(Datadog::Logger, warn: nil) }
+    let(:logger) { instance_double(Datadog::Core::Logger, warn: nil) }
 
     before do
       stub_const(
-        'Datadog::Configuration::AgentSettingsResolver::ENVIRONMENT_AGENT_SETTINGS',
-        instance_double(Datadog::Configuration::AgentSettingsResolver::AgentSettings, port: 12345)
+        'Datadog::Transport::HTTP::DO_NOT_USE_ENVIRONMENT_AGENT_SETTINGS',
+        instance_double(Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings, port: 12345)
       )
     end
 
-    it 'returns the port from the ENVIRONMENT_AGENT_SETTINGS object' do
+    it 'returns the port from the DO_NOT_USE_ENVIRONMENT_AGENT_SETTINGS object' do
       expect(default_port).to eq 12345
     end
 
@@ -299,7 +248,7 @@ RSpec.describe Datadog::Transport::HTTP do
   describe '.default_url' do
     subject(:default_url) { described_class.default_url(logger: logger) }
 
-    let(:logger) { instance_double(Datadog::Logger, warn: nil) }
+    let(:logger) { instance_double(Datadog::Core::Logger, warn: nil) }
 
     it { is_expected.to be nil }
 

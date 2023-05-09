@@ -1,9 +1,10 @@
 # typed: true
+
 module Datadog
   module CI
     module Ext
       module AppTypes
-        TEST = 'test'.freeze
+        TYPE_TEST = 'test'.freeze
       end
     end
   end

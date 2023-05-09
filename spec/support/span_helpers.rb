@@ -1,9 +1,12 @@
 # typed: false
+
+require 'datadog/tracing/metadata/ext'
+
 module SpanHelpers
   RSpec::Matchers.define :have_error do
     match do |span|
       @actual = span.status
-      values_match? Datadog::Ext::Errors::STATUS, @actual
+      values_match? Datadog::Tracing::Metadata::Ext::Errors::STATUS, @actual
     end
 
     def description_of(actual)
@@ -49,9 +52,9 @@ module SpanHelpers
     end
   end
 
-  define_have_error_tag(:message, Datadog::Ext::Errors::MSG)
-  define_have_error_tag(:stack, Datadog::Ext::Errors::STACK)
-  define_have_error_tag(:type, Datadog::Ext::Errors::TYPE)
+  define_have_error_tag(:message, Datadog::Tracing::Metadata::Ext::Errors::TAG_MSG)
+  define_have_error_tag(:stack, Datadog::Tracing::Metadata::Ext::Errors::TAG_STACK)
+  define_have_error_tag(:type, Datadog::Tracing::Metadata::Ext::Errors::TAG_TYPE)
 
   # Distributed traces have the same trace_id and parent_id as upstream parent
   # span, but don't actually share the same Context with the parent.
@@ -75,6 +78,22 @@ module SpanHelpers
 
     def description_of(actual)
       "#{actual} with metrics #{actual.instance_variable_get(:@metrics)}"
+    end
+  end
+
+  # Does this span have no parent span?
+  RSpec::Matchers.define :be_root_span do
+    match do |span|
+      value = span.parent_id
+      values_match? 0, value
+    end
+  end
+
+  RSpec::Matchers.define :have_metadata do |**tags|
+    match do |actual|
+      tags.all? do |key, value|
+        actual.get_tag(key) == value
+      end
     end
   end
 end

@@ -1,4 +1,5 @@
 # typed: false
+
 require 'datadog/ci/test'
 
 require 'datadog/ci/ext/app_types'
@@ -28,18 +29,16 @@ module Datadog
               end
 
               CI::Test.trace(
-                tracer,
                 configuration[:operation_name],
                 {
                   span_options: {
-                    app: Ext::APP,
                     resource: test_name,
                     service: configuration[:service_name]
                   },
                   framework: Ext::FRAMEWORK,
-                  framework_version: Datadog::CI::Contrib::RSpec::Integration.version.to_s,
+                  framework_version: CI::Contrib::RSpec::Integration.version.to_s,
                   test_name: test_name,
-                  test_suite: file_path,
+                  test_suite: metadata[:example_group][:file_path],
                   test_type: Ext::TEST_TYPE
                 }
               ) do |span|
@@ -61,11 +60,7 @@ module Datadog
             private
 
             def configuration
-              Datadog.configuration[:rspec]
-            end
-
-            def tracer
-              configuration[:tracer]
+              Datadog.configuration.ci[:rspec]
             end
           end
         end

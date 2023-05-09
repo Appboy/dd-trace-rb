@@ -1,8 +1,11 @@
 # typed: ignore
+
 require 'spec_helper'
 
-require 'ddtrace'
+require 'datadog/tracing/writer'
 require 'ddtrace/transport/http'
+require 'ddtrace/transport/http/traces'
+require 'ddtrace/transport/traces'
 
 RSpec.describe 'Datadog::Transport::HTTP integration tests' do
   before { skip unless ENV['TEST_DATADOG_INTEGRATION'] }
@@ -30,7 +33,7 @@ RSpec.describe 'Datadog::Transport::HTTP integration tests' do
     end
   end
 
-  describe Datadog::Writer do
+  describe Datadog::Tracing::Writer do
     subject(:writer) { described_class.new(writer_options) }
 
     let(:writer_options) { { transport: client } }
@@ -43,20 +46,6 @@ RSpec.describe 'Datadog::Transport::HTTP integration tests' do
       let(:traces) { get_test_traces(1) }
 
       it { is_expected.to be true }
-
-      context 'with priority sampling' do
-        let(:writer_options) { super().merge!(priority_sampler: sampler) }
-        let(:sampler) { Datadog::PrioritySampler.new }
-
-        # Verify the priority sampler gets updated
-        before do
-          expect(sampler).to receive(:update)
-            .with(kind_of(Hash))
-            .and_call_original
-        end
-
-        it { is_expected.to be true }
-      end
     end
   end
 end

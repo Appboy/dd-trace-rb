@@ -1,10 +1,14 @@
 # typed: ignore
+
 $LOAD_PATH.unshift File.expand_path('..', __dir__)
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
 require 'pry'
 require 'rspec/collection_matchers'
 require 'webmock/rspec'
 require 'climate_control'
+
+# Needed for calling JRuby.reference below
+require 'jruby' if RUBY_ENGINE == 'jruby'
 
 if (ENV['SKIP_SIMPLECOV'] != '1') && !RSpec.configuration.files_to_run.all? { |path| path.include?('/benchmark/') }
   # +SimpleCov.start+ must be invoked before any application code is loaded
@@ -14,9 +18,9 @@ if (ENV['SKIP_SIMPLECOV'] != '1') && !RSpec.configuration.files_to_run.all? { |p
   end
 end
 
-require 'ddtrace/encoding'
-require 'ddtrace/tracer'
-require 'ddtrace/span'
+require 'datadog/core/encoding'
+require 'datadog/tracing/tracer'
+require 'datadog/tracing/span'
 
 require 'support/configuration_helpers'
 require 'support/container_helpers'
@@ -27,6 +31,7 @@ require 'support/http_helpers'
 require 'support/log_helpers'
 require 'support/metric_helpers'
 require 'support/network_helpers'
+require 'support/object_helpers'
 require 'support/object_space_helper'
 require 'support/platform_helpers'
 require 'support/span_helpers'
@@ -38,7 +43,12 @@ require 'support/tracer_helpers'
 begin
   # Ignore interpreter warnings from external libraries
   require 'warning'
-  Warning.ignore([:method_redefined, :not_reached, :unused_var], %r{.*/gems/[^/]*/lib/})
+
+  # Ignore warnings in Gem dependencies
+  Gem.path.each do |path|
+    Warning.ignore([:method_redefined, :not_reached, :unused_var, :arg_prefix], path)
+    Warning.ignore(/circular require considered harmful/, path)
+  end
 rescue LoadError
   puts 'warning suppressing gem not available, external library warnings will be displayed'
 end
@@ -54,6 +64,7 @@ RSpec.configure do |config|
   config.include LogHelpers
   config.include MetricHelpers
   config.include NetworkHelpers
+  config.include ObjectHelpers
   config.include SpanHelpers
   config.include SynchronizationHelpers
   config.include TestHelpers
@@ -145,7 +156,7 @@ RSpec.configure do |config|
         # teardown in those tests.
         # They currently flood the output, making our test
         # suite output unreadable.
-        if example.file_path.start_with?('./spec/ddtrace/workers/')
+        if example.file_path.start_with?('./spec/datadog/core/workers/', './spec/ddtrace/workers/')
           puts # Add newline so we get better output when the progress formatter is being used
           RSpec.warning("FIXME: #{example.file_path}:#{example.metadata[:line_number]} is leaking threads")
           next

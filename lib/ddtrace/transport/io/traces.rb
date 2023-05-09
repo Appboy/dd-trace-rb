@@ -1,4 +1,5 @@
 # typed: false
+
 require 'ddtrace/transport/traces'
 
 require 'ddtrace/transport/io/response'
@@ -67,7 +68,7 @@ module Datadog
 
           def encode_trace(trace)
             # Convert each trace to hash
-            trace.map(&:to_hash).tap do |spans|
+            trace.spans.map(&:to_hash).tap do |spans|
               # Convert IDs to hexadecimal
               spans.each do |span|
                 ENCODED_IDS.each do |id|

@@ -6,8 +6,8 @@ require 'ddtrace/version'
 
 Gem::Specification.new do |spec|
   spec.name                  = 'ddtrace'
-  spec.version               = Datadog::VERSION::STRING
-  spec.required_ruby_version = [">= #{Datadog::VERSION::MINIMUM_RUBY_VERSION}", "< #{Datadog::VERSION::MAXIMUM_RUBY_VERSION}"]
+  spec.version               = DDTrace::VERSION::STRING
+  spec.required_ruby_version = [">= #{DDTrace::VERSION::MINIMUM_RUBY_VERSION}", "< #{DDTrace::VERSION::MAXIMUM_RUBY_VERSION}"]
   spec.required_rubygems_version = '>= 2.0.0'
   spec.authors               = ['Datadog, Inc.']
   spec.email                 = ['dev@datadoghq.com']
@@ -31,14 +31,20 @@ Gem::Specification.new do |spec|
   spec.files =
     `git ls-files -z`
     .split("\x0")
-    .reject { |f| f.match(%r{^(test|spec|features|[.]circleci|[.]github|[.]dd-ci|benchmarks|gemfiles|integration|tasks|sorbet)/}) }
+    .reject { |f| f.match(%r{^(test|spec|features|[.]circleci|[.]github|[.]dd-ci|benchmarks|gemfiles|integration|tasks|sorbet|yard)/}) }
     .reject do |f|
       ['.dockerignore', '.env', '.gitattributes', '.gitlab-ci.yml', '.rspec', '.rubocop.yml',
-       '.rubocop_todo.yml', '.simplecov', 'Appraisals', 'Gemfile', 'Rakefile', 'docker-compose.yml', '.pryrc'].include?(f)
+       '.rubocop_todo.yml', '.simplecov', 'Appraisals', 'Gemfile', 'Rakefile', 'docker-compose.yml', '.pryrc', '.yardopts'].include?(f)
     end
   spec.executables   = ['ddtracerb']
   spec.require_paths = ['lib']
 
+  # Important note: This `if` ONLY works for development. When packaging up the gem, Ruby runs this code, and hardcodes
+  # the output in the `.gem` file that gets uploaded to rubygems. So the decision here gets hardcoded, we don't actually
+  # pick a version depending on the Ruby customers are running, as it may appear.
+  # For more context, see the discussion in
+  # * https://github.com/DataDog/dd-trace-rb/pull/1739
+  # * https://github.com/DataDog/dd-trace-rb/pull/1336
   if RUBY_VERSION >= '2.2.0'
     spec.add_dependency 'msgpack'
   else
@@ -50,7 +56,13 @@ Gem::Specification.new do |spec|
   #
   # Because we only use this for older Rubies, and we consider it "feature-complete" for those older Rubies,
   # we're pinning it at the latest available version and will manually bump the dependency as needed.
-  spec.add_dependency 'debase-ruby_core_source', '<= 0.10.14'
+  spec.add_dependency 'debase-ruby_core_source', '<= 0.10.16'
 
-  spec.extensions = ['ext/ddtrace_profiling_native_extension/extconf.rb']
+  # Used by appsec
+  spec.add_dependency 'libddwaf', '~> 1.3.0.2.0'
+
+  # Used by profiling
+  spec.add_dependency 'libddprof', '~> 0.6.0.1.0'
+
+  spec.extensions = ['ext/ddtrace_profiling_native_extension/extconf.rb', 'ext/ddtrace_profiling_loader/extconf.rb']
 end

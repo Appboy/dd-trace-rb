@@ -11,13 +11,15 @@ gem 'builder'
 gem 'climate_control', '~> 0.2.0'
 # Leave it open as we also have it as an integration and want Appraisal to control the version under test.
 gem 'concurrent-ruby'
+gem 'json-schema'
 gem 'memory_profiler', '~> 0.9'
 gem 'os', '~> 1.1'
 gem 'pimpmychangelog', '>= 0.1.2'
 gem 'pry'
 if RUBY_PLATFORM != 'java'
   # There's a few incompatibilities between pry/pry-byebug on older Rubies
-  gem 'pry-byebug' if RUBY_VERSION >= '2.6.0' && RUBY_ENGINE != 'truffleruby'
+  # There's also a few temproary incompatibilities with newer rubies
+  gem 'pry-byebug' if RUBY_VERSION >= '2.6.0' && RUBY_ENGINE != 'truffleruby' && RUBY_VERSION < '3.2.0'
   gem 'pry-nav' if RUBY_VERSION < '2.6.0'
   gem 'pry-stack_explorer'
 else
@@ -69,11 +71,11 @@ gem 'opentracing', '>= 0.4.1'
 
 # Profiler optional dependencies
 # NOTE: We're excluding versions 3.7.0 and 3.7.1 for the reasons documented in #1424 and the big comment in
-#       lib/ddtrace/profiling.rb: it breaks for some older rubies in CI without BUNDLE_FORCE_RUBY_PLATFORM=true.
+#       lib/datadog/profiling.rb: it breaks for some older rubies in CI without BUNDLE_FORCE_RUBY_PLATFORM=true.
 #       Since most of our customers won't have BUNDLE_FORCE_RUBY_PLATFORM=true, it's not something we want to add
 #       to our CI, so we just shortcut and exclude specific versions that were affecting our CI.
 if RUBY_PLATFORM != 'java'
-  if RUBY_VERSION >= '2.4.0' # Bundler 1.x fails to recognize that version >= 3.19.2 is not compatible with older rubies
+  if RUBY_VERSION >= '2.5.0' # Bundler 1.x fails to recognize that version >= 3.19.2 is not compatible with older rubies
     gem 'google-protobuf', ['~> 3.0', '!= 3.7.0', '!= 3.7.1']
   else
     gem 'google-protobuf', ['~> 3.0', '!= 3.7.0', '!= 3.7.1', '< 3.19.2']
@@ -85,7 +87,7 @@ end
 # previously-passing codebase start failing. Thus, we need to lock to a specific
 # version and bump it from time to time.
 # Also, there's no support for windows
-if RUBY_VERSION >= '2.4.0' && !Gem.win_platform?
-  gem 'sorbet', '= 0.5.9120'
+if RUBY_VERSION >= '2.4.0' && (RUBY_PLATFORM =~ /^x86_64-(darwin|linux)/)
+  gem 'sorbet', '= 0.5.9672'
   gem 'spoom', '~> 1.1'
 end

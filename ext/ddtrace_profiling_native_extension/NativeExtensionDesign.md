@@ -1,9 +1,11 @@
 # Profiling Native Extension Design
 
-The profiling native extension is used to implement features which are expensive (in terms of resources) or otherwise
-impossible to implement using Ruby code.
+The profiling native extension is used to:
+1. Implement features which are expensive (in terms of resources) or otherwise impossible to implement using Ruby code.
+2. Bridge between Ruby-specific profiling features and [`libddprof`](https://github.com/DataDog/libddprof), a Rust-based
+library with common profiling functionality.
 
-This extension is quite coupled with MRI Ruby ("C Ruby") internals, and is not intended to support other rubies such as
+Due to (1), this extension is quite coupled with MRI Ruby ("C Ruby") internals, and is not intended to support other rubies such as
 JRuby or TruffleRuby. When below we say "Ruby", read it as "MRI Ruby".
 
 ## Disabling
@@ -16,16 +18,40 @@ the gem. Setting `DD_PROFILING_NO_EXTENSION` at installation time skips compilat
 Currently the profiler can still "limp along" when the native extension is disabled, but the plan is to require it
 in future releases -- e.g. disabling the extension will disable profiling entirely.
 
-## Safety
+## Must not block or break users that cannot use it
 
 The profiling native extension is (and must always be) designed to **not cause failures** during gem installation, even
 if some features, Ruby versions, or operating systems are not supported.
 
-E.g. the extension must cleanly build on Ruby 2.1 (or the oldest Ruby version we support at the time) on Windows,
+E.g. the extension must not break installation on Ruby 2.1 (or the oldest Ruby version we support at the time) on 64-bit ARM macOS,
 even if at run time it will effectively do nothing for such a setup.
 
 We have a CI setup to help validate this, but this is really important to keep in mind when adding to or changing the
 existing codebase.
+
+## Memory leaks and Interaction with Ruby VM APIs
+
+When adding to or changing the native extension, we must always consider what API calls can lead to Ruby exceptions to
+be raised, and whether there are is dynamically-allocated memory that can be leaked if that happens.
+
+(When a Ruby exception is raised, the VM will use `setjmp` and `longjmp` to jump back in the stack and thus skip
+our clean-up code, like in a Ruby-level exception.)
+
+We avoid issues using a combination of:
+
+* Avoiding dynamic allocation as much as possible
+* Getting all needed data and doing all validations before doing any dynamic allocations
+* Avoiding calling Ruby VM APIs after doing dynamic allocations
+* Wrapping dynamic allocations into Ruby GC-managed objects (using `TypedData_Wrap_Struct`), so that Ruby will manage
+  their lifetime and call `free` when the GC-managed object is no longer being referenced
+
+Non-exhaustive list of APIs that cause exceptions to be raised:
+
+* `Check_TypedStruct`, `Check_Type`
+* `rb_funcall`
+* `rb_thread_call_without_gvl`, `rb_thread_call_without_gvl2`
+* [Numeric conversion APIs, e.g. `NUM2LONG`, `NUM2INT`, etc.](https://silverhammermba.github.io/emberb/c/?utm_source=pocket_mylist#translation)
+* Our `char_slice_from_ruby_string` helper
 
 ## Usage of private VM headers
 
