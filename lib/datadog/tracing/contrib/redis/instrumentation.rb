@@ -23,6 +23,9 @@ module Datadog
                 span.service = service_name
                 span.span_type = Contrib::Redis::Ext::TYPE
                 span.resource = get_command(args, show_command_args)
+                ### BRAZE MODIFICATION
+                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
+                ### END BRAZE MODIFICATION
                 Contrib::Redis::Tags.set_common_tags(self, span, show_command_args)
 
                 super
@@ -38,6 +41,9 @@ module Datadog
                 commands = get_pipeline_commands(args, show_command_args)
                 span.resource = commands.any? ? commands.join("\n") : '(none)'
                 span.set_metric Contrib::Redis::Ext::METRIC_PIPELINE_LEN, commands.length
+                # BRAZE MODIFICATION
+                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
+                # END BRAZE MODIFICATION
                 Contrib::Redis::Tags.set_common_tags(self, span, show_command_args)
 
                 super
