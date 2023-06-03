@@ -15,6 +15,9 @@ module Datadog
           SPAN_COMMAND = 'redis.command'.freeze
           TAG_DB = 'out.redis_db'.freeze
           TAG_RAW_COMMAND = 'redis.raw_command'.freeze
+          ### BRAZE MODIFICATION
+          METRIC_RAW_COMMAND_LEN = 'redis.raw_command_length'.freeze
+          ### END BRAZE MODIFICATION
           TYPE = 'redis'.freeze
           TAG_COMPONENT = 'redis'.freeze
           TAG_OPERATION_COMMAND = 'command'.freeze
