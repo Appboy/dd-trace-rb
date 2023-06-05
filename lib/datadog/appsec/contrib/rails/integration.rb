@@ -1,10 +1,7 @@
-# typed: ignore
+require_relative '../integration'
 
-require 'datadog/appsec/contrib/integration'
-
-require 'datadog/appsec/contrib/rails/configuration/settings'
-require 'datadog/appsec/contrib/rails/patcher'
-require 'datadog/appsec/contrib/rails/request_middleware'
+require_relative 'patcher'
+require_relative 'request_middleware'
 
 module Datadog
   module AppSec
@@ -19,7 +16,7 @@ module Datadog
           register_as :rails, auto_patch: false
 
           def self.version
-            Gem.loaded_specs['rails'] && Gem.loaded_specs['rails'].version
+            Gem.loaded_specs['railties'] && Gem.loaded_specs['railties'].version
           end
 
           def self.loaded?
@@ -32,10 +29,6 @@ module Datadog
 
           def self.auto_instrument?
             true
-          end
-
-          def default_configuration
-            Configuration::Settings.new
           end
 
           def patcher

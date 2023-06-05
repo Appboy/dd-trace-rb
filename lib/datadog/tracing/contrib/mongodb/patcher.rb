@@ -1,8 +1,8 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/patcher'
-require 'datadog/tracing/contrib/mongodb/ext'
-require 'datadog/tracing/contrib/mongodb/instrumentation'
+require_relative '../patcher'
+require_relative 'ext'
+require_relative 'instrumentation'
 
 module Datadog
   module Tracing

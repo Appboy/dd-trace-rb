@@ -10,6 +10,8 @@ Integration tests for `ddtrace` that use a variety of real applications.
     ./script/build-images
     ```
 
+You can specify which ruby version to build using the `-v` option.
+
 2. Choose an application and follow instructions (in corresponding `README.md`.)
 
 ## Demo applications
@@ -20,12 +22,15 @@ Ruby demo applications are configured with Datadog APM, which can be used to gen
 
 See `README.md` in each directory for more information:
 
+- `apps/opentelemetry`: Generates OpenTelemetry traces
 - `apps/rack`: Rack application
 - `apps/rails-five`: Rails 5 application
 - `apps/rails-six`: Rails 6 application
 - `apps/rails-seven`: Rails 7 application
 - `apps/rspec`: RSpec test suite (CI)
 - `apps/ruby`: Generic Ruby application
+- `apps/sinatra2-classic`: Sinatra classic application
+- `apps/sinatra2-modular`: Sinatra modular application
 
 ### Base images
 

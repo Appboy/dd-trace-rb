@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'ddtrace'
@@ -268,7 +266,7 @@ RSpec.describe Datadog::Core::Workers::RuntimeMetrics do
 
   describe 'integration tests', :integration do
     describe 'interval' do
-      let(:default_flush_interval) { 0.5 }
+      let(:default_flush_interval) { 0.01 }
 
       before do
         stub_const(
@@ -282,11 +280,9 @@ RSpec.describe Datadog::Core::Workers::RuntimeMetrics do
       it 'produces metrics every interval' do
         worker.perform
 
-        sleep(default_flush_interval + 0.2)
-
         # Metrics are produced once right away
         # and again after an interval.
-        expect(metrics).to have_received(:flush).twice
+        wait_for(metrics).to have_received(:flush).at_least(2).times
       end
     end
 
@@ -344,7 +340,7 @@ RSpec.describe Datadog::Core::Workers::RuntimeMetrics do
 
               # Restart worker & wait
               worker.perform
-              try_wait_until(attempts: 30) { @flushed }
+              try_wait_until(seconds: 3) { @flushed }
 
               # Verify state of the worker
               expect(worker.error?).to be false

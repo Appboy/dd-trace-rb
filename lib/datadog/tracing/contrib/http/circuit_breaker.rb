@@ -1,7 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing'
-require 'ddtrace/transport/ext'
+require_relative '../../../../ddtrace/transport/ext'
 
 module Datadog
   module Tracing

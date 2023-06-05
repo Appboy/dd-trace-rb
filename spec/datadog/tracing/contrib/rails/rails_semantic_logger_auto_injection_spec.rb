@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/rails/rails_helper'
 
 RSpec.describe 'Rails Log Auto Injection' do
@@ -19,12 +17,15 @@ RSpec.describe 'Rails Log Auto Injection' do
   end
 
   let(:semantic_logger_controller) do
-    stub_const('SemanticLoggerTestController', Class.new(ActionController::Base) do
-      def index
-        Rails.logger.info('MINASWAN')
-        render inline: '<html> <head> </head> <body> <div> Hello from index </div> </body> </html>'
+    stub_const(
+      'SemanticLoggerTestController',
+      Class.new(ActionController::Base) do
+        def index
+          Rails.logger.info('MINASWAN')
+          render inline: '<html> <head> </head> <body> <div> Hello from index </div> </body> </html>'
+        end
       end
-    end)
+    )
   end
 
   before do

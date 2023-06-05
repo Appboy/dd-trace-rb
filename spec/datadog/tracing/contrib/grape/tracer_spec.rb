@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
 require 'ddtrace'
@@ -22,8 +20,84 @@ RSpec.describe 'Grape instrumentation' do
     # patch Grape before the application
     Datadog::Tracing::Contrib::Grape::Patcher.patch
 
-    stub_const('TestingAPI', Class.new(Grape::API) do
-      namespace :base do
+    stub_const(
+      'TestingAPI',
+      Class.new(Grape::API) do
+        namespace :base do
+          desc 'Returns a success message'
+          get :success do
+            'OK'
+          end
+
+          desc 'Returns an error'
+          get :hard_failure do
+            raise StandardError, 'Ouch!'
+          end
+        end
+
+        namespace :filtered do
+          before do
+            sleep(0.01)
+          end
+
+          after do
+            sleep(0.01)
+          end
+
+          desc 'Returns a success message before and after filter processing'
+          get :before_after do
+            'OK'
+          end
+        end
+
+        namespace :filtered_exception do
+          before do
+            raise StandardError, 'Ouch!'
+          end
+
+          desc 'Returns an error in the filter'
+          get :before do
+            'OK'
+          end
+        end
+
+        resource :widgets do
+          desc 'Returns a list of widgets'
+          get do
+            '[]'
+          end
+
+          desc 'creates a widget'
+          post do
+            '{}'
+          end
+        end
+
+        namespace :nested do
+          resource :widgets do
+            desc 'Returns a list of widgets'
+            get do
+              '[]'
+            end
+          end
+        end
+
+        resource :span_resource do
+          get :span_resource do
+            'OK'
+          end
+        end
+      end
+    )
+  end
+
+  let(:rack_testing_api) do
+    # patch Grape before the application
+    Datadog::Tracing::Contrib::Grape::Patcher.patch
+
+    stub_const(
+      'RackTestingAPI',
+      Class.new(Grape::API) do
         desc 'Returns a success message'
         get :success do
           'OK'
@@ -33,84 +107,14 @@ RSpec.describe 'Grape instrumentation' do
         get :hard_failure do
           raise StandardError, 'Ouch!'
         end
-      end
 
-      namespace :filtered do
-        before do
-          sleep(0.01)
-        end
-
-        after do
-          sleep(0.01)
-        end
-
-        desc 'Returns a success message before and after filter processing'
-        get :before_after do
-          'OK'
-        end
-      end
-
-      namespace :filtered_exception do
-        before do
-          raise StandardError, 'Ouch!'
-        end
-
-        desc 'Returns an error in the filter'
-        get :before do
-          'OK'
-        end
-      end
-
-      resource :widgets do
-        desc 'Returns a list of widgets'
-        get do
-          '[]'
-        end
-
-        desc 'creates a widget'
-        post do
-          '{}'
-        end
-      end
-
-      namespace :nested do
-        resource :widgets do
-          desc 'Returns a list of widgets'
-          get do
-            '[]'
+        resource :span_resource_rack do
+          get :span_resource do
+            'OK'
           end
         end
       end
-
-      resource :span_resource do
-        get :span_resource do
-          'OK'
-        end
-      end
-    end)
-  end
-
-  let(:rack_testing_api) do
-    # patch Grape before the application
-    Datadog::Tracing::Contrib::Grape::Patcher.patch
-
-    stub_const('RackTestingAPI', Class.new(Grape::API) do
-      desc 'Returns a success message'
-      get :success do
-        'OK'
-      end
-
-      desc 'Returns an error'
-      get :hard_failure do
-        raise StandardError, 'Ouch!'
-      end
-
-      resource :span_resource_rack do
-        get :span_resource do
-          'OK'
-        end
-      end
-    end)
+    )
 
     # create a custom Rack application with the Rack middleware and a Grape API
     Rack::Builder.new do
@@ -260,7 +264,10 @@ RSpec.describe 'Grape instrumentation' do
           expect(spans[0].status).to eq(1)
           expect(spans[0].get_tag('error.stack')).to_not be_nil
           expect(spans[0].get_tag('error.type')).to_not be_nil
-          expect(spans[0].get_tag('error.msg')).to_not be_nil
+          expect(spans[0].get_tag('error.message')).to_not be_nil,
+            "DEV: 🚧 Flaky test! Please send the maintainers a link for this CI failure. Thank you! 🚧\n" \
+            "response=#{response.inspect}\n" \
+            "spans=#{spans.inspect}\n"
           expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('grape')
           expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
             .to eq('endpoint_run')
@@ -278,7 +285,7 @@ RSpec.describe 'Grape instrumentation' do
             expect(spans[0].status).to eq(1)
             expect(spans[0].get_tag('error.stack')).to_not be_nil
             expect(spans[0].get_tag('error.type')).to_not be_nil
-            expect(spans[0].get_tag('error.msg')).to_not be_nil
+            expect(spans[0].get_tag('error.message')).to_not be_nil
             expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('grape')
             expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
               .to eq('endpoint_run')
@@ -297,7 +304,7 @@ RSpec.describe 'Grape instrumentation' do
             expect(spans[0].status).to eq(1)
             expect(spans[0].get_tag('error.stack')).to_not be_nil
             expect(spans[0].get_tag('error.type')).to_not be_nil
-            expect(spans[0].get_tag('error.msg')).to_not be_nil
+            expect(spans[0].get_tag('error.message')).to_not be_nil
             expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('grape')
             expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
               .to eq('endpoint_run')
@@ -316,7 +323,7 @@ RSpec.describe 'Grape instrumentation' do
             expect(spans[0]).to_not have_error
             expect(spans[0].get_tag('error.stack')).to be_nil
             expect(spans[0].get_tag('error.type')).to be_nil
-            expect(spans[0].get_tag('error.msg')).to be_nil
+            expect(spans[0].get_tag('error.message')).to be_nil
             expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('grape')
             expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
               .to eq('endpoint_run')
@@ -335,7 +342,7 @@ RSpec.describe 'Grape instrumentation' do
             expect(spans[0].status).to eq(0)
             expect(spans[0].get_tag('error.stack')).to be_nil
             expect(spans[0].get_tag('error.type')).to be_nil
-            expect(spans[0].get_tag('error.msg')).to be_nil
+            expect(spans[0].get_tag('error.message')).to be_nil
             expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('grape')
             expect(spans[0].get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
               .to eq('endpoint_run')
@@ -664,7 +671,7 @@ RSpec.describe 'Grape instrumentation' do
         expect(rack_span.name).to eq('rack.request')
         expect(rack_span.span_type).to eq('web')
         expect(rack_span.service).to eq(tracer.default_service)
-        expect(rack_span.resource).to eq('GET 200')
+        expect(rack_span.resource).to eq('RackTestingAPI GET /success')
         expect(rack_span).to_not have_error
         expect(rack_span).to be_root_span
       end
@@ -729,7 +736,7 @@ RSpec.describe 'Grape instrumentation' do
         expect(rack_span.name).to eq('rack.request')
         expect(rack_span.span_type).to eq('web')
         expect(rack_span.service).to eq(tracer.default_service)
-        expect(rack_span.resource).to eq('GET')
+        expect(rack_span.resource).to eq('RackTestingAPI GET /hard_failure')
         expect(rack_span).to have_error
         expect(rack_span).to be_root_span
       end

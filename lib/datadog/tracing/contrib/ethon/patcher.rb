@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/patcher'
+require_relative '../patcher'
 
 module Datadog
   module Tracing
@@ -8,7 +8,6 @@ module Datadog
       module Ethon
         # Patcher enables patching of 'ethon' module.
         module Patcher
-          include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
           include Contrib::Patcher
 
           module_function
@@ -18,8 +17,8 @@ module Datadog
           end
 
           def patch
-            require 'datadog/tracing/contrib/ethon/easy_patch'
-            require 'datadog/tracing/contrib/ethon/multi_patch'
+            require_relative 'easy_patch'
+            require_relative 'multi_patch'
 
             ::Ethon::Easy.include(EasyPatch)
             ::Ethon::Multi.include(MultiPatch)

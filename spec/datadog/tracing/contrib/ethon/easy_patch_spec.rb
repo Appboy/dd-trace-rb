@@ -1,6 +1,6 @@
-# typed: false
-
 require 'datadog/tracing/contrib/support/spec_helper'
+require 'datadog/tracing/contrib/environment_service_name_examples'
+require 'datadog/tracing/contrib/span_attribute_schema_examples'
 
 require 'ethon'
 require 'datadog/tracing/contrib/ethon/easy_patch'
@@ -111,6 +111,14 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
     it_behaves_like 'measured span for integration', false do
       let(:span) { span_op }
       before { subject }
+    end
+
+    it_behaves_like 'environment service name', 'DD_TRACE_ETHON_SERVICE_NAME' do
+      let(:span) { span_op }
+    end
+
+    it_behaves_like 'schema version span' do
+      let(:span) { span_op }
     end
   end
 
@@ -232,6 +240,17 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
         expect { subject }.to change { easy.instance_eval { @datadog_span } }
           .from(an_instance_of(Datadog::Tracing::SpanOperation)).to(nil)
       end
+    end
+  end
+
+  context 'when basic auth in url' do
+    it 'does not collect auth info' do
+      easy = EthonSupport.ethon_easy_new(url: 'http://username:pasword@example.com/sample/path')
+
+      easy.perform
+
+      expect(span.get_tag('http.url')).to eq('/sample/path')
+      expect(span.get_tag('out.host')).to eq('example.com')
     end
   end
 end

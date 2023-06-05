@@ -1,6 +1,4 @@
-require 'datadog/tracing/contrib/utils/quantization/hash'
-
-# typed: true
+require_relative '../utils/quantization/hash'
 
 module Datadog
   module Tracing
@@ -8,8 +6,6 @@ module Datadog
       module Elasticsearch
         # Quantize contains ES-specific resource quantization tools.
         module Quantize
-          include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
-
           PLACEHOLDER = '?'.freeze
           ID_PLACEHOLDER = '\1?'.freeze
           EXCLUDE_KEYS = [].freeze

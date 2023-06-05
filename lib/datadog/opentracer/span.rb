@@ -1,8 +1,6 @@
-# typed: true
-
 require 'time'
 
-require 'datadog/tracing/metadata/ext'
+require_relative '../tracing/metadata/ext'
 
 module Datadog
   module OpenTracer

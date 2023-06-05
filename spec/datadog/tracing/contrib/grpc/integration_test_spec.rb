@@ -1,8 +1,8 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/integration_examples'
 require_relative 'support/grpc_helper'
+
+require 'grpc'
 require 'ddtrace'
 
 RSpec.describe 'gRPC integration test' do

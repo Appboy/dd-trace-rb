@@ -1,17 +1,16 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing'
-require 'datadog/tracing/contrib/action_cable/integration'
-require 'datadog/tracing/contrib/action_mailer/integration'
-require 'datadog/tracing/contrib/action_pack/integration'
-require 'datadog/tracing/contrib/action_view/integration'
-require 'datadog/tracing/contrib/active_record/integration'
-require 'datadog/tracing/contrib/active_support/integration'
-require 'datadog/tracing/contrib/grape/endpoint'
-require 'datadog/tracing/contrib/lograge/integration'
-require 'datadog/tracing/contrib/rails/ext'
-require 'datadog/tracing/contrib/rails/utils'
-require 'datadog/tracing/contrib/semantic_logger/integration'
+require_relative '../action_cable/integration'
+require_relative '../action_mailer/integration'
+require_relative '../action_pack/integration'
+require_relative '../action_view/integration'
+require_relative '../active_record/integration'
+require_relative '../active_support/integration'
+require_relative '../grape/endpoint'
+require_relative '../lograge/integration'
+require_relative 'ext'
+require_relative 'utils'
+require_relative '../semantic_logger/integration'
 
 module Datadog
   module Tracing
@@ -36,18 +35,14 @@ module Datadog
             #       used to reconfigure tracer components with Rails-sourced defaults.
             #       This is a trade-off we take to get nice defaults.
             Datadog.configure do |datadog_config|
+              rails_config = datadog_config.tracing[:rails]
+
               # By default, default service would be guessed from the script
               # being executed, but here we know better, get it from Rails config.
               # Don't set this if service has been explicitly provided by the user.
-              rails_service_name = Datadog.configuration.tracing[:rails][:service_name] \
-                                    || Datadog.configuration.service_without_fallback \
-                                    || Utils.app_name
-
-              datadog_config.service ||= rails_service_name
-            end
-
-            Datadog.configure do |datadog_config|
-              rails_config = datadog_config.tracing[:rails]
+              if datadog_config.service_without_fallback.nil?
+                datadog_config.service = rails_config[:service_name] || Utils.app_name
+              end
 
               activate_rack!(datadog_config, rails_config)
               activate_action_cable!(datadog_config, rails_config)
@@ -68,7 +63,8 @@ module Datadog
               application: ::Rails.application,
               service_name: rails_config[:service_name],
               middleware_names: rails_config[:middleware_names],
-              distributed_tracing: rails_config[:distributed_tracing]
+              distributed_tracing: rails_config[:distributed_tracing],
+              request_queuing: rails_config[:request_queuing]
             )
           end
 

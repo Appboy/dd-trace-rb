@@ -1,7 +1,3 @@
-# typed: false
-
-require 'datadog/core'
-
 module Datadog
   module Tracing
     # Event behavior and DSL

@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/active_support/cache/patcher'
+require_relative 'patcher'
 
 module Datadog
   module Tracing

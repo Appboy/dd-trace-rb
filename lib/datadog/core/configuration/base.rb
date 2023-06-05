@@ -1,7 +1,5 @@
-# typed: false
-
-require 'datadog/core/environment/variable_helpers'
-require 'datadog/core/configuration/options'
+require_relative '../environment/variable_helpers'
+require_relative 'options'
 
 module Datadog
   module Core
@@ -32,10 +30,13 @@ module Datadog
             option(name) do |o|
               o.default { settings_class.new }
               o.lazy
+
               o.resetter do |value|
                 value.reset! if value.respond_to?(:reset!)
                 value
               end
+
+              o.type settings_class
             end
           end
 
@@ -77,6 +78,15 @@ module Datadog
 
           def to_h
             options_hash
+          end
+
+          # Retrieves a nested option from a list of symbols
+          def dig(*options)
+            raise ArgumentError, 'expected at least one option' if options.empty?
+
+            options.inject(self) do |receiver, option|
+              receiver.send(option)
+            end
           end
 
           def reset!

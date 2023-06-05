@@ -1,5 +1,3 @@
-# typed: false
-
 require 'datadog/core/encoding'
 require 'ddtrace/transport/http'
 
@@ -66,7 +64,8 @@ class SpyTransport < Datadog::Transport::HTTP::Client
     Datadog::Transport::HTTP::Traces::Response.new(
       Datadog::Transport::HTTP::Adapters::Net::Response.new(
         Net::HTTPResponse.new(1.0, code, code.to_s)
-      ), trace_count: 1
+      ),
+      trace_count: 1
     )
   end
 end

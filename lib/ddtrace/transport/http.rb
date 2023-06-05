@@ -1,23 +1,21 @@
-# typed: true
+# frozen_string_literal: true
 
 require 'uri'
 
-require 'datadog/core/environment/container'
-require 'datadog/core/environment/ext'
-require 'ddtrace/transport/ext'
-require 'ddtrace/transport/http/adapters/net'
-require 'ddtrace/transport/http/adapters/test'
-require 'ddtrace/transport/http/adapters/unix_socket'
-require 'ddtrace/transport/http/api'
-require 'ddtrace/transport/http/builder'
-require 'ddtrace/version'
+require_relative '../../datadog/core/environment/container'
+require_relative '../../datadog/core/environment/ext'
+require_relative 'ext'
+require_relative 'http/adapters/net'
+require_relative 'http/adapters/test'
+require_relative 'http/adapters/unix_socket'
+require_relative 'http/api'
+require_relative 'http/builder'
+require_relative '../version'
 
 module Datadog
   module Transport
     # Namespace for HTTP transport components
     module HTTP
-      include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
-
       # NOTE: Due to... legacy reasons... This class likes having a default `AgentSettings` instance to fall back to.
       # Because we generate this instance with an empty instance of `Settings`, the resulting `AgentSettings` below
       # represents only settings specified via environment variables + the usual defaults.
@@ -67,6 +65,7 @@ module Datadog
 
       def default_headers
         {
+          Datadog::Transport::Ext::HTTP::HEADER_CLIENT_COMPUTED_TOP_LEVEL => '1',
           Datadog::Transport::Ext::HTTP::HEADER_META_LANG => Datadog::Core::Environment::Ext::LANG,
           Datadog::Transport::Ext::HTTP::HEADER_META_LANG_VERSION => Datadog::Core::Environment::Ext::LANG_VERSION,
           Datadog::Transport::Ext::HTTP::HEADER_META_LANG_INTERPRETER => Datadog::Core::Environment::Ext::LANG_INTERPRETER,

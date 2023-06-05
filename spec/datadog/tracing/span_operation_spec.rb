@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'spec_helper'
 
 require 'securerandom'
@@ -7,11 +5,11 @@ require 'time'
 
 require 'datadog/core'
 require 'datadog/core/logger'
-require 'datadog/core/utils'
-require 'datadog/core/utils/time'
+
 require 'datadog/tracing/metadata/ext'
 require 'datadog/tracing/span_operation'
 require 'datadog/tracing/span'
+require 'datadog/tracing/utils'
 
 RSpec.describe Datadog::Tracing::SpanOperation do
   subject(:span_op) { described_class.new(name, **options) }
@@ -361,7 +359,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
         end
 
         context 'that is an Integer' do
-          let(:trace_id) { Datadog::Core::Utils.next_id }
+          let(:trace_id) { Datadog::Tracing::Utils.next_id }
           it { is_expected.to have_attributes(trace_id: trace_id) }
         end
       end
@@ -522,6 +520,86 @@ RSpec.describe Datadog::Tracing::SpanOperation do
           expect(callback_spy).to have_received(:after_stop).with(span_op).ordered
           expect(callback_spy).to have_received(:on_error).with(span_op, error).ordered
           expect(callback_spy).to have_received(:after_finish).with(kind_of(Datadog::Tracing::Span), span_op).ordered
+        end
+      end
+    end
+
+    context 'identifying service_entry_span' do
+      context 'when service of root and child are `nil`' do
+        it do
+          root_span_op = described_class.new('root')
+          child_span_op = described_class.new('child_1', child_of: root_span_op)
+
+          root_span_op.measure do
+            child_span_op.measure do
+              # Do stuff
+            end
+          end
+
+          root_span = root_span_op.finish
+          child_span = child_span_op.finish
+
+          expect(root_span.__send__(:service_entry?)).to be true
+          expect(child_span.__send__(:service_entry?)).to be false
+        end
+      end
+
+      context 'when service of root and child are identical' do
+        it do
+          root_span_op = described_class.new('root', service: 'root_service')
+          child_span_op = described_class.new('child_1', child_of: root_span_op, service: root_span_op.service)
+
+          root_span_op.measure do
+            child_span_op.measure do
+              # Do stuff
+            end
+          end
+
+          root_span = root_span_op.finish
+          child_span = child_span_op.finish
+
+          expect(root_span.__send__(:service_entry?)).to be true
+          expect(child_span.__send__(:service_entry?)).to be false
+        end
+      end
+
+      context 'when service of root and child are different' do
+        it do
+          root_span_op = described_class.new('root')
+          child_span_op = described_class.new('child_1', child_of: root_span_op, service: 'child_service')
+
+          root_span_op.measure do
+            child_span_op.measure do
+              # Do stuff
+            end
+          end
+
+          root_span = root_span_op.finish
+          child_span = child_span_op.finish
+
+          expect(root_span.__send__(:service_entry?)).to be true
+          expect(child_span.__send__(:service_entry?)).to be true
+        end
+      end
+
+      context 'when service of root and child are different, overriden within the measure block' do
+        it do
+          root_span_op = described_class.new('root')
+          child_span_op = described_class.new('child_1', child_of: root_span_op)
+
+          root_span_op.measure do
+            child_span_op.measure do |span_op|
+              span_op.service = 'child_service'
+
+              # Do stuff
+            end
+          end
+
+          root_span = root_span_op.finish
+          child_span = child_span_op.finish
+
+          expect(root_span.__send__(:service_entry?)).to be true
+          expect(child_span.__send__(:service_entry?)).to be true
         end
       end
     end

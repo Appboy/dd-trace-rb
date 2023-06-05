@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'httpclient'
 require 'webrick'
 require 'json'
@@ -14,6 +12,9 @@ require 'datadog/tracing/contrib/httpclient/instrumentation'
 require 'datadog/tracing/contrib/analytics_examples'
 require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/support/spec_helper'
+require 'datadog/tracing/contrib/environment_service_name_examples'
+require 'datadog/tracing/contrib/span_attribute_schema_examples'
+require 'datadog/tracing/contrib/http_examples'
 require 'spec/support/thread_helpers'
 
 RSpec.describe Datadog::Tracing::Contrib::Httpclient::Instrumentation do
@@ -129,9 +130,16 @@ RSpec.describe Datadog::Tracing::Contrib::Httpclient::Instrumentation do
             expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('request')
           end
 
+          it 'has `client` as `span.kind`' do
+            expect(span.get_tag('span.kind')).to eq('client')
+          end
+
           it_behaves_like 'a peer service span' do
             let(:peer_hostname) { host }
           end
+
+          it_behaves_like 'environment service name', 'DD_TRACE_HTTPCLIENT_SERVICE_NAME'
+          it_behaves_like 'schema version span'
 
           it_behaves_like 'analytics for integration' do
             let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Httpclient::Ext::ENV_ANALYTICS_ENABLED }
@@ -160,6 +168,9 @@ RSpec.describe Datadog::Tracing::Contrib::Httpclient::Instrumentation do
           it 'has error message' do
             expect(span).to have_error_message(body.to_json)
           end
+
+          it_behaves_like 'environment service name', 'DD_TRACE_HTTPCLIENT_SERVICE_NAME'
+          it_behaves_like 'schema version span'
         end
 
         context 'response has not found status' do
@@ -183,6 +194,9 @@ RSpec.describe Datadog::Tracing::Contrib::Httpclient::Instrumentation do
           it 'has error message' do
             expect(span).to have_error_message(body.to_json)
           end
+
+          it_behaves_like 'environment service name', 'DD_TRACE_HTTPCLIENT_SERVICE_NAME'
+          it_behaves_like 'schema version span'
         end
 
         context 'distributed tracing default' do
@@ -277,6 +291,24 @@ RSpec.describe Datadog::Tracing::Contrib::Httpclient::Instrumentation do
       end
     end
 
+    context 'with custom error codes' do
+      let(:code) { status_code }
+      before { response }
+
+      include_examples 'with error status code configuration'
+    end
+
     it_behaves_like 'instrumented request'
+
+    context 'when basic auth in url' do
+      let(:host) { 'username:password@localhost' }
+
+      it 'does not collect auth info' do
+        response
+
+        expect(span.get_tag('http.url')).to eq('/sample/path')
+        expect(span.get_tag('out.host')).to eq('localhost')
+      end
+    end
   end
 end

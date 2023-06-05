@@ -1,10 +1,8 @@
-# typed: true
-
-require 'datadog/core/chunker'
-require 'ddtrace/transport/parcel'
-require 'ddtrace/transport/request'
-require 'ddtrace/transport/serializable_trace'
-require 'ddtrace/transport/trace_formatter'
+require_relative '../../datadog/core/chunker'
+require_relative 'parcel'
+require_relative 'request'
+require_relative 'serializable_trace'
+require_relative 'trace_formatter'
 
 module Datadog
   module Transport
@@ -80,7 +78,7 @@ module Datadog
 
           if encoded.size > max_size
             # This single trace is too large, we can't flush it
-            Datadog.logger.debug { "Dropping trace. Payload too large: '#{trace.map(&:to_hash)}'" }
+            Datadog.logger.debug { "Dropping trace. Payload too large: '#{trace.inspect}'" }
             Datadog.health_metrics.transport_trace_too_large(1)
 
             return nil
@@ -100,6 +98,8 @@ module Datadog
 
           # Make the trace serializable
           serializable_trace = SerializableTrace.new(trace)
+
+          Datadog.logger.debug { "Flushing trace: #{JSON.dump(serializable_trace)}" }
 
           # Encode the trace
           encoder.encode(serializable_trace)
@@ -128,7 +128,7 @@ module Datadog
           responses = chunker.encode_in_chunks(traces.lazy).map do |encoded_traces, trace_count|
             request = Request.new(EncodedParcel.new(encoded_traces, trace_count))
 
-            client.send_payload(request).tap do |response|
+            client.send_traces_payload(request).tap do |response|
               if downgrade?(response)
                 downgrade!
                 return send_traces(traces)

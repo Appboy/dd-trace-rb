@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'ddtrace/transport/http/builder'
@@ -243,7 +241,7 @@ RSpec.describe Datadog::Transport::HTTP::Builder do
 
         before do
           expect(builder.api_instance_class).to receive(:new)
-            .with(spec, adapter, foo: :bar, headers: {})
+            .with(spec, adapter, { foo: :bar, headers: {} })
             .and_call_original
         end
 

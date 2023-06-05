@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 require 'datadog/profiling/spec_helper'
 
@@ -20,12 +18,6 @@ RSpec.describe Datadog::Profiling::Tasks::Setup do
     it 'actives the forking extension before setting up the at_fork hooks' do
       expect(task).to receive(:activate_forking_extensions).ordered
       expect(task).to receive(:setup_at_fork_hooks).ordered
-
-      run
-    end
-
-    it 'checks if CPU time profiling is available' do
-      expect(task).to receive(:check_if_cpu_time_profiling_is_supported)
 
       run
     end
@@ -116,36 +108,6 @@ RSpec.describe Datadog::Profiling::Tasks::Setup do
     end
   end
 
-  describe '#check_if_cpu_time_profiling_is_supported' do
-    subject(:check_if_cpu_time_profiling_is_supported) { task.send(:check_if_cpu_time_profiling_is_supported) }
-
-    before do
-      expect(task).to receive(:cpu_time_profiling_unsupported_reason).and_return(unsupported_reason)
-    end
-
-    context 'when CPU time profiling is supported' do
-      let(:unsupported_reason) { nil }
-
-      it 'does not log a message' do
-        expect(Datadog.logger).to_not receive(:info)
-
-        check_if_cpu_time_profiling_is_supported
-      end
-    end
-
-    context 'when CPU time profiling is not supported' do
-      let(:unsupported_reason) { 'Simulated failure' }
-
-      it 'logs info message' do
-        expect(Datadog.logger).to receive(:info) do |&message|
-          expect(message.call).to include('CPU time profiling skipped')
-        end
-
-        check_if_cpu_time_profiling_is_supported
-      end
-    end
-  end
-
   describe '#setup_at_fork_hooks' do
     subject(:setup_at_fork_hooks) { task.send(:setup_at_fork_hooks) }
 
@@ -197,35 +159,6 @@ RSpec.describe Datadog::Profiling::Tasks::Setup do
           at_fork_hook.call
         end
       end
-
-      it 'sets up an at_fork hook that updates the native id of the current thread' do
-        without_partial_double_verification do
-          expect(Thread.current).to receive(:update_native_ids)
-        end
-
-        at_fork_hook.call
-      end
-
-      context 'when there is an issue updating the native id of the current thread' do
-        before do
-          without_partial_double_verification do
-            expect(Thread.current).to receive(:update_native_ids).and_raise('Dummy exception')
-          end
-          allow(Datadog.logger).to receive(:warn) # Silence logging during tests
-        end
-
-        it 'does not raise any error' do
-          at_fork_hook.call
-        end
-
-        it 'logs an exception' do
-          expect(Datadog.logger).to receive(:warn) do |&message|
-            expect(message.call).to include('Dummy exception')
-          end
-
-          at_fork_hook.call
-        end
-      end
     end
 
     context 'when #at_fork is not available' do
@@ -239,44 +172,6 @@ RSpec.describe Datadog::Profiling::Tasks::Setup do
 
           setup_at_fork_hooks
         end
-      end
-    end
-  end
-
-  describe '#cpu_time_profiling_unsupported_reason' do
-    subject(:cpu_time_profiling_unsupported_reason) { task.send(:cpu_time_profiling_unsupported_reason) }
-
-    context 'when JRuby is used' do
-      before { stub_const('RUBY_ENGINE', 'jruby') }
-
-      it { is_expected.to include 'JRuby' }
-    end
-
-    context 'when using MRI Ruby' do
-      before { stub_const('RUBY_ENGINE', 'ruby') }
-
-      context 'when running on macOS' do
-        before { stub_const('RUBY_PLATFORM', 'x86_64-darwin19') }
-
-        it { is_expected.to include 'macOS' }
-      end
-
-      context 'when running on Windows' do
-        before { stub_const('RUBY_PLATFORM', 'mswin') }
-
-        it { is_expected.to include 'Windows' }
-      end
-
-      context 'when running on a non-Linux platform' do
-        before { stub_const('RUBY_PLATFORM', 'my-homegrown-os') }
-
-        it { is_expected.to include 'my-homegrown-os' }
-      end
-
-      context 'when running on Linux' do
-        before { stub_const('RUBY_PLATFORM', 'x86_64-linux-gnu') }
-
-        it { is_expected.to be nil }
       end
     end
   end

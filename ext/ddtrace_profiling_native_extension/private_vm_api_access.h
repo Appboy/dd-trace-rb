@@ -6,18 +6,30 @@
 // so we use PRIVATE_VM_API_ACCESS_SKIP_RUBY_INCLUDES to be able to include private_vm_api_access.h on that file
 // without also dragging the incompatible includes
 #ifndef PRIVATE_VM_API_ACCESS_SKIP_RUBY_INCLUDES
-  #ifdef RUBY_2_1_WORKAROUND
-    #include <thread_native.h>
-  #else
-    #include <ruby/thread_native.h>
-  #endif
+  #include <ruby/thread_native.h>
+  #include <ruby/vm.h>
 #endif
 
 #include "extconf.h"
 
+// Contains the current gvl owner, and a flag to indicate if it is valid
+typedef struct {
+  bool valid;
+  rb_nativethread_id_t owner;
+} current_gvl_owner;
+
 rb_nativethread_id_t pthread_id_for(VALUE thread);
+bool is_current_thread_holding_the_gvl(void);
+current_gvl_owner gvl_owner(void);
+uint64_t native_thread_id_for(VALUE thread);
 ptrdiff_t stack_depth_for(VALUE thread);
+void ddtrace_thread_list(VALUE result_array);
+bool is_thread_alive(VALUE thread);
+VALUE thread_name_for(VALUE thread);
+
 int ddtrace_rb_profile_frames(VALUE thread, int start, int limit, VALUE *buff, int *lines, bool* is_ruby_frame);
+// Returns true if the current thread belongs to the main Ractor or if Ruby has no Ractor support
+bool ddtrace_rb_ractor_main_p(void);
 
 // Ruby 3.0 finally added support for showing CFUNC frames (frames for methods written using native code)
 // in stack traces gathered via `rb_profile_frames` (https://github.com/ruby/ruby/pull/3299).

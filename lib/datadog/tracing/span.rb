@@ -1,12 +1,10 @@
 # frozen_string_literal: true
 
-# typed: true
+require_relative '../core/utils/safe_dup'
+require_relative 'utils'
 
-require 'datadog/core/utils'
-require 'datadog/core/utils/safe_dup'
-
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/metadata'
+require_relative 'metadata/ext'
+require_relative 'metadata'
 
 module Datadog
   module Tracing
@@ -18,19 +16,6 @@ module Datadog
     # @public_api
     class Span
       include Metadata
-
-      # The max value for a {Datadog::Tracing::Span} identifier.
-      # Span and trace identifiers should be strictly positive and strictly inferior to this limit.
-      #
-      # Limited to +2<<62-1+ positive integers, as Ruby is able to represent such numbers "inline",
-      # inside a +VALUE+ scalar, thus not requiring memory allocation.
-      #
-      # The range of IDs also has to consider portability across different languages and platforms.
-      RUBY_MAX_ID = (1 << 62) - 1
-
-      # While we only generate 63-bit integers due to limitations in other languages, we support
-      # parsing 64-bit integers for distributed tracing since an upstream system may generate one
-      EXTERNAL_MAX_ID = 1 << 64
 
       attr_accessor \
         :end_time,
@@ -63,6 +48,7 @@ module Datadog
       # * +type+: the type of the span (such as +http+, +db+ and so on)
       # * +parent_id+: the identifier of the parent span
       # * +trace_id+: the identifier of the root span for this trace
+      # * +service_entry+: whether it is a service entry span.
       # TODO: Remove span_type
       def initialize(
         name,
@@ -78,16 +64,17 @@ module Datadog
         start_time: nil,
         status: 0,
         type: span_type,
-        trace_id: nil
+        trace_id: nil,
+        service_entry: nil
       )
         @name = Core::Utils::SafeDup.frozen_or_dup(name)
         @service = Core::Utils::SafeDup.frozen_or_dup(service)
         @resource = Core::Utils::SafeDup.frozen_or_dup(resource)
         @type = Core::Utils::SafeDup.frozen_or_dup(type)
 
-        @id = id || Core::Utils.next_id
+        @id = id || Tracing::Utils.next_id
         @parent_id = parent_id || 0
-        @trace_id = trace_id || Core::Utils.next_id
+        @trace_id = trace_id || Tracing::Utils.next_id
 
         @meta = meta || {}
         @metrics = metrics || {}
@@ -103,6 +90,11 @@ module Datadog
         # duration_start and duration_end track monotonic clock, and may remain nil in cases where it
         # is known that we have to use wall clock to measure duration.
         @duration = duration
+
+        @service_entry = service_entry
+
+        # Mark with the service entry span metric, if applicable
+        set_metric(Metadata::Ext::TAG_TOP_LEVEL, 1.0) if service_entry
       end
 
       # Return whether the duration is started or not
@@ -206,6 +198,16 @@ module Datadog
       # @return [Integer] in nanoseconds since Epoch
       def duration_nano
         (duration * 1e9).to_i
+      end
+
+      # https://docs.datadoghq.com/tracing/visualization/#service-entry-span
+      # A span is a service entry span when it is the entrypoint method for a request to a service.
+      # You can visualize this within Datadog APM when the color of the immediate parent on a flame graph is a different
+      # color. Services are also listed on the right when viewing a flame graph.
+      #
+      # @return [Boolean] `true` if the span is a serivce entry span
+      def service_entry?
+        @service_entry == true
       end
     end
   end

@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'rack/test'
 
@@ -74,7 +72,7 @@ RSpec.describe 'Sinatra instrumentation for multi-apps' do
           spans.each do |span|
             if span.name == Datadog::Tracing::Contrib::Rack::Ext::SPAN_REQUEST
               expect(span.resource).to eq('GET /endpoint')
-              expect(span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_URL)).to eq('/endpoint')
+              expect(span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_URL)).to eq('/one/endpoint')
 
               next
             end
@@ -95,7 +93,7 @@ RSpec.describe 'Sinatra instrumentation for multi-apps' do
           spans.each do |span|
             if span.name == Datadog::Tracing::Contrib::Rack::Ext::SPAN_REQUEST
               expect(span.resource).to eq('GET /endpoint')
-              expect(span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_URL)).to eq('/endpoint')
+              expect(span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_URL)).to eq('/two/endpoint')
 
               next
             end
@@ -120,7 +118,7 @@ RSpec.describe 'Sinatra instrumentation for multi-apps' do
           spans.each do |span|
             if span.name == Datadog::Tracing::Contrib::Rack::Ext::SPAN_REQUEST
               expect(span.resource).to eq('GET /one/endpoint')
-              expect(span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_URL)).to eq('/endpoint')
+              expect(span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_URL)).to eq('/one/endpoint')
 
               next
             end
@@ -137,11 +135,12 @@ RSpec.describe 'Sinatra instrumentation for multi-apps' do
 
         it do
           is_expected.to be_ok
+
           expect(spans).to have(3).items
           spans.each do |span|
             if span.name == Datadog::Tracing::Contrib::Rack::Ext::SPAN_REQUEST
               expect(span.resource).to eq('GET /two/endpoint')
-              expect(span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_URL)).to eq('/endpoint')
+              expect(span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_URL)).to eq('/two/endpoint')
 
               next
             end

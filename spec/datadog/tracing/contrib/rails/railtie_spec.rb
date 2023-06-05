@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/rails/rails_helper'
 require 'datadog/tracing/contrib/rails/framework'
 require 'datadog/tracing/contrib/rails/middlewares'
@@ -15,11 +13,14 @@ RSpec.describe 'Rails Railtie' do
   let(:controllers) { [controller] }
 
   let(:controller) do
-    stub_const('TestController', Class.new(ActionController::Base) do
-      def index
-        head :ok
+    stub_const(
+      'TestController',
+      Class.new(ActionController::Base) do
+        def index
+          head :ok
+        end
       end
-    end)
+    )
   end
 
   RSpec::Matchers.define :have_kind_of_middleware do |expected|

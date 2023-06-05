@@ -1,6 +1,6 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/ci/ext/settings'
+require_relative '../ext/settings'
 
 module Datadog
   module CI

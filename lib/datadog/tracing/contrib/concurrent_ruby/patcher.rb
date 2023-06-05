@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/patcher'
+require_relative '../patcher'
 
 module Datadog
   module Tracing
@@ -8,7 +8,6 @@ module Datadog
       module ConcurrentRuby
         # Patcher enables patching of 'Future' class.
         module Patcher
-          include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
           include Contrib::Patcher
 
           module_function
@@ -18,7 +17,7 @@ module Datadog
           end
 
           def patch
-            require 'datadog/tracing/contrib/concurrent_ruby/future_patch'
+            require_relative 'future_patch'
             patch_future
           end
 

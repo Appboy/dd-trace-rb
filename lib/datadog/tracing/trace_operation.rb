@@ -1,15 +1,13 @@
-# typed: false
+require_relative '../core/environment/identity'
+require_relative '../core/utils'
 
-require 'datadog/core'
-require 'datadog/core/environment/identity'
-require 'datadog/core/utils'
-
-require 'datadog/tracing/sampling/ext'
-require 'datadog/tracing/event'
-require 'datadog/tracing/span_operation'
-require 'datadog/tracing/trace_segment'
-require 'datadog/tracing/trace_digest'
-require 'datadog/tracing/metadata/tagging'
+require_relative 'event'
+require_relative 'metadata/tagging'
+require_relative 'sampling/ext'
+require_relative 'span_operation'
+require_relative 'trace_digest'
+require_relative 'trace_segment'
+require_relative 'utils'
 
 module Datadog
   module Tracing
@@ -22,7 +20,6 @@ module Datadog
     # For async support, a {Datadog::Tracing::TraceOperation} should be employed
     # per execution context (e.g. Thread, etc.)
     #
-    # rubocop:disable Metrics/ClassLength
     # @public_api
     class TraceOperation
       include Metadata::Tagging
@@ -71,10 +68,10 @@ module Datadog
         metrics: nil
       )
         # Attributes
-        @id = id || Core::Utils.next_id
+        @id = id || Tracing::Utils::TraceId.next_id
         @max_length = max_length || DEFAULT_MAX_LENGTH
         @parent_span_id = parent_span_id
-        @sampled = sampled.nil? ? false : sampled
+        @sampled = sampled.nil? ? true : sampled
 
         # Tags
         @agent_sample_rate = agent_sample_rate
@@ -113,18 +110,34 @@ module Datadog
         @finished == true
       end
 
+      # Will this trace be flushed by the tracer transport?
+      # This includes cases where the span is kept solely due to priority sampling.
+      #
+      # This is not the ultimate Datadog App sampling decision. Downstream systems
+      # can decide to reject this trace, especially for cases where priority
+      # sampling is set to AUTO_KEEP.
+      #
+      # @return [Boolean]
       def sampled?
-        @sampled == true || (!@sampling_priority.nil? && @sampling_priority > 0)
+        @sampled == true || priority_sampled?
+      end
+
+      # Has the priority sampling chosen to keep this span?
+      # @return [Boolean]
+      def priority_sampled?
+        !@sampling_priority.nil? && @sampling_priority > 0
       end
 
       def keep!
         self.sampled = true
         self.sampling_priority = Sampling::Ext::Priority::USER_KEEP
+        set_tag(Tracing::Metadata::Ext::Distributed::TAG_DECISION_MAKER, Tracing::Sampling::Ext::Decision::MANUAL)
       end
 
       def reject!
         self.sampled = false
         self.sampling_priority = Sampling::Ext::Priority::USER_REJECT
+        set_tag(Tracing::Metadata::Ext::Distributed::TAG_DECISION_MAKER, Tracing::Sampling::Ext::Decision::MANUAL)
       end
 
       def name
@@ -133,6 +146,13 @@ module Datadog
 
       def resource
         @resource || (root_span && root_span.resource)
+      end
+
+      # Returns true if the resource has been explicitly set
+      #
+      # @return [Boolean]
+      def resource_override?
+        !@resource.nil?
       end
 
       def service
@@ -226,12 +246,19 @@ module Datadog
         end
       end
 
+      # Returns a {TraceSegment} with all finished spans that can be flushed
+      # at invocation time. All other **finished** spans are discarded.
+      #
+      # @yield [spans] spans that will be returned as part of the trace segment returned
+      # @return [TraceSegment]
       def flush!
         finished = finished?
 
         # Copy out completed spans
         spans = @spans.dup
         @spans = []
+
+        spans = yield(spans) if block_given?
 
         # Use them to build a trace
         build_trace(spans, !finished)
@@ -251,6 +278,7 @@ module Datadog
           span_resource: (@active_span && @active_span.resource),
           span_service: (@active_span && @active_span.service),
           span_type: (@active_span && @active_span.type),
+          trace_distributed_tags: distributed_tags,
           trace_hostname: @hostname,
           trace_id: @id,
           trace_name: name,
@@ -425,7 +453,21 @@ module Datadog
           root_span_id: !partial ? root_span && root_span.id : nil
         )
       end
+
+      # Returns tracer tags that will be propagated if this span's context
+      # is exported through {.to_digest}.
+      # @return [Hash] key value pairs of distributed tags
+      def distributed_tags
+        meta.select { |name, _| name.start_with?(Metadata::Ext::Distributed::TAGS_PREFIX) }
+      end
+
+      def reset
+        @root_span = nil
+        @active_span = nil
+        @active_span_count = 0
+        @finished = false
+        @spans = []
+      end
     end
-    # rubocop:enable Metrics/ClassLength
   end
 end

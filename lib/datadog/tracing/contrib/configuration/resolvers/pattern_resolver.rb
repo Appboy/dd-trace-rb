@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/configuration/resolver'
+require_relative '../resolver'
 
 module Datadog
   module Tracing

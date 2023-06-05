@@ -1,13 +1,12 @@
-# typed: false
+require_relative '../utils/time'
+require_relative '../utils/only_once'
+require_relative '../configuration/ext'
 
-require 'datadog/core/utils/time'
-require 'datadog/core/utils/only_once'
-
-require 'datadog/core/metrics/ext'
-require 'datadog/core/metrics/options'
-require 'datadog/core/metrics/helpers'
-require 'datadog/core/metrics/logging'
-require 'datadog/core/metrics/metric'
+require_relative 'ext'
+require_relative 'options'
+require_relative 'helpers'
+require_relative 'logging'
+require_relative 'metric'
 
 module Datadog
   module Core
@@ -50,11 +49,11 @@ module Datadog
         end
 
         def default_hostname
-          ENV.fetch(Ext::ENV_DEFAULT_HOST, Ext::DEFAULT_HOST)
+          ENV.fetch(Configuration::Ext::Transport::ENV_DEFAULT_HOST, Ext::DEFAULT_HOST)
         end
 
         def default_port
-          ENV.fetch(Ext::ENV_DEFAULT_PORT, Ext::DEFAULT_PORT).to_i
+          ENV.fetch(Configuration::Ext::Metrics::ENV_DEFAULT_PORT, Ext::DEFAULT_PORT).to_i
         end
 
         def default_statsd_client

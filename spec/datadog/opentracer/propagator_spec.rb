@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'datadog/opentracer'
@@ -7,9 +5,12 @@ require 'datadog/opentracer'
 RSpec.describe Datadog::OpenTracer::Propagator do
   describe 'implemented class behavior' do
     subject(:propagator_class) do
-      stub_const('TestPropagator', Class.new.tap do |klass|
-        klass.extend(described_class)
-      end)
+      stub_const(
+        'TestPropagator',
+        Class.new.tap do |klass|
+          klass.extend(described_class)
+        end
+      )
     end
 
     describe '#inject' do

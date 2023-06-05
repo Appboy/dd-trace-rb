@@ -1,8 +1,9 @@
-# typed: false
-
 require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
+require 'datadog/tracing/contrib/environment_service_name_examples'
+require 'datadog/tracing/contrib/http_examples'
+require 'datadog/tracing/contrib/span_attribute_schema_examples'
 
 require 'ddtrace'
 require 'net/http'
@@ -20,6 +21,7 @@ RSpec.describe 'net/http requests' do
   let(:host) { '127.0.0.1' }
   let(:port) { 1234 }
   let(:uri) { "http://#{host}:#{port}" }
+  let(:path) { '/my/path' }
 
   let(:client) { Net::HTTP.new(host, port) }
   let(:configuration_options) { {} }
@@ -35,10 +37,15 @@ RSpec.describe 'net/http requests' do
     Datadog.registry[:http].reset_configuration!
   end
 
+  context 'with custom error codes' do
+    subject(:response) { client.get(path) }
+    before { stub_request(:any, "#{uri}#{path}").to_return(status: status_code, body: '{}') }
+
+    include_examples 'with error status code configuration'
+  end
+
   describe '#get' do
     subject(:response) { client.get(path) }
-
-    let(:path) { '/my/path' }
 
     context 'that returns 200' do
       before { stub_request(:get, "#{uri}#{path}").to_return(status: 200, body: '{}') }
@@ -57,6 +64,7 @@ RSpec.describe 'net/http requests' do
         expect(span.get_tag('http.status_code')).to eq('200')
         expect(span.get_tag('out.host')).to eq(host)
         expect(span.get_tag('out.port')).to eq(port.to_s)
+        expect(span.get_tag('span.kind')).to eq('client')
         expect(span.status).to eq(0)
       end
 
@@ -73,6 +81,9 @@ RSpec.describe 'net/http requests' do
       it_behaves_like 'a peer service span' do
         let(:peer_hostname) { host }
       end
+
+      it_behaves_like 'environment service name', 'DD_TRACE_NET_HTTP_SERVICE_NAME'
+      it_behaves_like 'schema version span'
     end
 
     context 'that returns 404' do
@@ -91,14 +102,18 @@ RSpec.describe 'net/http requests' do
         expect(span.get_tag('http.status_code')).to eq('404')
         expect(span.get_tag('out.host')).to eq(host)
         expect(span.get_tag('out.port')).to eq(port.to_s)
+        expect(span.get_tag('span.kind')).to eq('client')
         expect(span.status).to eq(1)
         expect(span.get_tag('error.type')).to eq('Net::HTTPNotFound')
-        expect(span.get_tag('error.msg')).to be nil
+        expect(span.get_tag('error.message')).to be nil
       end
 
       it_behaves_like 'a peer service span' do
         let(:peer_hostname) { host }
       end
+
+      it_behaves_like 'environment service name', 'DD_TRACE_NET_HTTP_SERVICE_NAME'
+      it_behaves_like 'schema version span'
 
       context 'when configured with #after_request hook' do
         before { Datadog::Tracing::Contrib::HTTP::Instrumentation.after_request(&callback) }
@@ -134,7 +149,7 @@ RSpec.describe 'net/http requests' do
             expect(response.code).to eq('404')
             expect(span.status).to eq(1)
             expect(span.get_tag('error.type')).to eq('Net::HTTPNotFound')
-            expect(span.get_tag('error.msg')).to eq(body)
+            expect(span.get_tag('error.message')).to eq(body)
           end
         end
       end
@@ -144,7 +159,6 @@ RSpec.describe 'net/http requests' do
   describe '#post' do
     subject(:response) { client.post(path, payload) }
 
-    let(:path) { '/my/path' }
     let(:payload) { '{ "foo": "bar" }' }
 
     context 'that returns 201' do
@@ -161,12 +175,16 @@ RSpec.describe 'net/http requests' do
         expect(span.get_tag('http.status_code')).to eq('201')
         expect(span.get_tag('out.host')).to eq(host)
         expect(span.get_tag('out.port')).to eq(port.to_s)
+        expect(span.get_tag('span.kind')).to eq('client')
         expect(span.status).to eq(0)
       end
 
       it_behaves_like 'a peer service span' do
         let(:peer_hostname) { host }
       end
+
+      it_behaves_like 'environment service name', 'DD_TRACE_NET_HTTP_SERVICE_NAME'
+      it_behaves_like 'schema version span'
     end
   end
 
@@ -181,7 +199,6 @@ RSpec.describe 'net/http requests' do
       end
 
       let(:request) { Net::HTTP::Get.new(path) }
-      let(:path) { '/my/path' }
 
       it 'generates a well-formed trace' do
         expect(spans).to have(1).items
@@ -193,12 +210,16 @@ RSpec.describe 'net/http requests' do
         expect(span.get_tag('http.status_code')).to eq('200')
         expect(span.get_tag('out.host')).to eq(host)
         expect(span.get_tag('out.port')).to eq(port.to_s)
+        expect(span.get_tag('span.kind')).to eq('client')
         expect(span.status).to eq(0)
       end
 
       it_behaves_like 'a peer service span' do
         let(:peer_hostname) { host }
       end
+
+      it_behaves_like 'environment service name', 'DD_TRACE_NET_HTTP_SERVICE_NAME'
+      it_behaves_like 'schema version span'
     end
   end
 
@@ -211,7 +232,6 @@ RSpec.describe 'net/http requests' do
         Datadog.configure_onto(client, service_name: service_name)
       end
 
-      let(:path) { '/my/path' }
       let(:service_name) { 'bar' }
 
       it 'generates a well-formed trace' do
@@ -219,6 +239,7 @@ RSpec.describe 'net/http requests' do
         expect(spans).to have(1).items
         expect(span.name).to eq('http.request')
         expect(span.service).to eq(service_name)
+        expect(span.get_tag('span.kind')).to eq('client')
       end
 
       it_behaves_like 'a peer service span' do
@@ -230,7 +251,6 @@ RSpec.describe 'net/http requests' do
   context 'when split by domain' do
     subject(:response) { client.get(path) }
 
-    let(:path) { '/my/path' }
     let(:configuration_options) { super().merge(split_by_domain: true) }
 
     before { stub_request(:get, "#{uri}#{path}").to_return(status: 200, body: '{}') }
@@ -240,6 +260,7 @@ RSpec.describe 'net/http requests' do
       expect(span.name).to eq(Datadog::Tracing::Contrib::HTTP::Ext::SPAN_REQUEST)
       expect(span.service).to eq(host)
       expect(span.resource).to eq('GET')
+      expect(span.get_tag('span.kind')).to eq('client')
     end
 
     context 'and the host matches a specific configuration' do
@@ -261,28 +282,29 @@ RSpec.describe 'net/http requests' do
       it 'uses the configured service name over the domain name and the correct describes block' do
         response
         expect(span.service).to eq('bar')
+        expect(span.get_tag('span.kind')).to eq('client')
       end
     end
   end
 
   describe 'distributed tracing' do
-    let(:path) { '/my/path' }
-
     before do
       stub_request(:get, "#{uri}#{path}").to_return(status: 200, body: '{}')
     end
 
     def expect_request_without_distributed_headers
       # rubocop:disable Style/BlockDelimiters
-      expect(WebMock).to(have_requested(:get, "#{uri}#{path}").with { |req|
-        [
-          Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_PARENT_ID,
-          Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_TRACE_ID,
-          Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_SAMPLING_PRIORITY
-        ].none? do |header|
-          req.headers.key?(header.split('-').map(&:capitalize).join('-'))
-        end
-      })
+      expect(WebMock).to(
+        have_requested(:get, "#{uri}#{path}").with { |req|
+          %w[
+            x-datadog-parent-id
+            x-datadog-trace-id
+            x-datadog-sampling-priority
+          ].none? do |header|
+            req.headers.key?(header.split('-').map(&:capitalize).join('-'))
+          end
+        }
+      )
     end
 
     context 'by default' do
@@ -297,9 +319,9 @@ RSpec.describe 'net/http requests' do
         let(:sampling_priority) { 10 }
         let(:distributed_tracing_headers) do
           {
-            Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_PARENT_ID => span.span_id,
-            Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_TRACE_ID => span.trace_id,
-            Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_SAMPLING_PRIORITY => sampling_priority
+            'x-datadog-parent-id' => span.span_id,
+            'x-datadog-trace-id' => span.trace_id,
+            'x-datadog-sampling-priority' => sampling_priority
           }
         end
 
@@ -309,11 +331,13 @@ RSpec.describe 'net/http requests' do
           # The block syntax only works with Ruby < 2.3 and the hash syntax
           # only works with Ruby >= 2.3, so we need to support both.
           if Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.3.0')
-            expect(WebMock).to(have_requested(:get, "#{uri}#{path}").with { |req|
-              distributed_tracing_headers.all? do |(header, value)|
-                req.headers[header.split('-').map(&:capitalize).join('-')] == value.to_s
-              end
-            })
+            expect(WebMock).to(
+              have_requested(:get, "#{uri}#{path}").with { |req|
+                distributed_tracing_headers.all? do |(header, value)|
+                  req.headers[header.split('-').map(&:capitalize).join('-')] == value.to_s
+                end
+              }
+            )
           else
             expect(WebMock).to have_requested(:get, "#{uri}#{path}").with(headers: distributed_tracing_headers)
           end
@@ -328,9 +352,9 @@ RSpec.describe 'net/http requests' do
             trace.sampling_priority = sampling_priority
 
             req = Net::HTTP::Get.new(path)
-            req[Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_PARENT_ID] = 100
-            req[Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_TRACE_ID] = 100
-            req[Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_SAMPLING_PRIORITY] = 0
+            req['x-datadog-parent-id'] = 100
+            req['x-datadog-trace-id'] = 100
+            req['x-datadog-sampling-priority'] = 0
 
             Net::HTTP.start(host, port) do |http|
               http.request(req)
@@ -341,9 +365,9 @@ RSpec.describe 'net/http requests' do
         let(:sampling_priority) { 10 }
         let(:distributed_tracing_headers) do
           {
-            Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_PARENT_ID => span.span_id,
-            Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_TRACE_ID => span.trace_id,
-            Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_SAMPLING_PRIORITY => sampling_priority
+            'x-datadog-parent-id' => span.span_id,
+            'x-datadog-trace-id' => span.trace_id,
+            'x-datadog-sampling-priority' => sampling_priority
           }
         end
 
@@ -353,11 +377,13 @@ RSpec.describe 'net/http requests' do
           # The block syntax only works with Ruby < 2.3 and the hash syntax
           # only works with Ruby >= 2.3, so we need to support both.
           if Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.3.0')
-            expect(WebMock).to(have_requested(:get, "#{uri}#{path}").with { |req|
-              distributed_tracing_headers.all? do |(header, value)|
-                req.headers[header.split('-').map(&:capitalize).join('-')] == value.to_s
-              end
-            })
+            expect(WebMock).to(
+              have_requested(:get, "#{uri}#{path}").with { |req|
+                distributed_tracing_headers.all? do |(header, value)|
+                  req.headers[header.split('-').map(&:capitalize).join('-')] == value.to_s
+                end
+              }
+            )
           else
             expect(WebMock).to have_requested(:get, "#{uri}#{path}").with(headers: distributed_tracing_headers)
           end
@@ -402,8 +428,6 @@ RSpec.describe 'net/http requests' do
   describe 'request exceptions' do
     subject(:response) { client.get(path) }
 
-    let(:path) { '/my/path' }
-
     context 'that raises a timeout' do
       let(:timeout_error) { Net::OpenTimeout.new('execution expired') }
 
@@ -419,10 +443,13 @@ RSpec.describe 'net/http requests' do
         expect(span.get_tag('http.method')).to eq('GET')
         expect(span.get_tag('out.host')).to eq(host)
         expect(span.get_tag('out.port')).to eq(port.to_s)
+        expect(span.get_tag('span.kind')).to eq('client')
         expect(span).to have_error
         expect(span).to have_error_type(timeout_error.class.to_s)
         expect(span).to have_error_message(timeout_error.message)
       end
+
+      it_behaves_like 'environment service name', 'DD_TRACE_NET_HTTP_SERVICE_NAME', error: Net::OpenTimeout
     end
 
     context 'that raises an error' do
@@ -441,10 +468,31 @@ RSpec.describe 'net/http requests' do
         expect(span.get_tag('http.method')).to eq('GET')
         expect(span.get_tag('out.host')).to eq(host)
         expect(span.get_tag('out.port')).to eq(port.to_s)
+        expect(span.get_tag('span.kind')).to eq('client')
         expect(span).to have_error
         expect(span).to have_error_type(custom_error.class.to_s)
         expect(span).to have_error_message(custom_error.message)
       end
+
+      it_behaves_like 'environment service name', 'DD_TRACE_NET_HTTP_SERVICE_NAME', error: StandardError
+    end
+  end
+
+  context 'when basic auth in url' do
+    before do
+      WebMock.enable!
+      stub_request(:get, /example.com/).to_return(status: 200)
+    end
+
+    after { WebMock.disable! }
+
+    it 'does not collect auth info' do
+      uri = URI('http://username:password@example.com/sample/path')
+
+      Net::HTTP.get_response(uri)
+
+      expect(span.get_tag('http.url')).to eq('/sample/path')
+      expect(span.get_tag('out.host')).to eq('example.com')
     end
   end
 end

@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-# typed: true
-
-require 'datadog/profiling/trace_identifiers/ddtrace'
+require_relative 'ddtrace'
 
 module Datadog
   module Profiling

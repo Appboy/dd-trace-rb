@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/core/configuration/dependency_resolver'
+require_relative 'dependency_resolver'
 
 module Datadog
   module Core

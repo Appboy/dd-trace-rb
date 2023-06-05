@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'spec_helper'
 
 require 'datadog/tracing/metadata/tagging'
@@ -25,6 +23,26 @@ RSpec.describe Datadog::Tracing::Metadata::Tagging do
     context 'when a metric exists' do
       before { test_object.send(:metrics)[key] = value }
       it { is_expected.to be value }
+    end
+  end
+
+  describe '#has_tag?' do
+    subject(:has_tag?) { test_object.has_tag?(key) }
+    let(:key) { 'test_tag' }
+    let(:value) { 'test_value' }
+
+    context 'when no tag exists' do
+      it { is_expected.to be false }
+    end
+
+    context 'when a meta tag exists' do
+      before { test_object.send(:meta)[key] = value }
+      it { is_expected.to be true }
+    end
+
+    context 'when a metric exists' do
+      before { test_object.send(:metrics)[key] = value }
+      it { is_expected.to be true }
     end
   end
 
@@ -98,7 +116,7 @@ RSpec.describe Datadog::Tracing::Metadata::Tagging do
     end
 
     context 'given a numeric tag' do
-      let(:key) { 'system.pid' }
+      let(:key) { 'process_pid' }
       let(:value) { 123 }
 
       context 'which is an integer' do

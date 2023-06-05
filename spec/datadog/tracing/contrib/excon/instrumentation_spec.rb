@@ -1,8 +1,8 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
+require 'datadog/tracing/contrib/environment_service_name_examples'
+require 'datadog/tracing/contrib/span_attribute_schema_examples'
 
 require 'excon'
 require 'ddtrace'
@@ -74,10 +74,16 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
       expect(response.body).to eq('OK')
       expect(response.status).to eq(200)
     end
+
+    it_behaves_like 'environment service name', 'DD_TRACE_EXCON_SERVICE_NAME'
+    it_behaves_like 'schema version span'
   end
 
   context 'when there is successful request' do
     subject!(:response) { connection.get(path: '/success') }
+
+    it_behaves_like 'environment service name', 'DD_TRACE_EXCON_SERVICE_NAME'
+    it_behaves_like 'schema version span'
 
     it_behaves_like 'analytics for integration' do
       let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Excon::Ext::ENV_ANALYTICS_ENABLED }
@@ -102,6 +108,7 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
 
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('excon')
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('request')
+      expect(request_span.get_tag('span.kind')).to eq('client')
     end
 
     it_behaves_like 'a peer service span' do
@@ -112,6 +119,9 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
   context 'when there is a failing request' do
     subject!(:response) { connection.post(path: '/failure') }
 
+    it_behaves_like 'environment service name', 'DD_TRACE_EXCON_SERVICE_NAME'
+    it_behaves_like 'schema version span'
+
     it do
       expect(request_span.service).to eq(Datadog::Tracing::Contrib::Excon::Ext::DEFAULT_PEER_SERVICE_NAME)
       expect(request_span.name).to eq(Datadog::Tracing::Contrib::Excon::Ext::SPAN_REQUEST)
@@ -121,6 +131,7 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::HTTP::TAG_STATUS_CODE)).to eq('500')
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::NET::TAG_TARGET_HOST)).to eq('example.com')
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::NET::TAG_TARGET_PORT)).to eq(80)
+      expect(request_span.get_tag('span.kind')).to eq('client')
       expect(request_span.span_type).to eq(Datadog::Tracing::Metadata::Ext::HTTP::TYPE_OUTBOUND)
       expect(request_span).to have_error
       expect(request_span).to have_error_type('Error 500')
@@ -138,11 +149,16 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
   context 'when the path is not found' do
     subject!(:response) { connection.get(path: '/not_found') }
 
+    it_behaves_like 'environment service name', 'DD_TRACE_EXCON_SERVICE_NAME'
+    it_behaves_like 'schema version span'
+
     it { expect(request_span).to_not have_error }
   end
 
   context 'when the request times out' do
     subject(:response) { connection.get(path: '/timeout') }
+
+    it_behaves_like 'environment service name', 'DD_TRACE_EXCON_SERVICE_NAME', error: Excon::Error::Timeout
 
     it do
       expect { subject }.to raise_error(Excon::Error::Timeout)
@@ -222,12 +238,12 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
             span = datum[:datadog_span]
             headers = datum[:headers]
             expect(headers).to include(
-              Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_TRACE_ID => span.trace_id.to_s,
-              Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_PARENT_ID => span.span_id.to_s
+              'x-datadog-trace-id' => span.trace_id.to_s,
+              'x-datadog-parent-id' => span.span_id.to_s
             )
 
             expect(headers).to include(
-              Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_SAMPLING_PRIORITY
+              'x-datadog-sampling-priority'
             )
           end
         end
@@ -254,9 +270,9 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
             # Assert request headers
             headers = datum[:headers]
             expect(headers).to_not include(
-              Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_TRACE_ID,
-              Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_PARENT_ID,
-              Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_SAMPLING_PRIORITY
+              'x-datadog-trace-id',
+              'x-datadog-parent-id',
+              'x-datadog-sampling-priority'
             )
           end
         end
@@ -280,9 +296,9 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
             m.call(*args).tap do |datum|
               # Assert request headers
               headers = datum[:headers]
-              expect(headers).to_not include(Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_TRACE_ID)
-              expect(headers).to_not include(Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_PARENT_ID)
-              expect(headers).to_not include(Datadog::Tracing::Distributed::Headers::Ext::HTTP_HEADER_SAMPLING_PRIORITY)
+              expect(headers).to_not include('x-datadog-trace-id')
+              expect(headers).to_not include('x-datadog-parent-id')
+              expect(headers).to_not include('x-datadog-sampling-priority')
             end
           end
 
@@ -350,6 +366,22 @@ RSpec.describe Datadog::Tracing::Contrib::Excon::Middleware do
         let(:span) { request_span }
         let(:peer_hostname) { 'example.com' }
       end
+    end
+  end
+
+  context 'when basic auth in url' do
+    before do
+      WebMock.enable!
+      stub_request(:get, /example.com/).to_return(status: 200)
+    end
+
+    after { WebMock.disable! }
+
+    it 'does not collect auth info' do
+      Excon.get('http://username:password@example.com/sample/path')
+
+      expect(span.get_tag('http.url')).to eq('/sample/path')
+      expect(span.get_tag('out.host')).to eq('example.com')
     end
   end
 end

@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'datadog/core/encoding'
@@ -150,8 +148,8 @@ RSpec.describe Datadog::Transport::IO::Traces::Encoder do
             trace.spans.each do |span|
               allow(span).to receive(:to_hash)
                 .and_wrap_original do |m, *_args|
-                m.call.tap { |h| h.delete(missing_id) }
-              end
+                  m.call.tap { |h| h.delete(missing_id) }
+                end
             end
           end
         end

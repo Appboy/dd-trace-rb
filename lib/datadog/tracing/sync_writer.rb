@@ -1,12 +1,10 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/core'
+require_relative 'pipeline'
+require_relative 'runtime/metrics'
+require_relative 'writer'
 
-require 'datadog/tracing/pipeline'
-require 'datadog/tracing/runtime/metrics'
-require 'datadog/tracing/writer'
-
-require 'ddtrace/transport/http'
+require_relative '../../ddtrace/transport/http'
 
 module Datadog
   module Tracing

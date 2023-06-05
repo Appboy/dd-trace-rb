@@ -1,10 +1,6 @@
-# typed: true
-
-require 'datadog/core'
-
-require 'datadog/tracing/sampling/ext'
-require 'datadog/tracing/sampling/rate_limiter'
-require 'datadog/tracing/sampling/rule'
+require_relative 'ext'
+require_relative 'rate_limiter'
+require_relative 'rule'
 
 module Datadog
   module Tracing
@@ -48,7 +44,7 @@ module Datadog
                                nil
                              else
                                # TODO: Simplify .tags access, as `Tracer#tags` can't be arbitrarily changed anymore
-                               RateByServiceSampler.new(1.0, env: -> { Tracing.send(:tracer).tags[:env] })
+                               RateByServiceSampler.new(1.0, env: -> { Tracing.send(:tracer).tags['env'] })
                              end
         end
 
@@ -76,10 +72,10 @@ module Datadog
         end
 
         # @!visibility private
-        def update(*args)
+        def update(*args, **kwargs)
           return false unless @default_sampler.respond_to?(:update)
 
-          @default_sampler.update(*args)
+          @default_sampler.update(*args, **kwargs)
         end
 
         private
@@ -100,6 +96,7 @@ module Datadog
           rate_limiter.allow?(1).tap do |allowed|
             set_priority(trace, allowed)
             set_limiter_metrics(trace, rate_limiter.effective_rate)
+            trace.set_tag(Tracing::Metadata::Ext::Distributed::TAG_DECISION_MAKER, Ext::Decision::TRACE_SAMPLING_RULE)
           end
         rescue StandardError => e
           Datadog.logger.error(

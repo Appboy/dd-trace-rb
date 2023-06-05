@@ -1,6 +1,6 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/active_support/notifications/subscriber'
+require_relative 'subscriber'
 
 module Datadog
   module Tracing

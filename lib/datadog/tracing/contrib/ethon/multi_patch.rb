@@ -1,9 +1,8 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/propagation/http'
-require 'datadog/tracing/contrib/ethon/ext'
+require_relative '../../metadata/ext'
+require_relative '../../propagation/http'
+require_relative 'ext'
 
 module Datadog
   module Tracing
@@ -68,8 +67,12 @@ module Datadog
               @datadog_multi_span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               @datadog_multi_span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_MULTI_REQUEST)
 
-              # Tag as an external peer service
-              @datadog_multi_span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, @datadog_multi_span.service)
+              @datadog_multi_span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
+
+              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                # Tag as an external peer service
+                @datadog_multi_span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, @datadog_multi_span.service)
+              end
 
               # Set analytics sample rate
               Contrib::Analytics.set_sample_rate(@datadog_multi_span, analytics_sample_rate) if analytics_enabled?

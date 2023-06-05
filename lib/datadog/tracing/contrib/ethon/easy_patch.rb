@@ -1,12 +1,9 @@
-# typed: false
-
 require 'uri'
 
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/propagation/http'
-require 'datadog/tracing/contrib/ethon/ext'
-require 'datadog/tracing/contrib/http_annotation_helper'
+require_relative '../../metadata/ext'
+require_relative '../../propagation/http'
+require_relative 'ext'
+require_relative '../http_annotation_helper'
 
 module Datadog
   module Tracing
@@ -19,7 +16,6 @@ module Datadog
           end
 
           # InstanceMethods - implementing instrumentation
-          # rubocop:disable Metrics/ModuleLength
           module InstanceMethods
             include Contrib::HttpAnnotationHelper
 
@@ -125,13 +121,18 @@ module Datadog
               method = Ext::NOT_APPLICABLE_METHOD
               method = @datadog_method.to_s if instance_variable_defined?(:@datadog_method) && !@datadog_method.nil?
               span.resource = method
-              # Tag as an external peer service
-              span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+
+              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                # Tag as an external peer service
+                span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              end
               # Set analytics sample rate
               Contrib::Analytics.set_sample_rate(span, analytics_sample_rate) if analytics_enabled?
 
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_REQUEST)
+
+              span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
 
               uri = try_parse_uri
               return unless uri
@@ -140,7 +141,6 @@ module Datadog
               span.set_tag(Tracing::Metadata::Ext::HTTP::TAG_METHOD, method)
               span.set_tag(Tracing::Metadata::Ext::NET::TAG_TARGET_HOST, uri.host)
               span.set_tag(Tracing::Metadata::Ext::NET::TAG_TARGET_PORT, uri.port)
-
               span.set_tag(Tracing::Metadata::Ext::TAG_PEER_HOSTNAME, uri.host)
             end
 
@@ -169,7 +169,6 @@ module Datadog
               datadog_configuration[:analytics_sample_rate]
             end
           end
-          # rubocop:enable Metrics/ModuleLength
         end
       end
     end

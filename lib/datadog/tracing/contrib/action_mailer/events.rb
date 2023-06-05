@@ -1,7 +1,7 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/action_mailer/events/process'
-require 'datadog/tracing/contrib/action_mailer/events/deliver'
+require_relative 'events/process'
+require_relative 'events/deliver'
 
 module Datadog
   module Tracing

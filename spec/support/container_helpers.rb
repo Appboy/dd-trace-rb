@@ -1,12 +1,6 @@
-# typed: false
-
 require 'stringio'
 
 module ContainerHelpers
-  def uuid_regex
-    /[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}/
-  end
-
   shared_context 'cgroup file' do
     let(:cgroup_file) { StringIO.new }
 

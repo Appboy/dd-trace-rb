@@ -1,7 +1,8 @@
-# typed: ignore
+# frozen_string_literal: true
 
-require 'datadog/appsec/contrib/patcher'
-require 'datadog/appsec/contrib/rack/gateway/watcher'
+require_relative '../patcher'
+require_relative '../../monitor'
+require_relative 'gateway/watcher'
 
 module Datadog
   module AppSec
@@ -22,6 +23,7 @@ module Datadog
           end
 
           def patch
+            Monitor::Gateway::Watcher.watch
             Gateway::Watcher.watch
             Patcher.instance_variable_set(:@patched, true)
           end

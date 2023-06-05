@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/appsec/configuration/settings'
+require_relative 'configuration/settings'
 
 module Datadog
   module AppSec
@@ -14,7 +14,9 @@ module Datadog
 
       # Configuration DSL implementation
       class DSL
-        Instrument = Struct.new(:name, :options)
+        # Struct constant whisker cast for Steep
+        Instrument = _ = Struct.new(:name) # rubocop:disable Naming/ConstantName
+
         def initialize
           @instruments = []
           @options = {}
@@ -22,8 +24,8 @@ module Datadog
 
         attr_reader :instruments, :options
 
-        def instrument(name, options = {})
-          @instruments << Instrument.new(name, options)
+        def instrument(name)
+          @instruments << Instrument.new(name)
         end
 
         def enabled=(value)
@@ -32,6 +34,14 @@ module Datadog
 
         def ruleset=(value)
           options[:ruleset] = value
+        end
+
+        def ip_denylist=(value)
+          options[:ip_denylist] = value
+        end
+
+        def user_id_denylist=(value)
+          options[:user_id_denylist] = value
         end
 
         # in microseconds
@@ -54,12 +64,6 @@ module Datadog
         def obfuscator_value_regex=(value)
           options[:obfuscator_value_regex] = value
         end
-
-        def [](key)
-          found = @instruments.find { |e| e.name == key }
-
-          found.options if found
-        end
       end
 
       # class-level methods for Configuration
@@ -73,6 +77,12 @@ module Datadog
 
         def settings
           @settings ||= Settings.new
+        end
+
+        private
+
+        def default_setting?(setting)
+          settings.send(:default?, setting)
         end
       end
     end

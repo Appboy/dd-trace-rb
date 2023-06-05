@@ -1,6 +1,4 @@
-# typed: true
-
-require 'datadog/core'
+# frozen_string_literal: true
 
 module Datadog
   module Tracing

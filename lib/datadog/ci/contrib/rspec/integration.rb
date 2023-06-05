@@ -1,9 +1,7 @@
-# typed: false
+require_relative '../../../tracing/contrib/integration'
 
-require 'datadog/tracing/contrib/integration'
-
-require 'datadog/ci/contrib/rspec/configuration/settings'
-require 'datadog/ci/contrib/rspec/patcher'
+require_relative 'configuration/settings'
+require_relative 'patcher'
 
 module Datadog
   module CI
@@ -36,7 +34,7 @@ module Datadog
             false
           end
 
-          def default_configuration
+          def new_configuration
             Configuration::Settings.new
           end
 

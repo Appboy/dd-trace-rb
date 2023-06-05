@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require_relative 'support/helper'
 
@@ -36,17 +34,20 @@ RSpec.describe 'Tracer configuration' do
       let(:error_handler) { proc { @error_handler_called = true } }
 
       before do
-        stub_const('ErrorWorker', Class.new do
-          include Sidekiq::Worker
+        stub_const(
+          'ErrorWorker',
+          Class.new do
+            include Sidekiq::Worker
 
-          def perform
-            raise ZeroDivisionError, 'job error'
+            def perform
+              raise ZeroDivisionError, 'job error'
+            end
           end
-        end)
+        )
       end
 
       it 'uses custom error handler' do
-        expect { perform_async }.to raise_error
+        expect { perform_async }.to raise_error(ZeroDivisionError)
         expect(@error_handler_called).to be_truthy
       end
     end

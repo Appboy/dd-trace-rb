@@ -1,10 +1,8 @@
-# typed: false
-
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/dalli/ext'
-require 'datadog/tracing/contrib/dalli/quantize'
+require_relative '../../metadata/ext'
+require_relative '../analytics'
+require_relative 'ext'
+require_relative '../ext'
+require_relative 'quantize'
 
 module Datadog
   module Tracing
@@ -24,11 +22,16 @@ module Datadog
                 span.service = datadog_configuration[:service_name]
                 span.span_type = Ext::SPAN_TYPE_COMMAND
 
+                span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
+
                 span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
                 span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_COMMAND)
 
                 # Tag as an external peer service
-                span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+                if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                  span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+                end
+
                 span.set_tag(Tracing::Metadata::Ext::TAG_PEER_HOSTNAME, hostname)
 
                 # Set analytics sample rate
@@ -38,6 +41,9 @@ module Datadog
 
                 span.set_tag(Tracing::Metadata::Ext::NET::TAG_TARGET_HOST, hostname)
                 span.set_tag(Tracing::Metadata::Ext::NET::TAG_TARGET_PORT, port)
+
+                span.set_tag(Contrib::Ext::DB::TAG_SYSTEM, Ext::TAG_SYSTEM)
+
                 cmd = Quantize.format_command(op, args)
                 span.set_tag(Ext::TAG_COMMAND, cmd)
 

@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'spec/datadog/tracing/contrib/rails/support/deprecation'
 
@@ -66,7 +64,7 @@ RSpec.describe 'ActionCable Rack override' do
       expect(trace.resource).to eq('ActionCable::Connection::Base#on_open')
 
       expect(rack.name).to eq('rack.request')
-      expect(rack.resource).to eq('GET -1')
+      expect(rack.resource).to eq('ActionCable::Connection::Base#on_open')
     end
   end
 end

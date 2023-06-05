@@ -1,17 +1,13 @@
-# typed: true
-
-require 'datadog/tracing/context'
-require 'datadog/tracing/distributed/headers/ext'
-require 'datadog/tracing/trace_operation'
-require 'datadog/opentracer/propagator'
+require_relative '../tracing/context'
+require_relative '../tracing/distributed/datadog'
+require_relative '../tracing/trace_operation'
+require_relative 'propagator'
 
 module Datadog
   module OpenTracer
     # OpenTracing propagator for Datadog::OpenTracer::Tracer
     module TextMapPropagator
       extend Propagator
-      extend Tracing::Distributed::Headers::Ext
-      include Tracing::Distributed::Headers::Ext
 
       BAGGAGE_PREFIX = 'ot-baggage-'.freeze
 
@@ -27,14 +23,17 @@ module Datadog
           end
 
           # Inject Datadog trace properties
-          active_trace = span_context.datadog_context.active_trace
-          digest = active_trace.to_digest if active_trace
+          digest = if span_context.datadog_context && span_context.datadog_context.active_trace
+                     span_context.datadog_context.active_trace.to_digest
+                   else
+                     span_context.datadog_trace_digest
+                   end
           return unless digest
 
-          carrier[HTTP_HEADER_ORIGIN] = digest.trace_origin
-          carrier[HTTP_HEADER_PARENT_ID] = digest.span_id
-          carrier[HTTP_HEADER_SAMPLING_PRIORITY] = digest.trace_sampling_priority
-          carrier[HTTP_HEADER_TRACE_ID] = digest.trace_id
+          carrier[Tracing::Distributed::Datadog::ORIGIN_KEY] = digest.trace_origin
+          carrier[Tracing::Distributed::Datadog::PARENT_ID_KEY] = digest.span_id
+          carrier[Tracing::Distributed::Datadog::SAMPLING_PRIORITY_KEY] = digest.trace_sampling_priority
+          carrier[Tracing::Distributed::Datadog::TRACE_ID_KEY] = digest.trace_id
 
           nil
         end

@@ -1,4 +1,6 @@
-# typed: true
+# frozen_string_literal: true
+
+require_relative '../core/utils'
 
 module Datadog
   module Profiling
@@ -41,7 +43,10 @@ module Datadog
         tags[FORM_FIELD_TAG_SERVICE] = service if service
         tags[FORM_FIELD_TAG_VERSION] = version if version
 
-        user_tags.merge(tags)
+        # Make sure everything is an utf-8 string, to avoid encoding issues in native code/libddprof/further downstream
+        user_tags.merge(tags).map do |key, value|
+          [Datadog::Core::Utils.utf8_encode(key), Datadog::Core::Utils.utf8_encode(value)]
+        end.to_h
       end
     end
   end

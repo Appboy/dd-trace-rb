@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/rails/rails_helper'
 
 RSpec.describe 'Rails Rack' do
@@ -29,96 +27,102 @@ RSpec.describe 'Rails Rack' do
   let(:controllers) { [controller, errors_controller] }
   let(:controller) do
     layout_ = layout
-    stub_const('TestController', Class.new(ActionController::Base) do
-      include ::Rails.application.routes.url_helpers
+    stub_const('RescuableError', Class.new(StandardError))
+    stub_const(
+      'TestController',
+      Class.new(ActionController::Base) do
+        include ::Rails.application.routes.url_helpers
 
-      layout layout_
+        layout layout_
 
-      self.view_paths = [ActionView::FixtureResolver.new(
-        'layouts/application.html.erb' => '<%= yield %>',
-        'test/full.html.erb' => 'Test template content',
-        'test/template_with_partial.html.erb' => 'Template with <%= render "test/outer_partial" %>',
-        'test/partial_does_not_exist.html.erb' => '<%= render "test/no_partial_here" %>',
-        'test/_outer_partial.html.erb' => 'a partial inside <%= render "test/inner_partial" %>',
-        'test/_inner_partial.html.erb' => 'a partial',
-        'test/error_template.html.erb' => '<%= 1/0 %>',
-        'test/error_partial.html.erb' => 'Oops <%= render "test/inner_error" %>',
-        'test/_inner_error.html.erb' => '<%= 1/0 %>'
-      )]
+        self.view_paths = [ActionView::FixtureResolver.new(
+          'layouts/application.html.erb' => '<%= yield %>',
+          'test/full.html.erb' => 'Test template content',
+          'test/template_with_partial.html.erb' => 'Template with <%= render "test/outer_partial" %>',
+          'test/partial_does_not_exist.html.erb' => '<%= render "test/no_partial_here" %>',
+          'test/_outer_partial.html.erb' => 'a partial inside <%= render "test/inner_partial" %>',
+          'test/_inner_partial.html.erb' => 'a partial',
+          'test/error_template.html.erb' => '<%= 1/0 %>',
+          'test/error_partial.html.erb' => 'Oops <%= render "test/inner_error" %>',
+          'test/_inner_error.html.erb' => '<%= 1/0 %>'
+        )]
 
-      def full
-        @value = ::Rails.cache.write('empty-key', 50)
-        render 'full'
-      end
+        def full
+          @value = ::Rails.cache.write('empty-key', 50)
+          render 'full'
+        end
 
-      def partial
-        render 'template_with_partial'
-      end
+        def partial
+          render 'template_with_partial'
+        end
 
-      def nonexistent_template
-        render 'does_not_exist'
-      end
+        def nonexistent_template
+          render 'does_not_exist'
+        end
 
-      def nonexistent_partial
-        render 'partial_does_not_exist'
-      end
+        def nonexistent_partial
+          render 'partial_does_not_exist'
+        end
 
-      def error
-        1 / 0
-      end
+        def error
+          1 / 0
+        end
 
-      def sub_error
-        error
-      end
+        def sub_error
+          error
+        end
 
-      def soft_error
-        if Rails::VERSION::MAJOR.to_i >= 5
-          head 520
-        else
-          render nothing: true, status: 520
+        def soft_error
+          if Rails::VERSION::MAJOR.to_i >= 5
+            head 520
+          else
+            render nothing: true, status: 520
+          end
+        end
+
+        def error_handled_by_rescue_from
+          raise RescuableError
+        end
+
+        rescue_from 'RescuableError' do
+          render 'full'
+        end
+
+        def error_template
+          render 'error_template'
+        end
+
+        def error_partial
+          render 'error_partial'
+        end
+
+        define_method(:span_resource) do
+          head :ok
+        end
+
+        def custom_span_resource
+          Datadog::Tracing.active_span.resource = 'CustomSpanResource'
+
+          head :ok
+        end
+
+        # Users can decide late in the request that a 404 is the desired outcome.
+        def explicitly_not_found
+          raise ActionController::RoutingError, :not_found
         end
       end
-
-      RescuableError = Class.new(StandardError)
-
-      def error_handled_by_rescue_from
-        raise RescuableError
-      end
-
-      rescue_from 'RescuableError' do
-        render 'full'
-      end
-
-      def error_template
-        render 'error_template'
-      end
-
-      def error_partial
-        render 'error_partial'
-      end
-
-      define_method(:span_resource) do
-        head :ok
-      end
-
-      def custom_span_resource
-        Datadog::Tracing.active_span.resource = 'CustomSpanResource'
-
-        head :ok
-      end
-
-      # Users can decide late in the request that a 404 is the desired outcome.
-      def explicitly_not_found
-        raise ActionController::RoutingError, :not_found
-      end
-    end)
+    )
   end
   let(:errors_controller) do
-    stub_const('ErrorsController', Class.new(ActionController::Base) do
-      def internal_server_error
-        head :internal_server_error
+    stub_const(
+      'ErrorsController',
+      Class.new(ActionController::Base) do
+        def internal_server_error
+          # Return 200, since the error been handled
+          head :ok
+        end
       end
-    end)
+    )
   end
 
   context 'with a full request' do
@@ -138,7 +142,7 @@ RSpec.describe 'Rails Rack' do
       expect(request_span.name).to eq('rack.request')
       expect(request_span.span_type).to eq('web')
       expect(request_span.service).to eq(tracer.default_service)
-      expect(request_span.resource).to eq('GET 200')
+      expect(request_span.resource).to eq('TestController#full')
       expect(request_span.get_tag('http.url')).to eq('/full')
       expect(request_span.get_tag('http.method')).to eq('GET')
       expect(request_span.get_tag('http.status_code')).to eq('200')
@@ -257,7 +261,7 @@ RSpec.describe 'Rails Rack' do
       expect(trace.resource).to eq('TestController#nonexistent_template')
 
       expect(request_span.name).to eq('rack.request')
-      expect(request_span.resource).to eq('GET 500')
+      expect(request_span.resource).to eq('TestController#nonexistent_template')
       expect(request_span).to have_error
       expect(request_span).to have_error_type('ActionView::MissingTemplate')
       expect(request_span).to have_error_message(include('Missing template test/does_not_exist'))
@@ -310,7 +314,7 @@ RSpec.describe 'Rails Rack' do
       expect(trace.resource).to eq('TestController#nonexistent_partial')
 
       expect(request_span.name).to eq('rack.request')
-      expect(request_span.resource).to eq('GET 500')
+      expect(request_span.resource).to eq('TestController#nonexistent_partial')
       expect(request_span).to have_error
       expect(request_span).to have_error_type('ActionView::Template::Error')
       expect(request_span).to have_error_message(include('Missing partial test/no_partial_here'))
@@ -373,7 +377,7 @@ RSpec.describe 'Rails Rack' do
 
       expect(request_span.name).to eq('rack.request')
       expect(request_span.span_type).to eq('web')
-      expect(request_span.resource).to eq('GET 500')
+      expect(request_span.resource).to eq('TestController#error')
       expect(request_span.get_tag('http.url')).to eq('/error')
       expect(request_span.get_tag('http.method')).to eq('GET')
       expect(request_span.get_tag('http.status_code')).to eq('500')
@@ -408,7 +412,7 @@ RSpec.describe 'Rails Rack' do
 
       expect(request_span.name).to eq('rack.request')
       expect(request_span.span_type).to eq('web')
-      expect(request_span.resource).to eq('GET 520')
+      expect(request_span.resource).to eq('TestController#soft_error')
       expect(request_span.get_tag('http.url')).to eq('/soft_error')
       expect(request_span.get_tag('http.method')).to eq('GET')
       expect(request_span.get_tag('http.status_code')).to eq('520')
@@ -443,7 +447,7 @@ RSpec.describe 'Rails Rack' do
 
       expect(request_span.name).to eq('rack.request')
       expect(request_span.span_type).to eq('web')
-      expect(request_span.resource).to eq('GET 500')
+      expect(request_span.resource).to eq('TestController#sub_error')
       expect(request_span.get_tag('http.url')).to eq('/sub_error')
       expect(request_span.get_tag('http.method')).to eq('GET')
       expect(request_span.get_tag('http.status_code')).to eq('500')
@@ -499,31 +503,62 @@ RSpec.describe 'Rails Rack' do
   end
 
   context 'with custom error controllers' do
-    subject do
-      # Simulate an error being passed to the exception controller
-      get '/internal_server_error', {}, 'action_dispatch.exception' => ArgumentError.new
+    context 'when given an exception from headers' do
+      subject do
+        # Simulate an error being passed to the exception controller,
+        # but the error status would be set from the original span before redirect to error controller
+        get '/internal_server_error', {}, 'action_dispatch.exception' => ArgumentError.new
+      end
+
+      it 'does not override trace resource names' do
+        is_expected.to be_ok
+
+        expect(trace).to_not be nil
+        expect(spans).to have(2).items
+        request_span, controller_span = spans
+
+        expect(trace.resource).to eq('GET 200')
+
+        expect(request_span).not_to have_error
+        expect(request_span.resource).to eq('GET 200')
+        expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT))
+          .to eq('rack')
+        expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
+          .to eq('request')
+
+        expect(controller_span).not_to have_error
+        expect(controller_span.resource).to eq('ErrorsController#internal_server_error')
+        expect(controller_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('action_pack')
+        expect(controller_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('controller')
+      end
     end
 
-    it 'does not override trace resource names' do
-      is_expected.to be_server_error
+    context 'when given without an exception' do
+      subject do
+        get '/internal_server_error'
+      end
 
-      expect(trace).to_not be nil
-      expect(spans).to have(2).items
-      request_span, controller_span = spans
+      it 'does override trace resource names' do
+        is_expected.to be_ok
 
-      expect(trace.resource).to eq('ErrorsController#internal_server_error')
+        expect(trace).to_not be nil
+        expect(spans).to have(2).items
+        request_span, controller_span = spans
 
-      expect(request_span).to have_error
-      expect(request_span.resource).to_not eq(controller_span.resource)
-      expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT))
-        .to eq('rack')
-      expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
-        .to eq('request')
+        expect(trace.resource).to eq('ErrorsController#internal_server_error')
 
-      expect(controller_span).to have_error
-      expect(controller_span.resource).to eq('ErrorsController#internal_server_error')
-      expect(controller_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('action_pack')
-      expect(controller_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('controller')
+        expect(request_span).not_to have_error
+        expect(request_span.resource).to eq('ErrorsController#internal_server_error')
+        expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT))
+          .to eq('rack')
+        expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
+          .to eq('request')
+
+        expect(controller_span).not_to have_error
+        expect(controller_span.resource).to eq('ErrorsController#internal_server_error')
+        expect(controller_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('action_pack')
+        expect(controller_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('controller')
+      end
     end
   end
 
@@ -567,7 +602,7 @@ RSpec.describe 'Rails Rack' do
 
       expect(request_span.name).to eq('rack.request')
       expect(request_span.span_type).to eq('web')
-      expect(request_span.resource).to eq('GET 404')
+      expect(request_span.resource).to eq('TestController#explicitly_not_found')
       expect(request_span.get_tag('http.url')).to eq('/explicitly_not_found')
       expect(request_span.get_tag('http.method')).to eq('GET')
       expect(request_span.get_tag('http.status_code')).to eq('404')
@@ -601,7 +636,7 @@ RSpec.describe 'Rails Rack' do
       expect(request_span).to have_error_type('ActionView::Template::Error')
       expect(request_span).to have_error_stack
       expect(request_span).to have_error_message
-      expect(request_span.resource).to_not eq(render_span.resource)
+      expect(request_span.resource).to eq('TestController#error_template')
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT))
         .to eq('rack')
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
@@ -645,7 +680,7 @@ RSpec.describe 'Rails Rack' do
       expect(request_span).to have_error_type('ActionView::Template::Error')
       expect(request_span).to have_error_stack
       expect(request_span).to have_error_message
-      expect(request_span.resource).to_not eq(render_span.resource)
+      expect(request_span.resource).to eq('TestController#error_partial')
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT))
         .to eq('rack')
       expect(request_span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))

@@ -1,12 +1,14 @@
-# typed: ignore
+require_relative '../../../tracing/contrib/rack/middlewares'
 
-require 'datadog/tracing/contrib/rack/middlewares'
-
-require 'datadog/appsec/contrib/patcher'
-require 'datadog/appsec/contrib/rack/request_middleware'
-require 'datadog/appsec/contrib/sinatra/framework'
-require 'datadog/appsec/contrib/sinatra/gateway/watcher'
-require 'datadog/tracing/contrib/sinatra/framework'
+require_relative '../patcher'
+require_relative '../../response'
+require_relative '../rack/request_middleware'
+require_relative 'framework'
+require_relative 'ext'
+require_relative 'gateway/watcher'
+require_relative 'gateway/route_params'
+require_relative 'gateway/request'
+require_relative '../../../tracing/contrib/sinatra/framework'
 
 module Datadog
   module AppSec
@@ -31,9 +33,11 @@ module Datadog
               tracing_middleware = Datadog::Tracing::Contrib::Rack::TraceMiddleware
 
               if tracing_sinatra_framework.include_middleware?(tracing_middleware, builder)
-                tracing_sinatra_framework.add_middleware_after(tracing_middleware,
-                                                               Datadog::AppSec::Contrib::Rack::RequestMiddleware,
-                                                               builder)
+                tracing_sinatra_framework.add_middleware_after(
+                  tracing_middleware,
+                  Datadog::AppSec::Contrib::Rack::RequestMiddleware,
+                  builder
+                )
               else
                 tracing_sinatra_framework.add_middleware(Datadog::AppSec::Contrib::Rack::RequestMiddleware, builder)
               end
@@ -48,20 +52,21 @@ module Datadog
           def dispatch!
             env = @request.env
 
-            context = env['datadog.waf.context']
+            context = env[Datadog::AppSec::Ext::SCOPE_KEY]
 
             return super unless context
 
             # TODO: handle exceptions, except for super
 
-            request_return, request_response = Instrumentation.gateway.push('sinatra.request.dispatch', request) do
-              super
+            gateway_request = Gateway::Request.new(env)
+
+            request_return, request_response = Instrumentation.gateway.push('sinatra.request.dispatch', gateway_request) do
+              # handle process_route interruption
+              catch(Datadog::AppSec::Contrib::Sinatra::Ext::ROUTE_INTERRUPT) { super }
             end
 
             if request_response && request_response.any? { |action, _event| action == :block }
-              self.response = ::Sinatra::Response.new([Datadog::AppSec::Assets.blocked],
-                                                      403,
-                                                      { 'Content-Type' => 'text/html' })
+              self.response = AppSec::Response.negotiate(env).to_sinatra_response
               request_return = nil
             end
 
@@ -76,7 +81,7 @@ module Datadog
           def process_route(*)
             env = @request.env
 
-            context = env['datadog.waf.context']
+            context = env[Datadog::AppSec::Ext::SCOPE_KEY]
 
             return super unless context
 
@@ -90,9 +95,20 @@ module Datadog
               # At this point params has both route params and normal params.
               route_params = params.each.with_object({}) { |(k, v), h| h[k] = v unless base_params.key?(k) }
 
-              Instrumentation.gateway.push('sinatra.request.routed', [request, route_params])
+              gateway_request = Gateway::Request.new(env)
+              gateway_route_params = Gateway::RouteParams.new(route_params)
 
-              # TODO: handle block
+              _, request_response = Instrumentation.gateway.push(
+                'sinatra.request.routed',
+                [gateway_request, gateway_route_params]
+              )
+
+              if request_response && request_response.any? { |action, _event| action == :block }
+                self.response = AppSec::Response.negotiate(env).to_sinatra_response
+
+                # interrupt request and return response to dispatch! for consistency
+                throw(Datadog::AppSec::Contrib::Sinatra::Ext::ROUTE_INTERRUPT, response)
+              end
 
               yield(*args)
             end

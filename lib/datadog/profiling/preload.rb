@@ -1,5 +1,5 @@
-# typed: strict
+# frozen_string_literal: true
 
-require 'ddtrace'
+require_relative '../../ddtrace'
 
 Datadog::Profiling.start_if_enabled

@@ -1,21 +1,9 @@
-# typed: ignore
-
-require 'datadog/appsec/assets'
+# frozen_string_literal: true
 
 module Datadog
   module AppSec
     # Processor integrates libddwaf into datadog/appsec
     class Processor
-      # Interface object to check using case .. when
-      module IOLike
-        def read; end
-        def rewind; end
-
-        def self.===(other)
-          instance_methods.all? { |meth| other.respond_to?(meth) }
-        end
-      end
-
       # Context manages a sequence of runs
       class Context
         attr_reader :time_ns, :time_ext_ns, :timeouts, :events
@@ -26,42 +14,53 @@ module Datadog
           @time_ext_ns = 0.0
           @timeouts = 0
           @events = []
+          @run_mutex = Mutex.new
         end
 
-        def run(*args)
+        def run(input, timeout = WAF::LibDDWAF::DDWAF_RUN_TIMEOUT)
+          @run_mutex.lock
+
           start_ns = Core::Utils::Time.get_time(:nanosecond)
 
-          ret, res = @context.run(*args)
+          # this WAF::Context#run call is not thread safe as it mutates the context
+          # TODO: remove multiple assignment
+          _code, res = @context.run(input, timeout)
 
           stop_ns = Core::Utils::Time.get_time(:nanosecond)
 
+          # these updates are not thread safe and should be protected
           @time_ns += res.total_runtime
           @time_ext_ns += (stop_ns - start_ns)
           @timeouts += 1 if res.timeout
 
-          [ret, res]
+          res
+        ensure
+          @run_mutex.unlock
+        end
+
+        def finalize
+          @context.finalize
         end
       end
 
       attr_reader :ruleset_info, :addresses
 
-      def initialize
-        @ruleset = nil
-        @handle = nil
+      def initialize(ruleset:)
         @ruleset_info = nil
-        @addresses = nil
+        @addresses = []
+        settings = Datadog::AppSec.settings
 
-        unless load_libddwaf && load_ruleset && create_waf_handle
+        unless load_libddwaf && create_waf_handle(settings, ruleset)
           Datadog.logger.warn { 'AppSec is disabled, see logged errors above' }
         end
       end
 
       def ready?
-        !@ruleset.nil? && !@handle.nil?
+        !@handle.nil?
       end
 
-      def new_context
-        Context.new(self)
+      def finalize
+        @handle.finalize
       end
 
       protected
@@ -74,52 +73,32 @@ module Datadog
         Processor.require_libddwaf && Processor.libddwaf_provides_waf?
       end
 
-      def load_ruleset
-        ruleset_setting = Datadog::AppSec.settings.ruleset
-
-        begin
-          @ruleset = case ruleset_setting
-                     when :recommended, :risky, :strict
-                       JSON.parse(Datadog::AppSec::Assets.waf_rules(ruleset_setting))
-                     when String
-                       JSON.parse(File.read(ruleset_setting))
-                     when IOLike
-                       JSON.parse(ruleset_setting.read).tap { ruleset_setting.rewind }
-                     when Hash
-                       ruleset_setting
-                     else
-                       raise ArgumentError, "unsupported value for ruleset setting: #{ruleset_setting.inspect}"
-                     end
-
-          true
-        rescue StandardError => e
-          Datadog.logger.error do
-            "libddwaf ruleset failed to load, ruleset: #{ruleset_setting.inspect} error: #{e.inspect}"
-          end
-
-          false
-        end
-      end
-
-      def create_waf_handle
+      def create_waf_handle(settings, ruleset)
         # TODO: this may need to be reset if the main Datadog logging level changes after initialization
-        Datadog::AppSec::WAF.logger = Datadog.logger if Datadog.logger.debug? && Datadog::AppSec.settings.waf_debug
+        Datadog::AppSec::WAF.logger = Datadog.logger if Datadog.logger.debug? && settings.waf_debug
 
         obfuscator_config = {
-          key_regex: Datadog::AppSec.settings.obfuscator_key_regex,
-          value_regex: Datadog::AppSec.settings.obfuscator_value_regex,
+          key_regex: settings.obfuscator_key_regex,
+          value_regex: settings.obfuscator_value_regex,
         }
-        @handle = Datadog::AppSec::WAF::Handle.new(@ruleset, obfuscator: obfuscator_config)
+
+        @handle = Datadog::AppSec::WAF::Handle.new(ruleset, obfuscator: obfuscator_config)
         @ruleset_info = @handle.ruleset_info
         @addresses = @handle.required_addresses
 
         true
-      rescue StandardError => e
+      rescue WAF::LibDDWAF::Error => e
         Datadog.logger.error do
           "libddwaf failed to initialize, error: #{e.inspect}"
         end
 
-        @ruleset_info = e.ruleset_info if e.respond_to?(:ruleset_info)
+        @ruleset_info = e.ruleset_info if e.ruleset_info
+
+        false
+      rescue StandardError => e
+        Datadog.logger.error do
+          "libddwaf failed to initialize, error: #{e.inspect}"
+        end
 
         false
       end

@@ -1,14 +1,10 @@
-# typed: true
-
-require 'datadog/core/environment/cgroup'
+require_relative 'cgroup'
 
 module Datadog
   module Core
     module Environment
       # For container environments
       module Container
-        include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
-
         UUID_PATTERN = '[0-9a-f]{8}[-_]?[0-9a-f]{4}[-_]?[0-9a-f]{4}[-_]?[0-9a-f]{4}[-_]?[0-9a-f]{12}'.freeze
         CONTAINER_PATTERN = '[0-9a-f]{64}'.freeze
 

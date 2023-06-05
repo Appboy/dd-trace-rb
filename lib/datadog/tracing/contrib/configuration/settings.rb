@@ -1,7 +1,5 @@
-# typed: false
-
-require 'datadog/core/configuration/base'
-require 'datadog/core/utils/only_once'
+require_relative '../../../core/configuration/base'
+require_relative '../../../core/utils/only_once'
 
 module Datadog
   module Tracing
@@ -11,8 +9,6 @@ module Datadog
         # @public_api
         class Settings
           include Core::Configuration::Base
-
-          DEPRECATION_WARN_ONLY_ONCE = Core::Utils::OnlyOnce.new
 
           option :analytics_enabled, default: false
           option :analytics_sample_rate, default: 1.0

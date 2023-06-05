@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'rails/all'
 
 require 'ddtrace' if ENV['TEST_AUTO_INSTRUMENT'] == true
@@ -99,7 +97,11 @@ RSpec.shared_context 'Rails 3 base application' do
     test_routes = routes
     mapper.instance_exec do
       test_routes.each do |k, v|
-        get k => v
+        if k.is_a?(Array)
+          send(k.first, k.last => v)
+        else
+          get k => v
+        end
       end
     end
     @drawn = true
@@ -117,7 +119,7 @@ RSpec.shared_context 'Rails 3 base application' do
     allow(Rails.application.config.action_view).to receive(:delete).with(:stylesheet_expansions).and_return({})
     allow(Rails.application.config.action_view)
       .to receive(:delete).with(:javascript_expansions)
-                          .and_return(defaults: %w[prototype effects dragdrop controls rails])
+      .and_return(defaults: %w[prototype effects dragdrop controls rails])
     allow(Rails.application.config.action_view).to receive(:delete)
       .with(:embed_authenticity_token_in_remote_forms).and_return(true)
   end

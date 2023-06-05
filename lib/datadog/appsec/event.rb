@@ -1,10 +1,6 @@
-# typed: false
-
 require 'json'
 
-require 'datadog/appsec/contrib/rack/request'
-require 'datadog/appsec/contrib/rack/response'
-require 'datadog/appsec/rate_limiter'
+require_relative 'rate_limiter'
 
 module Datadog
   module AppSec
@@ -42,18 +38,17 @@ module Datadog
       #
       # This is expected to be called only once per trace for the rate limiter
       # to properly apply
-      def self.record(*events)
+      def self.record(span, *events)
         # ensure rate limiter is called only when there are events to record
         return if events.empty?
 
         Datadog::AppSec::RateLimiter.limit(:traces) do
-          record_via_span(*events)
+          record_via_span(span, *events)
         end
       end
 
-      # rubocop:disable Metrics/AbcSize
       # rubocop:disable Metrics/MethodLength
-      def self.record_via_span(*events)
+      def self.record_via_span(span, *events)
         events.group_by { |e| e[:trace] }.each do |trace, event_group|
           unless trace
             Datadog.logger.debug { "{ error: 'no trace: cannot record', event_group: #{event_group.inspect}}" }
@@ -61,17 +56,17 @@ module Datadog
           end
 
           trace.keep!
+          trace.set_tag(
+            Datadog::Tracing::Metadata::Ext::Distributed::TAG_DECISION_MAKER,
+            Datadog::Tracing::Sampling::Ext::Decision::ASM
+          )
 
           # prepare and gather tags to apply
           trace_tags = event_group.each_with_object({}) do |event, tags|
-            span = event[:span]
-
-            span.set_tag('appsec.event', 'true') if span
-
             # TODO: assume HTTP request context for now
 
             if (request = event[:request])
-              request_headers = AppSec::Contrib::Rack::Request.headers(request).select do |k, _|
+              request_headers = request.headers.select do |k, _|
                 ALLOWED_REQUEST_HEADERS.include?(k.downcase)
               end
 
@@ -81,13 +76,11 @@ module Datadog
 
               tags['http.host'] = request.host
               tags['http.useragent'] = request.user_agent
-              tags['network.client.ip'] = request.ip
-
-              # tags['actor.ip'] = request.ip # TODO: uses client IP resolution algorithm
+              tags['network.client.ip'] = request.remote_addr
             end
 
             if (response = event[:response])
-              response_headers = AppSec::Contrib::Rack::Response.headers(response).select do |k, _|
+              response_headers = response.headers.select do |k, _|
                 ALLOWED_RESPONSE_HEADERS.include?(k.downcase)
               end
 
@@ -107,15 +100,14 @@ module Datadog
 
           # complex types are unsupported, we need to serialize to a string
           triggers = trace_tags.delete('_dd.appsec.triggers')
-          trace.set_tag('_dd.appsec.json', JSON.dump({ triggers: triggers }))
+          span.set_tag('_dd.appsec.json', JSON.dump({ triggers: triggers }))
 
           trace_tags.each do |key, value|
-            trace.set_tag(key, value)
+            span.set_tag(key, value)
           end
         end
       end
       # rubocop:enable Metrics/MethodLength
-      # rubocop:enable Metrics/AbcSize
     end
   end
 end

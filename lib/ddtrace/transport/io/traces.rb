@@ -1,9 +1,9 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'ddtrace/transport/traces'
+require_relative '../traces'
 
-require 'ddtrace/transport/io/response'
-require 'ddtrace/transport/io/client'
+require_relative 'response'
+require_relative 'client'
 
 module Datadog
   module Transport
@@ -22,8 +22,6 @@ module Datadog
 
         # Extensions for HTTP client
         module Client
-          include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
-
           def send_traces(traces)
             # Build a request
             req = Transport::Traces::Request.new(Parcel.new(traces))

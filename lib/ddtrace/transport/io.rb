@@ -1,8 +1,8 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/core/encoding'
-require 'ddtrace/transport/io/client'
-require 'ddtrace/transport/io/traces'
+require_relative '../../datadog/core/encoding'
+require_relative 'io/client'
+require_relative 'io/traces'
 
 module Datadog
   module Transport

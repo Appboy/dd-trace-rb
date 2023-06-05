@@ -1,9 +1,7 @@
-# typed: false
-
-require 'datadog/tracing/contrib/faraday/connection'
-require 'datadog/tracing/contrib/faraday/ext'
-require 'datadog/tracing/contrib/faraday/rack_builder'
-require 'datadog/tracing/contrib/patcher'
+require_relative 'connection'
+require_relative 'ext'
+require_relative 'rack_builder'
+require_relative '../patcher'
 
 module Datadog
   module Tracing
@@ -20,7 +18,7 @@ module Datadog
           end
 
           def patch
-            require 'datadog/tracing/contrib/faraday/middleware'
+            require_relative 'middleware'
 
             register_middleware!
             add_default_middleware!

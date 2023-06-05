@@ -1,11 +1,8 @@
-# typed: false
-
 require 'sucker_punch'
 
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/sucker_punch/ext'
+require_relative '../../metadata/ext'
+require_relative '../analytics'
+require_relative 'ext'
 
 module Datadog
   module Tracing

@@ -1,9 +1,9 @@
-# typed: ignore
-
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/grpc/ext'
+require_relative '../../../../tracing'
+require_relative '../../../metadata/ext'
+require_relative '../distributed/propagation'
+require_relative '../../analytics'
+require_relative '../ext'
+require_relative '../../ext'
 
 module Datadog
   module Tracing
@@ -36,18 +36,28 @@ module Datadog
             def annotate!(trace, span, metadata, call)
               span.set_tags(metadata)
 
+              span.set_tag(Contrib::Ext::RPC::TAG_SYSTEM, Ext::TAG_SYSTEM)
+
+              span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
+
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_CLIENT)
 
-              # Tag as an external peer service
-              span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                # Tag as an external peer service
+                span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              end
+
               host, _port = find_host_port(call)
               span.set_tag(Tracing::Metadata::Ext::TAG_PEER_HOSTNAME, host) if host
+
+              deadline = find_deadline(call)
+              span.set_tag(Ext::TAG_CLIENT_DEADLINE, deadline) if deadline
 
               # Set analytics sample rate
               Contrib::Analytics.set_sample_rate(span, analytics_sample_rate) if analytics_enabled?
 
-              Tracing::Propagation::GRPC.inject!(trace, metadata)
+              Distributed::Propagation::INSTANCE.inject!(trace, metadata) if distributed_tracing?
             rescue StandardError => e
               Datadog.logger.debug("GRPC client trace failed: #{e}")
             end
@@ -58,6 +68,12 @@ module Datadog
                 .split('/')
                 .reject(&:empty?)
                 .join('.')
+            end
+
+            def find_deadline(call)
+              return unless call.respond_to?(:deadline) && call.deadline.is_a?(Time)
+
+              call.deadline.utc.iso8601(3)
             end
 
             def find_host_port(call)

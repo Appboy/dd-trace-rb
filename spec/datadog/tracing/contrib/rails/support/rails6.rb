@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'rails/all'
 
 require 'ddtrace' if ENV['TEST_AUTO_INSTRUMENT'] == true
@@ -116,7 +114,11 @@ RSpec.shared_context 'Rails 6 base application' do
 
     rails_test_application.instance.routes.append do
       test_routes.each do |k, v|
-        get k => v
+        if k.is_a?(Array)
+          send(k.first, k.last => v)
+        else
+          get k => v
+        end
       end
     end
 

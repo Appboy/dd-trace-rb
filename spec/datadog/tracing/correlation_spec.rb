@@ -1,11 +1,9 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'datadog/core'
-require 'datadog/core/utils'
 require 'datadog/tracing/correlation'
 require 'datadog/tracing/trace_digest'
+require 'datadog/tracing/utils'
 
 RSpec.describe Datadog::Tracing::Correlation do
   let(:default_env) { 'default-env' }
@@ -22,12 +20,12 @@ RSpec.describe Datadog::Tracing::Correlation do
   shared_context 'correlation data' do
     let(:env) { 'dev' }
     let(:service) { 'acme-api' }
-    let(:span_id) { Datadog::Core::Utils.next_id }
+    let(:span_id) { Datadog::Tracing::Utils.next_id }
     let(:span_name) { 'active_record.sql' }
     let(:span_resource) { 'SELECT * FROM users;' }
     let(:span_service) { 'acme-mysql' }
     let(:span_type) { 'db' }
-    let(:trace_id) { Datadog::Core::Utils.next_id }
+    let(:trace_id) { Datadog::Tracing::Utils.next_id }
     let(:trace_name) { 'rack.request' }
     let(:trace_resource) { 'GET /users' }
     let(:trace_service) { 'acme-api' }
@@ -208,12 +206,12 @@ RSpec.describe Datadog::Tracing::Correlation do
             service: service,
             span_id: span_id,
             trace_id: trace_id,
-            version: version
+            version: version,
           )
         end
 
-        let(:trace_id) { Datadog::Core::Utils.next_id }
-        let(:span_id) { Datadog::Core::Utils.next_id }
+        let(:trace_id) { Datadog::Tracing::Utils.next_id }
+        let(:span_id) { Datadog::Tracing::Utils.next_id }
         let(:env) { 'dev' }
         let(:service) { 'acme-api' }
         let(:version) { '1.0' }
@@ -231,12 +229,77 @@ RSpec.describe Datadog::Tracing::Correlation do
 
       context 'when #trace_id' do
         context 'is defined' do
-          it_behaves_like 'a log format string' do
-            let(:trace_id) { Datadog::Core::Utils.next_id }
-            it do
-              is_expected.to have_attribute(
-                "#{Datadog::Tracing::Correlation::Identifier::LOG_ATTR_TRACE_ID}=#{trace_id}"
-              )
+          context 'when 128 bit trace id logging is not enabled' do
+            before do
+              allow(Datadog.configuration.tracing).to receive(:trace_id_128_bit_logging_enabled).and_return(false)
+            end
+
+            context 'when given 64 bit trace id' do
+              it_behaves_like 'a log format string' do
+                let(:trace_id) { 0xaaaaaaaaaaaaaaaa }
+                let(:expected_trace_id) { trace_id }
+                it do
+                  is_expected.to have_attribute(
+                    "#{Datadog::Tracing::Correlation::Identifier::LOG_ATTR_TRACE_ID}=#{expected_trace_id}"
+                  )
+                end
+              end
+            end
+
+            context 'when given 128 bit trace id' do
+              it_behaves_like 'a log format string' do
+                let(:trace_id) { 0xaaaaaaaaaaaaaaaaffffffffffffffff }
+                let(:expected_trace_id) { 0xffffffffffffffff }
+                it do
+                  is_expected.to have_attribute(
+                    "#{Datadog::Tracing::Correlation::Identifier::LOG_ATTR_TRACE_ID}=#{expected_trace_id}"
+                  )
+                end
+              end
+            end
+          end
+
+          context 'when 128 bit trace id logging is enabled' do
+            before do
+              allow(Datadog.configuration.tracing).to receive(:trace_id_128_bit_logging_enabled).and_return(true)
+            end
+
+            context 'when given 64 bit trace id' do
+              it_behaves_like 'a log format string' do
+                let(:trace_id) { 0xaaaaaaaaaaaaaaaa }
+                let(:expected_trace_id) { trace_id }
+                it do
+                  is_expected.to have_attribute(
+                    "#{Datadog::Tracing::Correlation::Identifier::LOG_ATTR_TRACE_ID}=#{expected_trace_id}"
+                  )
+                end
+              end
+            end
+
+            context 'when given > 64 bit trace id' do
+              it_behaves_like 'a log format string' do
+                let(:trace_id) { 0xffffffffffffffffaaaaaaaaaaaaaaaa }
+                let(:expected_trace_id) { trace_id }
+
+                it do
+                  is_expected.to have_attribute(
+                    "#{Datadog::Tracing::Correlation::Identifier::LOG_ATTR_TRACE_ID}=ffffffffffffffffaaaaaaaaaaaaaaaa"
+                  )
+                end
+              end
+            end
+          end
+
+          context 'when given > 64 bit trace id but high order is 0' do
+            it_behaves_like 'a log format string' do
+              let(:trace_id) { 0x00000000000000000aaaaaaaaaaaaaaaa }
+              let(:expected_trace_id) { trace_id }
+
+              it do
+                is_expected.to have_attribute(
+                  "#{Datadog::Tracing::Correlation::Identifier::LOG_ATTR_TRACE_ID}=#{expected_trace_id}"
+                )
+              end
             end
           end
         end
@@ -256,7 +319,7 @@ RSpec.describe Datadog::Tracing::Correlation do
       context 'when #span_id' do
         context 'is defined' do
           it_behaves_like 'a log format string' do
-            let(:span_id) { Datadog::Core::Utils.next_id }
+            let(:span_id) { Datadog::Tracing::Utils.next_id }
             it do
               is_expected.to have_attribute(
                 "#{Datadog::Tracing::Correlation::Identifier::LOG_ATTR_SPAN_ID}=#{span_id}"

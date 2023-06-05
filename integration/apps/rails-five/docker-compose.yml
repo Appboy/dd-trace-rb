@@ -4,7 +4,7 @@ services:
     build:
       context: .
       args:
-        BASE_IMAGE: datadog/dd-apm-demo:rb-2.7
+        BASE_IMAGE: "datadog/dd-apm-demo:rb-${RUBY_VERSION}"
     depends_on:
       - ddagent
       - mysql
@@ -52,6 +52,7 @@ services:
       - DD_PROCESS_AGENT_ENABLED=false
       - DD_BIND_HOST=0.0.0.0
       - DD_API_KEY
+      - "DD_HOSTNAME=${DD_HOSTNAME}"
       - LOG_LEVEL=DEBUG
       - DD_LOGS_STDOUT=yes
       - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
@@ -87,13 +88,11 @@ services:
     expose:
       - "3306"
   redis:
-    image: redis:3.0
+    image: redis:3.2
     expose:
       - "6379"
   load-tester:
-    build:
-      context: ../../images
-      dockerfile: wrk/Dockerfile
+    image: datadog/dd-apm-demo:wrk
     command: -t10 -c10 -d43200s -s /scripts/scenarios/basic/default.lua http://app/basic/default
     depends_on:
       - app

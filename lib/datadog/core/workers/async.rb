@@ -1,6 +1,4 @@
-# typed: false
-
-require 'datadog/core/logger'
+require_relative '../logger'
 
 module Datadog
   module Core
@@ -8,11 +6,14 @@ module Datadog
       module Async
         # Adds threading behavior to workers
         # to run tasks asynchronously.
-        # rubocop:disable Metrics/ModuleLength
         module Thread
           FORK_POLICY_STOP = :stop
           FORK_POLICY_RESTART = :restart
           SHUTDOWN_TIMEOUT = 1
+
+          # This single shared mutex is used to avoid concurrency issues during the
+          # initialization of per-instance lazy-initialized mutexes.
+          MUTEX_INIT = Mutex.new
 
           def self.included(base)
             base.prepend(PrependedMethods)
@@ -89,7 +90,7 @@ module Datadog
             :result
 
           def mutex
-            @mutex ||= Mutex.new
+            @mutex || MUTEX_INIT.synchronize { @mutex ||= Mutex.new }
           end
 
           def after_fork
@@ -102,7 +103,7 @@ module Datadog
             :pid
 
           def mutex_after_fork
-            @mutex_after_fork ||= Mutex.new
+            @mutex_after_fork || MUTEX_INIT.synchronize { @mutex_after_fork ||= Mutex.new }
           end
 
           def worker
@@ -175,7 +176,6 @@ module Datadog
             end
           end
         end
-        # rubocop:enable Metrics/ModuleLength
       end
     end
   end

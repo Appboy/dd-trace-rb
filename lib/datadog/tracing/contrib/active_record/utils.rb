@@ -1,7 +1,5 @@
-# typed: false
-
-require 'datadog/core/environment/ext'
-require 'datadog/tracing/contrib/utils/database'
+require_relative '../../../core/environment/ext'
+require_relative '../utils/database'
 
 module Datadog
   module Tracing

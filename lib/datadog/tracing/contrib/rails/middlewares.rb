@@ -1,7 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing'
-require 'datadog/tracing/contrib/action_pack/utils'
+require_relative '../action_pack/utils'
 
 module Datadog
   module Tracing

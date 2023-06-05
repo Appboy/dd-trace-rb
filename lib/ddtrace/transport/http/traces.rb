@@ -1,12 +1,10 @@
-# typed: false
-
 require 'json'
 
-require 'ddtrace/transport/traces'
-require 'ddtrace/transport/http/client'
-require 'ddtrace/transport/http/response'
-require 'ddtrace/transport/http/api/endpoint'
-require 'ddtrace/transport/http/api/instance'
+require_relative '../traces'
+require_relative 'client'
+require_relative 'response'
+require_relative 'api/endpoint'
+require_relative 'api/instance'
 
 module Datadog
   module Transport
@@ -27,7 +25,7 @@ module Datadog
 
         # Extensions for HTTP client
         module Client
-          def send_payload(request)
+          def send_traces_payload(request)
             send_request(request) do |api, env|
               api.send_traces(env)
             end

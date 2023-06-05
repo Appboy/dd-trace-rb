@@ -1,10 +1,10 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/core/environment/identity'
-require 'datadog/core/environment/socket'
-require 'datadog/core/runtime/ext'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/trace_segment'
+require_relative '../../datadog/core/environment/identity'
+require_relative '../../datadog/core/environment/socket'
+require_relative '../../datadog/core/runtime/ext'
+require_relative '../../datadog/tracing/metadata/ext'
+require_relative '../../datadog/tracing/trace_segment'
 
 module Datadog
   module Transport
@@ -48,6 +48,8 @@ module Datadog
         tag_runtime_id!
         tag_rate_limiter_rate!
         tag_sample_rate!
+        tag_sampling_decision_maker!
+        tag_high_order_trace_id!
         tag_sampling_priority!
 
         trace
@@ -93,7 +95,7 @@ module Datadog
       end
 
       def tag_lang!
-        return if trace.lang.nil? || root_span.get_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE)
+        return if trace.lang.nil?
 
         root_span.set_tag(
           Core::Runtime::Ext::TAG_LANG,
@@ -113,10 +115,7 @@ module Datadog
       def tag_process_id!
         return unless trace.process_id
 
-        root_span.set_tag(
-          Core::Runtime::Ext::TAG_PID,
-          trace.process_id
-        )
+        root_span.set_tag(Core::Runtime::Ext::TAG_PROCESS_ID, trace.process_id)
       end
 
       def tag_rate_limiter_rate!
@@ -155,6 +154,12 @@ module Datadog
         )
       end
 
+      def tag_sampling_decision_maker!
+        return unless (decision = trace.sampling_decision_maker)
+
+        root_span.set_tag(Tracing::Metadata::Ext::Distributed::TAG_DECISION_MAKER, decision)
+      end
+
       def tag_sampling_priority!
         return unless trace.sampling_priority
 
@@ -162,6 +167,12 @@ module Datadog
           Tracing::Metadata::Ext::Distributed::TAG_SAMPLING_PRIORITY,
           trace.sampling_priority
         )
+      end
+
+      def tag_high_order_trace_id!
+        return unless (high_order_tid = trace.high_order_tid)
+
+        root_span.set_tag(Tracing::Metadata::Ext::Distributed::TAG_TID, high_order_tid)
       end
 
       private

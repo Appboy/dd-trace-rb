@@ -84,7 +84,7 @@ Datadog.configure do |c|
   # Global settings
   c.tracer.hostname = '127.0.0.1'
   c.tracer.port = 8126
-  c.runtime_metrics.enabled = true
+  c.runtime_metrics_enabled = true
   c.service = 'billing-api'
 
   # Tracing settings
@@ -363,7 +363,7 @@ Direct usage of `Datadog::Context` has been removed. Previously, it was used to 
 
 Manual tracing is now done through the [public API](https://www.rubydoc.info/gems/ddtrace/).
 
-Whereas in 0.x, the block would provide a `Datadog::Span` as `span`, in 1.0, the block provides a `Datadog::SpanOperation` as `span` and `Datadog::TraceOperation` as `trace`.
+Whereas in 0.x, the block would provide a `Datadog::Span` as `span`, in 1.0, the block provides a `Datadog::Tracing::SpanOperation` as `span` and `Datadog::Tracing::TraceOperation` as `trace`.
 
 ```ruby
 ### Old 0.x ###
@@ -658,7 +658,7 @@ end
 | `Datadog::Ext::Sampling`                                        | `Datadog::Tracing::Metadata::Ext::Sampling`                                             |
 | `Datadog::Ext::SQL`                                             | `Datadog::Tracing::Metadata::Ext::SQL`                                                  |
 | `Datadog::Ext::Test`                                            | `Datadog::Tracing::Configuration::Ext::Test`                                            |
-| `Datadog::Ext::Transport::HTTP::ENV_DEFAULT_HOST`               | `Datadog::Tracing::Configuration::Ext::Transport::ENV_DEFAULT_HOST`                     |
+| `Datadog::Ext::Transport::HTTP::ENV_DEFAULT_HOST`               | `Datadog::Core::Configuration::Ext::Transport::ENV_DEFAULT_HOST`                     |
 | `Datadog::Ext::Transport::HTTP::ENV_DEFAULT_PORT`               | `Datadog::Tracing::Configuration::Ext::Transport::ENV_DEFAULT_PORT`                     |
 | `Datadog::Ext::Transport::HTTP::ENV_DEFAULT_URL`                | `Datadog::Tracing::Configuration::Ext::Transport::ENV_DEFAULT_URL`                      |
 | `Datadog::Ext::Transport`                                       | `Datadog::Transport::Ext`                                                               |
@@ -692,9 +692,9 @@ end
 | General                               | Removed  | `Datadog.configure` can no longer be called without a block                                                         | Remove uses of `Datadog.configure` without a block.                                                                                                                       |
 | CI API                                | Changed  | `DD_TRACE_CI_MODE_ENABLED` environment variable is now `DD_TRACE_CI_ENABLED`                                        | Use `DD_TRACE_CI_ENABLED` instead.                                                                                                                                        |
 | Configuration                         | Changed  | Many settings have been namespaced under specific categories                                                        | Update your configuration to these [new settings](#1.0-configuration-settings) where appropriate.                                                                         |
-| Configuration                         | Removed  | `Datadog.configure(client, options)`                                                                                | Use `Datadog::Tracing.configure_onto(client, options)` instead.                                                                                                           |
+| Configuration                         | Removed  | `Datadog.configure(client, options)`                                                                                | Use `Datadog.configure_onto(client, options)` instead.                                                                                                           |
 | Configuration                         | Removed  | `DD_#{integration}_ANALYTICS_ENABLED` and `DD_#{integration}_ANALYTICS_SAMPLE_RATE` environment variables           | Use `DD_TRACE_#{integration}_ANALYTICS_ENABLED` and `DD_TRACE_#{integration}_ANALYTICS_SAMPLE_RATE` instead.                                                              |
-| Configuration                         | Removed  | `DD_PROPAGATION_INJECT_STYLE` and `DD_PROPAGATION_EXTRACT_STYLE` environment variables                              | Use `DD_PROPAGATION_STYLE_INJECT` and `DD_PROPAGATION_STYLE_EXTRACT` instead.                                                                                             |
+| Configuration                         | Removed  | `DD_PROPAGATION_INJECT_STYLE` and `DD_PROPAGATION_EXTRACT_STYLE` environment variables                              | Use `DD_TRACE_PROPAGATION_STYLE_INJECT` and `DD_TRACE_PROPAGATION_STYLE_EXTRACT` instead.                                                                                             |
 | Integrations                          | Changed  | `-` in HTTP header tag names are kept, and no longer replaced with `_`                                              | For example: `http.response.headers.content_type` is changed to `http.response.headers.content-type`.                                                                     |
 | Integrations                          | Changed  | `Contrib::Configurable#default_configuration` moved to `Tracing::Contrib::Configurable#new_configuration`           | Use `Tracing::Contrib::Configurable#new_configuration` instead.                                                                                                           |
 | Integrations                          | Changed  | `Datadog.configuration.registry` moved to `Datadog.registry`                                                        | Use `Datadog.registry` instead.                                                                                                                                           |
@@ -719,11 +719,11 @@ end
 | Tracing API                           | Removed  | `child_of:` option from `Tracer#trace`                                                                              | Not supported.                                                                                                                                                            |
 | Tracing API                           | Removed  | `Datadog.tracer`                                                                                                    | Use methods in `Datadog::Tracing` instead.                                                                                                                                |
 | Tracing API                           | Removed  | `Pin.get_from(client)`                                                                                              | Use `Datadog::Tracing.configure_for(client)` instead.                                                                                                                     |
-| Tracing API                           | Removed  | `Pin.new(service, config: { option: value }).onto(client)`                                                          | Use `Datadog::Tracing.configure_onto(client, service_name: service, option: value)` instead.                                                                              |
+| Tracing API                           | Removed  | `Pin.new(service, config: { option: value }).onto(client)`                                                          | Use `Datadog.configure_onto(client, service_name: service, option: value)` instead.                                                                              |
 | Tracing API                           | Removed  | `Pipeline.before_flush`                                                                                             | Use `Datadog::Tracing.before_flush` instead.                                                                                                                              |
 | Tracing API                           | Removed  | `SpanOperation#context`                                                                                             | Use `Datadog::Tracing.active_trace` instead.                                                                                                                              |
 | Tracing API                           | Removed  | `SpanOperation#parent`/`SpanOperation#parent=`                                                                      | Not supported.                                                                                                                                                            |
-| Tracing API                           | Removed  | `SpanOperation#sampled`                                                                                             | Use `Datadog::TraceOperation#sampled?` instead.                                                                                                                           |
+| Tracing API                           | Removed  | `SpanOperation#sampled`                                                                                             | Use `Datadog::Tracing::TraceOperation#sampled?` instead.                                                                                                                           |
 | Tracing API                           | Removed  | `Tracer#active_correlation.to_log_format`                                                                           | Use `Datadog::Tracing.log_correlation` instead.                                                                                                                           |
 | Tracing API                           | Removed  | `Tracer#active_correlation`                                                                                         | Use `Datadog::Tracing.correlation` instead.                                                                                                                               |
 | Tracing API                           | Removed  | `Tracer#active_root_span`                                                                                           | Use `Datadog::Tracing.active_trace` instead.                                                                                                                              |

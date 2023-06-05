@@ -1,5 +1,3 @@
-# typed: false
-
 require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'ddtrace'
@@ -67,6 +65,7 @@ RSpec.describe 'net/http miniapp tests' do
           expect(span.get_tag('http.url')).to eq('/my/path')
           expect(span.get_tag('http.method')).to eq('GET')
           expect(span.get_tag('http.status_code')).to eq('200')
+          expect(span.get_tag('span.kind')).to eq('client')
           expect(span.parent_id).to eq(parent_span.span_id)
           expect(span.trace_id).to eq(trace_id)
 

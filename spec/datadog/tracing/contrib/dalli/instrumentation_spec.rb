@@ -1,8 +1,8 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
 require 'datadog/tracing/contrib/integration_examples'
+require 'datadog/tracing/contrib/environment_service_name_examples'
+require 'datadog/tracing/contrib/span_attribute_schema_examples'
 
 require 'dalli'
 require 'ddtrace'
@@ -29,6 +29,20 @@ RSpec.describe 'Dalli instrumentation' do
     Datadog.registry[:dalli].reset_configuration!
   end
 
+  it_behaves_like 'environment service name', 'DD_TRACE_DALLI_SERVICE_NAME' do
+    subject do
+      client.set('abc', 123)
+      try_wait_until { fetch_spans.any? }
+    end
+  end
+
+  it_behaves_like 'schema version span' do
+    subject do
+      client.set('abc', 123)
+      try_wait_until { fetch_spans.any? }
+    end
+  end
+
   describe 'when a client calls #set' do
     before do
       client.set('abc', 123)
@@ -51,7 +65,8 @@ RSpec.describe 'Dalli instrumentation' do
       expect(span.get_tag('memcached.command')).to eq('set abc 123 0 0')
       expect(span.get_tag('out.host')).to eq(test_host)
       expect(span.get_tag('out.port')).to eq(test_port.to_f)
-
+      expect(span.get_tag('db.system')).to eq('memcached')
+      expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_KIND)).to eq('client')
       expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('dalli')
       expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('command')
     end
@@ -86,6 +101,8 @@ RSpec.describe 'Dalli instrumentation' do
         expect(span.get_tag('out.host')).to eq(test_host)
         expect(span.get_tag('out.port')).to eq(test_port.to_f)
 
+        expect(span.get_tag('db.system')).to eq('memcached')
+        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_KIND)).to eq('client')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('dalli')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('command')
       end

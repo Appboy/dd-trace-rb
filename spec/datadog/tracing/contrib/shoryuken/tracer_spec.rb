@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
 
@@ -28,11 +26,14 @@ RSpec.describe Datadog::Tracing::Contrib::Shoryuken::Tracer do
   shared_context 'Shoryuken::Worker' do
     let(:worker_class) do
       qn = queue_name
-      stub_const('TestWorker', Class.new do
-        include Shoryuken::Worker
-        shoryuken_options queue: qn
-        def perform(sqs_msg, body); end
-      end)
+      stub_const(
+        'TestWorker',
+        Class.new do
+          include Shoryuken::Worker
+          shoryuken_options queue: qn
+          def perform(sqs_msg, body); end
+        end
+      )
     end
     let(:worker) { worker_class.new }
     let(:queue_name) { 'default' }
@@ -62,6 +63,8 @@ RSpec.describe Datadog::Tracing::Contrib::Shoryuken::Tracer do
       expect(span.get_tag(Datadog::Tracing::Contrib::Shoryuken::Ext::TAG_JOB_ATTRIBUTES)).to eq(attributes.to_s)
       expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('shoryuken')
       expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('job')
+      expect(span.get_tag('span.kind')).to eq('consumer')
+      expect(span.get_tag('messaging.system')).to eq('amazonsqs')
     end
 
     it_behaves_like 'analytics for integration' do

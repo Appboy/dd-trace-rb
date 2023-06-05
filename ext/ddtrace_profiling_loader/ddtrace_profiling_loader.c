@@ -20,7 +20,7 @@
 // This idea was shamelessly stolen from @lloeki's work in https://github.com/rubyjs/mini_racer/pull/179, big thanks!
 //
 // Extra note: Currently (May 2022), that we know of, the profiling native extension only exposes one potentially
-// problematic symbol: `rust_eh_personality` (coming from libddprof/libdatadog).
+// problematic symbol: `rust_eh_personality` (coming from libdatadog).
 // Future versions of Rust have been patched not to expose this
 // (see https://github.com/rust-lang/rust/pull/95604#issuecomment-1108563434) so we may want to revisit the need
 // for this loader in the future, and perhaps delete it if we no longer require its services :)
@@ -29,10 +29,17 @@
   #define RTLD_DEEPBIND 0
 #endif
 
+// Used to mark function arguments that are deliberately left unused
+#ifdef __GNUC__
+  #define DDTRACE_UNUSED  __attribute__((unused))
+#else
+  #define DDTRACE_UNUSED
+#endif
+
 static VALUE ok_symbol = Qnil; // :ok in Ruby
 static VALUE error_symbol = Qnil; // :error in Ruby
 
-static VALUE _native_load(VALUE self, VALUE ruby_path, VALUE ruby_init_name);
+static VALUE _native_load(DDTRACE_UNUSED VALUE self, VALUE ruby_path, VALUE ruby_init_name);
 static bool failed_to_load(void *handle, VALUE *failure_details);
 static bool incompatible_library(void *handle, VALUE *failure_details);
 static bool failed_to_initialize(void *handle, char *init_name, VALUE *failure_details);
@@ -41,7 +48,7 @@ static void unload_failed_library(void *handle);
 
 #define DDTRACE_EXPORT __attribute__ ((visibility ("default")))
 
-void DDTRACE_EXPORT Init_ddtrace_profiling_loader() {
+void DDTRACE_EXPORT Init_ddtrace_profiling_loader(void) {
   VALUE datadog_module = rb_define_module("Datadog");
   VALUE profiling_module = rb_define_module_under(datadog_module, "Profiling");
   VALUE loader_module = rb_define_module_under(profiling_module, "Loader");
@@ -51,7 +58,7 @@ void DDTRACE_EXPORT Init_ddtrace_profiling_loader() {
   error_symbol = ID2SYM(rb_intern_const("error"));
 }
 
-static VALUE _native_load(VALUE self, VALUE ruby_path, VALUE ruby_init_name) {
+static VALUE _native_load(DDTRACE_UNUSED VALUE self, VALUE ruby_path, VALUE ruby_init_name) {
   Check_Type(ruby_path, T_STRING);
   Check_Type(ruby_init_name, T_STRING);
 
@@ -85,7 +92,16 @@ static bool failed_to_load(void *handle, VALUE *failure_details) {
 static bool incompatible_library(void *handle, VALUE *failure_details) {
   // The library being loaded may be linked to a different libruby than the current executing Ruby.
   // We check if this is the case by checking if a well-known symbol resolves to a common address.
-  if (dlsym(handle, "ruby_xmalloc") != &ruby_xmalloc) {
+
+  void *xmalloc_from_library = dlsym(handle, "ruby_xmalloc");
+
+  if (xmalloc_from_library == NULL) {
+    // This happens when ruby is built without a `libruby.so` by using `--disable-shared` at compilation time.
+    // In this situation, no conflict between libruby version is possible.
+    return false;
+  }
+
+  if (xmalloc_from_library != &ruby_xmalloc) {
     *failure_details = rb_str_new_cstr("library was compiled and linked to a different Ruby version");
     unload_failed_library(handle);
     return true;

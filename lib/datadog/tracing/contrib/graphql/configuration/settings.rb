@@ -1,7 +1,7 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/configuration/settings'
-require 'datadog/tracing/contrib/graphql/ext'
+require_relative '../../configuration/settings'
+require_relative '../ext'
 
 module Datadog
   module Tracing
@@ -27,7 +27,7 @@ module Datadog
             end
 
             option :schemas
-            option :service_nam
+            option :service_name
           end
         end
       end

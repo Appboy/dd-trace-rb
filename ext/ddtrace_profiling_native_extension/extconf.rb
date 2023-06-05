@@ -1,5 +1,3 @@
-# typed: ignore
-
 # rubocop:disable Style/StderrPuts
 # rubocop:disable Style/GlobalVars
 
@@ -10,13 +8,31 @@ SKIPPED_REASON_FILE = "#{__dir__}/skipped_reason.txt".freeze
 File.delete(SKIPPED_REASON_FILE) rescue nil
 
 def skip_building_extension!(reason)
-  $stderr.puts(Datadog::Profiling::NativeExtensionHelpers::Supported.failure_banner_for(**reason))
+  fail_install_if_missing_extension =
+    Datadog::Profiling::NativeExtensionHelpers.fail_install_if_missing_extension?
+
+  $stderr.puts(
+    Datadog::Profiling::NativeExtensionHelpers::Supported.failure_banner_for(
+      **reason,
+      fail_install: fail_install_if_missing_extension,
+    )
+  )
+
   File.write(
     SKIPPED_REASON_FILE,
     Datadog::Profiling::NativeExtensionHelpers::Supported.render_skipped_reason_file(**reason),
   )
 
-  File.write('Makefile', 'all install clean: # dummy makefile that does nothing')
+  if fail_install_if_missing_extension
+    require 'mkmf'
+    Logging.message(
+      '[ddtrace] Failure cause: ' \
+      "#{Datadog::Profiling::NativeExtensionHelpers::Supported.render_skipped_reason_file(**reason)}\n"
+    )
+  else
+    File.write('Makefile', 'all install clean: # dummy makefile that does nothing')
+  end
+
   exit
 end
 
@@ -24,7 +40,8 @@ unless Datadog::Profiling::NativeExtensionHelpers::Supported.supported?
   skip_building_extension!(Datadog::Profiling::NativeExtensionHelpers::Supported.unsupported_reason)
 end
 
-$stderr.puts(%(
+$stderr.puts(
+  %(
 +------------------------------------------------------------------------------+
 | ** Preparing to build the ddtrace profiling native extension... **           |
 |                                                                              |
@@ -41,11 +58,16 @@ $stderr.puts(%(
 | Thanks for using ddtrace! You rock!                                          |
 +------------------------------------------------------------------------------+
 
-))
+)
+)
 
 # NOTE: we MUST NOT require 'mkmf' before we check the #skip_building_extension? because the require triggers checks
 # that may fail on an environment not properly setup for building Ruby extensions.
 require 'mkmf'
+
+Logging.message("[ddtrace] Using compiler:\n")
+xsystem("#{CONFIG['CC']} -v")
+Logging.message("[ddtrace] End of compiler information\n")
 
 # mkmf on modern Rubies actually has an append_cflags that does something similar
 # (see https://github.com/ruby/ruby/pull/5760), but as usual we need a bit more boilerplate to deal with legacy Rubies
@@ -57,13 +79,20 @@ def add_compiler_flag(flag)
   end
 end
 
+# Because we can't control what compiler versions our customers use, shipping with -Werror by default is a no-go.
+# But we can enable it in CI, so that we quickly spot any new warnings that just got introduced.
+#
+# @ivoanjo TODO: Ruby 3.3.0-preview1 was causing issues in CI because `have_header('vm_core.h')` below triggers warnings;
+# I've chosen to disable `-Werror` for this Ruby version for now, and we can revisit this on a later 3.3 release.
+add_compiler_flag '-Werror' if ENV['DDTRACE_CI'] == 'true' && !RUBY_DESCRIPTION.include?('3.3.0preview1')
+
 # Older gcc releases may not default to C99 and we need to ask for this. This is also used:
 # * by upstream Ruby -- search for gnu99 in the codebase
 # * by msgpack, another ddtrace dependency
 #   (https://github.com/msgpack/msgpack-ruby/blob/18ce08f6d612fe973843c366ac9a0b74c4e50599/ext/msgpack/extconf.rb#L8)
 add_compiler_flag '-std=gnu99'
 
-# Gets really noisy when we include the MJIT header, let's omit it
+# Gets really noisy when we include the MJIT header, let's omit it (TODO: Use #pragma GCC diagnostic instead?)
 add_compiler_flag '-Wno-unused-function'
 
 # Allow defining variables at any point in a function
@@ -73,6 +102,9 @@ add_compiler_flag '-Wno-declaration-after-statement'
 # cause a segfault later. Let's ensure that never happens.
 add_compiler_flag '-Werror-implicit-function-declaration'
 
+# Warn on unused parameters to functions. Use `DDTRACE_UNUSED` to mark things as known-to-not-be-used.
+add_compiler_flag '-Wunused-parameter'
+
 # The native extension is not intended to expose any symbols/functions for other native libraries to use;
 # the sole exception being `Init_ddtrace_profiling_native_extension` which needs to be visible for Ruby to call it when
 # it `dlopen`s the library.
@@ -81,22 +113,53 @@ add_compiler_flag '-Werror-implicit-function-declaration'
 # For more details see https://gcc.gnu.org/wiki/Visibility
 add_compiler_flag '-fvisibility=hidden'
 
+# Avoid legacy C definitions
+add_compiler_flag '-Wold-style-definition'
+
+# Enable all other compiler warnings
+add_compiler_flag '-Wall'
+add_compiler_flag '-Wextra'
+
 if RUBY_PLATFORM.include?('linux')
   # Supposedly, the correct way to do this is
   # ```
   # have_library 'pthread'
   # have_func 'pthread_getcpuclockid'
   # ```
-  # but it broke the build on Windows and on older Ruby versions (2.1 and 2.2)
+  # but a) it broke the build on Windows, b) on older Ruby versions (2.2 and below) and c) It's slower to build
   # so instead we just assume that we have the function we need on Linux, and nowhere else
   $defs << '-DHAVE_PTHREAD_GETCPUCLOCKID'
 end
 
+# On older Rubies, we did not need to include the ractor header (this was built into the MJIT header)
+$defs << '-DNO_RACTOR_HEADER_INCLUDE' if RUBY_VERSION < '3.3'
+
+# On older Rubies, some of the Ractor internal APIs were directly accessible
+$defs << '-DUSE_RACTOR_INTERNAL_APIS_DIRECTLY' if RUBY_VERSION < '3.3'
+
+# On older Rubies, there was no struct rb_native_thread. See private_vm_api_acccess.c for details.
+$defs << '-DNO_RB_NATIVE_THREAD' if RUBY_VERSION < '3.2'
+
+# On older Rubies, there was no struct rb_thread_sched (it was struct rb_global_vm_lock_struct)
+$defs << '-DNO_RB_THREAD_SCHED' if RUBY_VERSION < '3.2'
+
+# On older Rubies, there was no tid member in the internal thread structure
+$defs << '-DNO_THREAD_TID' if RUBY_VERSION < '3.1'
+
 # On older Rubies, we need to use a backported version of this function. See private_vm_api_access.h for details.
 $defs << '-DUSE_BACKPORTED_RB_PROFILE_FRAME_METHOD_NAME' if RUBY_VERSION < '3'
 
+# On older Rubies, there are no Ractors
+$defs << '-DNO_RACTORS' if RUBY_VERSION < '3'
+
+# On older Rubies, rb_global_vm_lock_struct did not include the owner field
+$defs << '-DNO_GVL_OWNER' if RUBY_VERSION < '2.6'
+
 # On older Rubies, we need to use rb_thread_t instead of rb_execution_context_t
 $defs << '-DUSE_THREAD_INSTEAD_OF_EXECUTION_CONTEXT' if RUBY_VERSION < '2.5'
+
+# On older Rubies, extensions can't use GET_VM()
+$defs << '-DNO_GET_VM' if RUBY_VERSION < '2.5'
 
 # On older Rubies...
 if RUBY_VERSION < '2.4'
@@ -106,19 +169,33 @@ if RUBY_VERSION < '2.4'
   $defs << '-DUSE_LEGACY_RB_VM_FRAME_METHOD_ENTRY'
 end
 
-# For REALLY OLD Rubies...
-if RUBY_VERSION < '2.3'
-  # ...there was no rb_time_timespec_new function
-  $defs << '-DNO_RB_TIME_TIMESPEC_NEW'
-  # ...the VM changed enough that we need an alternative legacy rb_profile_frames
-  $defs << '-DUSE_LEGACY_RB_PROFILE_FRAMES'
+# If we got here, libdatadog is available and loaded
+ENV['PKG_CONFIG_PATH'] = "#{ENV['PKG_CONFIG_PATH']}:#{Libdatadog.pkgconfig_folder}"
+Logging.message("[ddtrace] PKG_CONFIG_PATH set to #{ENV['PKG_CONFIG_PATH'].inspect}\n")
+$stderr.puts("Using libdatadog #{Libdatadog::VERSION} from #{Libdatadog.pkgconfig_folder}")
+
+unless pkg_config('datadog_profiling_with_rpath')
+  skip_building_extension!(
+    if Datadog::Profiling::NativeExtensionHelpers::Supported.pkg_config_missing?
+      Datadog::Profiling::NativeExtensionHelpers::Supported::PKG_CONFIG_IS_MISSING
+    else
+      # Less specific error message
+      Datadog::Profiling::NativeExtensionHelpers::Supported::FAILED_TO_CONFIGURE_LIBDATADOG
+    end
+  )
 end
 
-# If we got here, libddprof is available and loaded
-ENV['PKG_CONFIG_PATH'] = "#{ENV['PKG_CONFIG_PATH']}:#{Libddprof.pkgconfig_folder}"
-unless pkg_config('ddprof_ffi_with_rpath')
-  skip_building_extension!(Datadog::Profiling::NativeExtensionHelpers::Supported::FAILED_TO_CONFIGURE_LIBDDPROF)
+unless have_type('atomic_int', ['stdatomic.h'])
+  skip_building_extension!(Datadog::Profiling::NativeExtensionHelpers::Supported::COMPILER_ATOMIC_MISSING)
 end
+
+# See comments on the helper method being used for why we need to additionally set this.
+# The extremely excessive escaping around ORIGIN below seems to be correct and was determined after a lot of
+# experimentation. We need to get these special characters across a lot of tools untouched...
+$LDFLAGS += \
+  ' -Wl,-rpath,$$$\\\\{ORIGIN\\}/' \
+  "#{Datadog::Profiling::NativeExtensionHelpers.libdatadog_folder_relative_to_native_lib_folder}"
+Logging.message("[ddtrace] After pkg-config $LDFLAGS were set to: #{$LDFLAGS.inspect}\n")
 
 # Tag the native extension library with the Ruby version and Ruby platform.
 # This makes it easier for development (avoids "oops I forgot to rebuild when I switched my Ruby") and ensures that
@@ -149,16 +226,10 @@ if Datadog::Profiling::NativeExtensionHelpers::CAN_USE_MJIT_HEADER
 
   create_makefile EXTENSION_NAME
 else
-  # On older Rubies, we use the debase-ruby_core_source gem to get access to private VM headers.
+  # The MJIT header was introduced on 2.6 and removed on 3.3; for other Rubies we rely on
+  # the debase-ruby_core_source gem to get access to private VM headers.
   # This gem ships source code copies of these VM headers for the different Ruby VM versions;
   # see https://github.com/ruby-debug/debase-ruby_core_source for details
-
-  thread_native_for_ruby_2_1 = proc { true }
-  if RUBY_VERSION < '2.2'
-    # This header became public in Ruby 2.2, but we need to pull it from the private headers folder for 2.1
-    thread_native_for_ruby_2_1 = proc { have_header('thread_native.h') }
-    $defs << '-DRUBY_2_1_WORKAROUND'
-  end
 
   create_header
 
@@ -167,7 +238,11 @@ else
 
   Debase::RubyCoreSource
     .create_makefile_with_core(
-      proc { have_header('vm_core.h') && have_header('iseq.h') && thread_native_for_ruby_2_1.call },
+      proc do
+        have_header('vm_core.h') &&
+        have_header('iseq.h') &&
+        (RUBY_VERSION < '3.3' || have_header('ractor_core.h'))
+      end,
       EXTENSION_NAME,
     )
 end

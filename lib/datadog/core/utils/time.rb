@@ -1,12 +1,10 @@
-# typed: true
+# frozen_string_literal: true
 
 module Datadog
   module Core
     module Utils
       # Common database-related utility functions.
       module Time
-        include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
-
         module_function
 
         # Current monotonic time
@@ -36,10 +34,10 @@ module Datadog
           define_singleton_method(:now, &block)
         end
 
-        def measure
-          before = get_time
+        def measure(unit = :float_second)
+          before = get_time(unit)
           yield
-          after = get_time
+          after = get_time(unit)
           after - before
         end
 

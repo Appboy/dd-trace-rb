@@ -1,8 +1,8 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/core/error'
+require_relative '../../core/error'
 
-require 'datadog/tracing/metadata/ext'
+require_relative 'ext'
 
 module Datadog
   module Tracing

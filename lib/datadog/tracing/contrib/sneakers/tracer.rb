@@ -1,10 +1,7 @@
 # frozen_string_literal: true
 
-# typed: true
-
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/analytics'
+require_relative '../../metadata/ext'
+require_relative '../analytics'
 
 module Datadog
   module Tracing
@@ -25,6 +22,8 @@ module Datadog
             }
 
             Tracing.trace(Ext::SPAN_JOB, **trace_options) do |request_span|
+              request_span.set_tag(Contrib::Ext::Messaging::TAG_SYSTEM, Ext::TAG_MESSAGING_SYSTEM)
+
               request_span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               request_span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_JOB)
 
@@ -38,9 +37,12 @@ module Datadog
 
               request_span.resource = @app.to_proc.binding.eval('self.class').to_s
               request_span.set_tag(Ext::TAG_JOB_ROUTING_KEY, delivery_info.routing_key)
+              request_span.set_tag(Contrib::Ext::Messaging::TAG_RABBITMQ_ROUTING_KEY, delivery_info.routing_key)
               request_span.set_tag(Ext::TAG_JOB_QUEUE, delivery_info.consumer.queue.name)
 
               request_span.set_tag(Ext::TAG_JOB_BODY, deserialized_msg) if configuration[:tag_body]
+
+              request_span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CONSUMER)
 
               @app.call(deserialized_msg, delivery_info, metadata, handler)
             end

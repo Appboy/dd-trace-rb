@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
 
@@ -12,20 +10,26 @@ require_relative 'delayed_job_active_record'
 
 RSpec.describe Datadog::Tracing::Contrib::DelayedJob::Plugin, :delayed_job_active_record do
   let(:sample_job_object) do
-    stub_const('SampleJob', Class.new do
-      def perform; end
-    end)
+    stub_const(
+      'SampleJob',
+      Class.new do
+        def perform; end
+      end
+    )
   end
   let(:active_job_sample_job_object) do
-    stub_const('ActiveJobSampleJob', Class.new do
-      def perform; end
+    stub_const(
+      'ActiveJobSampleJob',
+      Class.new do
+        def perform; end
 
-      def job_data
-        {
-          'job_class' => 'UnderlyingJobClass'
-        }
+        def job_data
+          {
+            'job_class' => 'UnderlyingJobClass'
+          }
+        end
       end
-    end)
+    )
   end
 
   let(:configuration_options) { {} }
@@ -82,6 +86,10 @@ RSpec.describe Datadog::Tracing::Contrib::DelayedJob::Plugin, :delayed_job_activ
         expect(span.resource).to eq('UnderlyingJobClass')
         expect(enqueue_span.resource).to eq('UnderlyingJobClass')
       end
+
+      it 'has messaging system tag set correctly' do
+        expect(span.get_tag('messaging.system')).to eq('delayed_job')
+      end
     end
 
     context 'when job fails' do
@@ -89,11 +97,14 @@ RSpec.describe Datadog::Tracing::Contrib::DelayedJob::Plugin, :delayed_job_activ
       let(:error_handler) { proc { @error_handler_called = true } }
 
       let(:sample_job_object) do
-        stub_const('SampleJob', Class.new do
-          def perform
-            raise ZeroDivisionError, 'job error'
+        stub_const(
+          'SampleJob',
+          Class.new do
+            def perform
+              raise ZeroDivisionError, 'job error'
+            end
           end
-        end)
+        )
       end
 
       it 'uses custom error handler' do
@@ -117,6 +128,10 @@ RSpec.describe Datadog::Tracing::Contrib::DelayedJob::Plugin, :delayed_job_activ
 
       it "span tags doesn't include queue name" do
         expect(span.get_tag('delayed_job.queue')).to be_nil
+      end
+
+      it 'has messaging system tag set correctly' do
+        expect(span.get_tag('messaging.system')).to eq('delayed_job')
       end
 
       context 'when queue name is set' do
@@ -175,6 +190,10 @@ RSpec.describe Datadog::Tracing::Contrib::DelayedJob::Plugin, :delayed_job_activ
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq(Datadog::Tracing::Contrib::DelayedJob::Ext::TAG_OPERATION_JOB)
       end
+
+      it 'has span.kind tag with value consumer' do
+        expect(span.get_tag('span.kind')).to eq('consumer')
+      end
     end
 
     describe 'enqueue span' do
@@ -201,6 +220,42 @@ RSpec.describe Datadog::Tracing::Contrib::DelayedJob::Plugin, :delayed_job_activ
 
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq(Datadog::Tracing::Contrib::DelayedJob::Ext::TAG_OPERATION_ENQUEUE)
+      end
+
+      it 'has span.kind tag with value producer' do
+        expect(span.get_tag('span.kind')).to eq('producer')
+      end
+    end
+
+    describe 'reserve_job span' do
+      subject(:span) { fetch_spans.first }
+      let(:worker) { Delayed::Worker.new }
+
+      before do
+        worker.send(:reserve_job)
+      end
+
+      it_behaves_like 'analytics for integration' do
+        let(:analytics_enabled_var) { Datadog::Tracing::Contrib::DelayedJob::Ext::ENV_ANALYTICS_ENABLED }
+        let(:analytics_sample_rate_var) { Datadog::Tracing::Contrib::DelayedJob::Ext::ENV_ANALYTICS_SAMPLE_RATE }
+      end
+
+      it_behaves_like 'measured span for integration', false
+
+      it 'has default service name' do
+        expect(span.service).to eq(tracer.default_service)
+      end
+
+      it 'has reserve job components and operation tags' do
+        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT))
+          .to eq(Datadog::Tracing::Contrib::DelayedJob::Ext::TAG_COMPONENT)
+
+        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
+          .to eq(Datadog::Tracing::Contrib::DelayedJob::Ext::TAG_OPERATION_RESERVE_JOB)
+      end
+
+      it 'has messaging system tag set correctly' do
+        expect(span.get_tag('messaging.system')).to eq('delayed_job')
       end
     end
   end

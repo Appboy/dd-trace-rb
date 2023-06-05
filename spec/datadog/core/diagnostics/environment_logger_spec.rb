@@ -1,8 +1,7 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'datadog/core/diagnostics/environment_logger'
+require 'ddtrace/transport/io'
 
 RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
   subject(:env_logger) { described_class }
@@ -32,7 +31,11 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
 
     before do
       allow(Datadog).to receive(:logger).and_return(tracer_logger)
+      allow(tracer_logger).to receive(:debug?).and_return true
+      allow(tracer_logger).to receive(:debug)
       allow(tracer_logger).to receive(:info)
+      allow(tracer_logger).to receive(:warn)
+      allow(tracer_logger).to receive(:error)
     end
 
     it 'with a default tracer settings' do
@@ -53,7 +56,8 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
           'runtime_metrics_enabled' => false,
           'version' => DDTrace::VERSION::STRING,
           'vm' => be_a(String),
-          'service' => be_a(String)
+          'service' => be_a(String),
+          'profiling_enabled' => false,
         )
       end
     end
@@ -150,7 +154,8 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
           service: be_a(String),
           tags: nil,
           version: DDTrace::VERSION::STRING,
-          vm: be_a(String)
+          vm: be_a(String),
+          profiling_enabled: false,
         )
       end
 
@@ -187,7 +192,12 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
       end
 
       context 'with debug enabled' do
-        before { Datadog.configure { |c| c.diagnostics.debug = true } }
+        before do
+          Datadog.configure do |c|
+            c.diagnostics.debug = true
+            c.logger.instance = Datadog::Core::Logger.new(StringIO.new)
+          end
+        end
 
         it { is_expected.to include debug: true }
       end
@@ -229,6 +239,20 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
 
         it { is_expected.to include agent_error: include('ZeroDivisionError') }
         it { is_expected.to include agent_error: include('msg') }
+      end
+
+      context 'with IO transport' do
+        before do
+          Datadog.configure do |c|
+            c.tracing.writer = Datadog::Tracing::SyncWriter.new(
+              transport: Datadog::Transport::IO.default
+            )
+          end
+        end
+
+        after { Datadog.configure { |c| c.tracing.writer = nil } }
+
+        it { is_expected.to include agent_url: nil }
       end
 
       context 'with unix socket transport' do
@@ -276,21 +300,30 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
       end
 
       context 'with MRI' do
-        before { skip unless PlatformHelpers.mri? }
+        before { skip('Spec only runs on MRI') unless PlatformHelpers.mri? }
 
         it { is_expected.to include vm: start_with('ruby') }
       end
 
       context 'with JRuby' do
-        before { skip unless PlatformHelpers.jruby? }
+        before { skip('Spec only runs on JRuby') unless PlatformHelpers.jruby? }
 
         it { is_expected.to include vm: start_with('jruby') }
       end
 
       context 'with TruffleRuby' do
-        before { skip unless PlatformHelpers.truffleruby? }
+        before { skip('Spec only runs on TruffleRuby') unless PlatformHelpers.truffleruby? }
 
         it { is_expected.to include vm: start_with('truffleruby') }
+      end
+
+      context 'with profiling enabled' do
+        before do
+          allow_any_instance_of(Datadog::Profiling::Profiler).to receive(:start) if PlatformHelpers.mri?
+          Datadog.configure { |c| c.profiling.enabled = true }
+        end
+
+        it { is_expected.to include profiling_enabled: true }
       end
     end
   end

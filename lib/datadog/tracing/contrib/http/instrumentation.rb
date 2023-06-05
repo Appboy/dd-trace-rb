@@ -1,11 +1,8 @@
-# typed: false
-
 require 'uri'
 
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/http_annotation_helper'
+require_relative '../../metadata/ext'
+require_relative '../analytics'
+require_relative '../http_annotation_helper'
 
 module Datadog
   module Tracing
@@ -59,7 +56,7 @@ module Datadog
                 end
 
                 # Add additional response specific tags to the span.
-                annotate_span_with_response!(span, response)
+                annotate_span_with_response!(span, response, request_options)
 
                 # Invoke hook, if set.
                 unless Contrib::HTTP::Instrumentation.after_request.nil?
@@ -71,6 +68,8 @@ module Datadog
             end
 
             def annotate_span_with_request!(span, request, request_options)
+              span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
+
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_REQUEST)
 
@@ -81,23 +80,23 @@ module Datadog
               span.set_tag(Tracing::Metadata::Ext::NET::TAG_TARGET_HOST, host)
               span.set_tag(Tracing::Metadata::Ext::NET::TAG_TARGET_PORT, port.to_s)
 
-              # Tag as an external peer service
-              span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                # Tag as an external peer service
+                span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              end
+
               span.set_tag(Tracing::Metadata::Ext::TAG_PEER_HOSTNAME, host)
 
               # Set analytics sample rate
               set_analytics_sample_rate(span, request_options)
             end
 
-            def annotate_span_with_response!(span, response)
+            def annotate_span_with_response!(span, response, request_options)
               return unless response && response.code
 
               span.set_tag(Tracing::Metadata::Ext::HTTP::TAG_STATUS_CODE, response.code)
 
-              case response.code.to_i
-              when 400...599
-                span.set_error(response)
-              end
+              span.set_error(response) if request_options[:error_status_codes].include? response.code.to_i
             end
 
             def annotate_span_with_error!(span, error)

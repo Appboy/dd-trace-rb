@@ -1,10 +1,9 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/active_support/notifications/event'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/racecar/ext'
+require_relative '../../metadata/ext'
+require_relative '../active_support/notifications/event'
+require_relative '../analytics'
+require_relative 'ext'
 
 module Datadog
   module Tracing
@@ -38,10 +37,13 @@ module Datadog
               span.service = configuration[:service_name]
               span.resource = payload[:consumer_class]
 
+              span.set_tag(Contrib::Ext::Messaging::TAG_SYSTEM, Ext::TAG_MESSAGING_SYSTEM)
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
 
               # Tag as an external peer service
-              span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              end
 
               # Set analytics sample rate
               if Contrib::Analytics.enabled?(configuration[:analytics_enabled])

@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/analytics'
+require_relative '../analytics'
 
 module Datadog
   module Tracing
@@ -20,6 +20,8 @@ module Datadog
               span_type: Tracing::Metadata::Ext::AppTypes::TYPE_WORKER,
               on_error: @error_handler
             ) do |span|
+              span.set_tag(Contrib::Ext::Messaging::TAG_SYSTEM, Ext::TAG_MESSAGING_SYSTEM)
+
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_JOB)
 
@@ -36,6 +38,8 @@ module Datadog
               span.set_tag(Ext::TAG_JOB_QUEUE, queue)
               span.set_tag(Ext::TAG_JOB_ATTRIBUTES, sqs_msg.attributes) if sqs_msg.respond_to?(:attributes)
               span.set_tag(Ext::TAG_JOB_BODY, body) if configuration[:tag_body]
+
+              span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CONSUMER)
 
               yield
             end

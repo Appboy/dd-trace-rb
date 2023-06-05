@@ -1,5 +1,3 @@
-# typed: ignore
-
 # This module tests the right integration between Sidekiq and
 # Rails. Functionality tests for Rails and Sidekiq must go
 # in their testing modules.
@@ -30,14 +28,17 @@ RSpec.describe 'ActiveJob' do
       stub_const('JobDiscardError', Class.new(StandardError))
       stub_const('JobRetryError', Class.new(StandardError))
 
-      stub_const('ExampleJob', Class.new(ActiveJob::Base) do
-        def perform(test_retry: false, test_discard: false)
-          ActiveJob::Base.logger.info 'MINASWAN'
-          JOB_EXECUTIONS.increment
-          raise JobRetryError if test_retry
-          raise JobDiscardError if test_discard
+      stub_const(
+        'ExampleJob',
+        Class.new(ActiveJob::Base) do
+          def perform(test_retry: false, test_discard: false)
+            ActiveJob::Base.logger.info 'MINASWAN'
+            JOB_EXECUTIONS.increment
+            raise JobRetryError if test_retry
+            raise JobDiscardError if test_discard
+          end
         end
-      end)
+      )
       ExampleJob.discard_on(JobDiscardError) if ExampleJob.respond_to?(:discard_on)
       ExampleJob.retry_on(JobRetryError, attempts: 2, wait: 2) { nil } if ExampleJob.respond_to?(:retry_on)
 
@@ -228,11 +229,14 @@ RSpec.describe 'ActiveJob' do
 
     context 'with a Sidekiq::Worker' do
       subject(:worker) do
-        stub_const('EmptyWorker', Class.new do
-          include Sidekiq::Worker
+        stub_const(
+          'EmptyWorker',
+          Class.new do
+            include Sidekiq::Worker
 
-          def perform; end
-        end)
+            def perform; end
+          end
+        )
       end
 
       it 'has correct Sidekiq span' do
@@ -244,14 +248,19 @@ RSpec.describe 'ActiveJob' do
         expect(span.get_tag('sidekiq.job.id')).to match(/[0-9a-f]{24}/)
         expect(span.get_tag('sidekiq.job.retry')).to eq('true')
         expect(span.get_tag('sidekiq.job.queue')).to eq('default')
+        expect(span.get_tag('span.kind')).to eq('consumer')
+        expect(span.get_tag('messaging.system')).to eq('sidekiq')
       end
     end
 
     context 'with an ActiveJob' do
       subject(:worker) do
-        stub_const('EmptyJob', Class.new(ActiveJob::Base) do
-          def perform; end
-        end)
+        stub_const(
+          'EmptyJob',
+          Class.new(ActiveJob::Base) do
+            def perform; end
+          end
+        )
       end
 
       it 'has correct Sidekiq span' do
@@ -267,6 +276,8 @@ RSpec.describe 'ActiveJob' do
         expect(span.get_tag('sidekiq.job.id')).to match(/[0-9a-f]{24}/)
         expect(span.get_tag('sidekiq.job.retry')).to eq('true')
         expect(span.get_tag('sidekiq.job.queue')).to eq('default')
+        expect(span.get_tag('span.kind')).to eq('consumer')
+        expect(span.get_tag('messaging.system')).to eq('sidekiq')
       end
 
       context 'when active_job tracing is also enabled' do

@@ -1,11 +1,8 @@
-# typed: ignore
+require_relative '../integration'
 
-require 'datadog/appsec/contrib/integration'
-
-require 'datadog/appsec/contrib/rack/configuration/settings'
-require 'datadog/appsec/contrib/rack/patcher'
-require 'datadog/appsec/contrib/rack/request_middleware'
-require 'datadog/appsec/contrib/rack/request_body_middleware'
+require_relative 'patcher'
+require_relative 'request_middleware'
+require_relative 'request_body_middleware'
 
 module Datadog
   module AppSec
@@ -33,10 +30,6 @@ module Datadog
 
           def self.auto_instrument?
             false
-          end
-
-          def default_configuration
-            Configuration::Settings.new
           end
 
           def patcher

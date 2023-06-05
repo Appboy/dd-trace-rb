@@ -1,14 +1,14 @@
-# typed: ignore
+require_relative '../../../core/utils/only_once'
 
-require 'datadog/core/utils/only_once'
+require_relative '../patcher'
+require_relative 'framework'
+require_relative '../../response'
+require_relative '../rack/request_middleware'
+require_relative '../rack/request_body_middleware'
+require_relative 'gateway/watcher'
+require_relative 'gateway/request'
 
-require 'datadog/appsec/contrib/patcher'
-require 'datadog/appsec/contrib/rails/framework'
-require 'datadog/appsec/contrib/rack/request_middleware'
-require 'datadog/appsec/contrib/rack/request_body_middleware'
-require 'datadog/appsec/contrib/rails/gateway/watcher'
-
-require 'datadog/tracing/contrib/rack/middlewares'
+require_relative '../../../tracing/contrib/rack/middlewares'
 
 module Datadog
   module AppSec
@@ -58,8 +58,10 @@ module Datadog
           def add_middleware(app)
             # Add trace middleware
             if include_middleware?(Datadog::Tracing::Contrib::Rack::TraceMiddleware, app)
-              app.middleware.insert_after(Datadog::Tracing::Contrib::Rack::TraceMiddleware,
-                                          Datadog::AppSec::Contrib::Rack::RequestMiddleware)
+              app.middleware.insert_after(
+                Datadog::Tracing::Contrib::Rack::TraceMiddleware,
+                Datadog::AppSec::Contrib::Rack::RequestMiddleware
+              )
             else
               app.middleware.insert_before(0, Datadog::AppSec::Contrib::Rack::RequestMiddleware)
             end
@@ -70,20 +72,19 @@ module Datadog
             def process_action(*args)
               env = request.env
 
-              context = env['datadog.waf.context']
+              context = env[Datadog::AppSec::Ext::SCOPE_KEY]
 
               return super unless context
 
               # TODO: handle exceptions, except for super
 
-              request_return, request_response = Instrumentation.gateway.push('rails.request.action', request) do
+              gateway_request = Gateway::Request.new(request)
+              request_return, request_response = Instrumentation.gateway.push('rails.request.action', gateway_request) do
                 super
               end
 
               if request_response && request_response.any? { |action, _event| action == :block }
-                @_response = ::ActionDispatch::Response.new(403,
-                                                            { 'Content-Type' => 'text/html' },
-                                                            [Datadog::AppSec::Assets.blocked])
+                @_response = AppSec::Response.negotiate(env).to_action_dispatch_response
                 request_return = @_response.body
               end
 
@@ -92,7 +93,7 @@ module Datadog
           end
 
           def patch_process_action
-            ActionController::Instrumentation.prepend(ProcessActionPatch)
+            ::ActionController::Metal.prepend(ProcessActionPatch)
           end
 
           def include_middleware?(middleware, app)

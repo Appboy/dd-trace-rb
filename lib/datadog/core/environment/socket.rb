@@ -1,7 +1,7 @@
-# typed: false
+# frozen_string_literal: true
 
 require 'socket'
-require 'datadog/core/utils/forking'
+require_relative '../utils/forking'
 
 module Datadog
   module Core

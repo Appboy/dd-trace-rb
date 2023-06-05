@@ -1,8 +1,8 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/mongodb/ext'
-require 'datadog/tracing/contrib/mongodb/parsers'
-require 'datadog/tracing/contrib/mongodb/subscribers'
+require_relative 'ext'
+require_relative 'parsers'
+require_relative 'subscribers'
 
 module Datadog
   module Tracing

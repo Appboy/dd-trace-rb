@@ -1,7 +1,4 @@
-# typed: false
-
-require 'datadog/core'
-require 'datadog/core/utils/only_once'
+require_relative '../../core/utils/only_once'
 
 module Datadog
   module Tracing
@@ -19,6 +16,10 @@ module Datadog
         # Prepended instance methods for all patchers
         # @public_api
         module CommonMethods
+          attr_accessor \
+            :patch_error_result,
+            :patch_successful
+
           def patch_name
             self.class != Class && self.class != Module ? self.class.name : name
           end
@@ -35,6 +36,7 @@ module Datadog
                 super.tap do
                   # Emit a metric
                   Datadog.health_metrics.instrumentation_patched(1, tags: default_tags)
+                  @patch_successful = true
                 end
               rescue StandardError => e
                 on_patch_error(e)
@@ -48,6 +50,12 @@ module Datadog
             # Log the error
             Datadog.logger.error("Failed to apply #{patch_name} patch. Cause: #{e} Location: #{Array(e.backtrace).first}")
 
+            @patch_error_result = {
+              type: e.class.name,
+              message: e.message,
+              line: Array(e.backtrace).first
+            }
+
             # Emit a metric
             tags = default_tags
             tags << "error:#{e.class.name}"
@@ -55,13 +63,14 @@ module Datadog
             Datadog.health_metrics.error_instrumentation_patch(1, tags: tags)
           end
 
-          private
-
           def default_tags
             ["patcher:#{patch_name}"].tap do |tags|
               tags << "target_version:#{target_version}" if respond_to?(:target_version) && !target_version.nil?
+              super.each { |t| tags << t } if defined?(super)
             end
           end
+
+          private
 
           def patch_only_once
             # NOTE: This is not thread-safe

@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
-# typed: false
-
-require 'datadog/tracing/contrib/patcher'
-require 'datadog/tracing/contrib/sneakers/tracer'
+require_relative '../patcher'
+require_relative 'tracer'
 
 module Datadog
   module Tracing

@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'datadog/tracing/sampling/rate_limiter'
@@ -17,6 +15,22 @@ RSpec.describe Datadog::Tracing::Sampling::TokenBucket do
   describe '#initialize' do
     it 'has all tokens available' do
       expect(bucket.available_tokens).to eq(max_tokens)
+    end
+
+    context 'with invalid rate' do
+      let(:rate) { :bad }
+
+      it 'raises argument error' do
+        expect { bucket }.to raise_error(ArgumentError, /bad/)
+      end
+    end
+
+    context 'with invalid max_tokens' do
+      let(:max_tokens) { :bad }
+
+      it 'raises argument error' do
+        expect { bucket }.to raise_error(ArgumentError, /bad/)
+      end
     end
   end
 

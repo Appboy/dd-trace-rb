@@ -1,17 +1,15 @@
-# typed: true
+require_relative '../core/runtime/ext'
+require_relative '../core/utils/safe_dup'
 
-require 'datadog/core/runtime/ext'
-require 'datadog/core/utils/safe_dup'
-
-require 'datadog/tracing/sampling/ext'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/metadata/tagging'
+require_relative 'sampling/ext'
+require_relative 'metadata/ext'
+require_relative 'metadata/tagging'
+require_relative 'utils'
 
 module Datadog
   module Tracing
     # Serializable construct representing a trace
     # @public_api
-    # rubocop:disable Metrics/ClassLength
     class TraceSegment
       TAG_NAME = 'name'.freeze
       TAG_RESOURCE = 'resource'.freeze
@@ -31,11 +29,13 @@ module Datadog
         :rule_sample_rate,
         :runtime_id,
         :sample_rate,
+        :sampling_decision_maker,
         :sampling_priority,
         :service
 
       # rubocop:disable Metrics/CyclomaticComplexity
       # rubocop:disable Metrics/PerceivedComplexity
+      # @param spans [Array<Datadog::Span>]
       def initialize(
         spans,
         agent_sample_rate: nil,
@@ -77,6 +77,7 @@ module Datadog
         @rule_sample_rate = rule_sample_rate_tag || rule_sample_rate
         @runtime_id = runtime_id || runtime_id_tag
         @sample_rate = sample_rate || sample_rate_tag
+        @sampling_decision_maker = sampling_decision_maker_tag
         @sampling_priority = sampling_priority || sampling_priority_tag
         @service = Core::Utils::SafeDup.frozen_or_dup(service || service_tag)
       end
@@ -126,6 +127,12 @@ module Datadog
           || sampling_priority == Sampling::Ext::Priority::USER_KEEP
       end
 
+      def high_order_tid
+        high_order = Tracing::Utils::TraceId.to_high_order(@id)
+
+        high_order.to_s(16) if high_order != 0
+      end
+
       protected
 
       attr_reader \
@@ -171,7 +178,7 @@ module Datadog
       end
 
       def process_id_tag
-        meta[Core::Runtime::Ext::TAG_PID]
+        meta[Core::Runtime::Ext::TAG_PROCESS_ID]
       end
 
       def rate_limiter_rate_tag
@@ -194,6 +201,10 @@ module Datadog
         metrics[Metadata::Ext::Sampling::TAG_SAMPLE_RATE]
       end
 
+      def sampling_decision_maker_tag
+        meta[Metadata::Ext::Distributed::TAG_DECISION_MAKER]
+      end
+
       def sampling_priority_tag
         meta[Metadata::Ext::Distributed::TAG_SAMPLING_PRIORITY]
       end
@@ -202,6 +213,5 @@ module Datadog
         meta[TAG_SERVICE]
       end
     end
-    # rubocop:enable Metrics/ClassLength
   end
 end

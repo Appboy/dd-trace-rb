@@ -1,5 +1,3 @@
-# typed: strict
-
 #--
 # Copyright (c) 2007-2012 Nick Sieger.
 # See the file README.txt included with the distribution for
@@ -9,9 +7,9 @@
 require 'net/http'
 require 'stringio'
 require 'cgi'
-require 'datadog/core/vendor/multipart-post/multipart/post/parts'
-require 'datadog/core/vendor/multipart-post/multipart/post/composite_read_io'
-require 'datadog/core/vendor/multipart-post/multipart/post/multipartable'
+require_relative '../../../multipart/post/parts'
+require_relative '../../../multipart/post/composite_read_io'
+require_relative '../../../multipart/post/multipartable'
 
 module Datadog
   module Core

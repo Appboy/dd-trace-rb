@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/ci/contrib/cucumber/formatter'
+require_relative 'formatter'
 
 module Datadog
   module CI

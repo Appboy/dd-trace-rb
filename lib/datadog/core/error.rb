@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-# typed: false
-
-require 'datadog/core/utils'
+require_relative 'utils'
 
 module Datadog
   module Core

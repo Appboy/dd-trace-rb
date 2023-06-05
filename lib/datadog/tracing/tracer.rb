@@ -1,20 +1,18 @@
-# typed: true
+require_relative '../core/environment/ext'
+require_relative '../core/environment/socket'
 
-require 'datadog/core'
-require 'datadog/core/environment/ext'
-require 'datadog/core/environment/socket'
-
-require 'datadog/tracing/correlation'
-require 'datadog/tracing/event'
-require 'datadog/tracing/flush'
-require 'datadog/tracing/context_provider'
-require 'datadog/tracing/sampling/all_sampler'
-require 'datadog/tracing/sampling/rule_sampler'
-require 'datadog/tracing/sampling/priority_sampler'
-require 'datadog/tracing/span_operation'
-require 'datadog/tracing/trace_digest'
-require 'datadog/tracing/trace_operation'
-require 'datadog/tracing/writer'
+require_relative 'correlation'
+require_relative 'event'
+require_relative 'flush'
+require_relative 'context_provider'
+require_relative 'sampling/all_sampler'
+require_relative 'sampling/rule_sampler'
+require_relative 'sampling/priority_sampler'
+require_relative 'sampling/span/sampler'
+require_relative 'span_operation'
+require_relative 'trace_digest'
+require_relative 'trace_operation'
+require_relative 'writer'
 
 module Datadog
   module Tracing
@@ -22,12 +20,12 @@ module Datadog
     # example, a trace can be used to track the entire time spent processing a complicated web request.
     # Even though the request may require multiple resources and machines to handle the request, all
     # of these function calls and sub-requests would be encapsulated within a single trace.
-    # rubocop:disable Metrics/ClassLength
     class Tracer
       attr_reader \
         :trace_flush,
         :provider,
         :sampler,
+        :span_sampler,
         :tags
 
       attr_accessor \
@@ -56,6 +54,7 @@ module Datadog
           base_sampler: Sampling::AllSampler.new,
           post_sampler: Sampling::RuleSampler.new
         ),
+        span_sampler: Sampling::Span::Sampler.new,
         tags: {},
         writer: Writer.new
       )
@@ -64,6 +63,7 @@ module Datadog
         @enabled = enabled
         @provider = context_provider
         @sampler = sampler
+        @span_sampler = span_sampler
         @tags = tags
         @writer = writer
       end
@@ -323,7 +323,9 @@ module Datadog
             id: digest.trace_id,
             origin: digest.trace_origin,
             parent_span_id: digest.span_id,
-            sampling_priority: digest.trace_sampling_priority
+            sampling_priority: digest.trace_sampling_priority,
+            # Distributed tags are just regular trace tags with special meaning to Datadog
+            tags: digest.trace_distributed_tags,
           )
         else
           TraceOperation.new(
@@ -341,7 +343,8 @@ module Datadog
           sample_trace(event_trace_op) if event_span_op && event_span_op.parent_id == 0
         end
 
-        events.span_finished.subscribe do |_event_span, event_trace_op|
+        events.span_finished.subscribe do |event_span, event_trace_op|
+          sample_span(event_trace_op, event_span)
           flush_trace(event_trace_op)
         end
       end
@@ -461,9 +464,27 @@ module Datadog
         begin
           @sampler.sample!(trace_op)
         rescue StandardError => e
-          Datadog.logger.debug { "Failed to sample trace: #{e}" }
+          SAMPLE_TRACE_LOG_ONLY_ONCE.run do
+            Datadog.logger.warn { "Failed to sample trace: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
+          end
         end
       end
+
+      SAMPLE_TRACE_LOG_ONLY_ONCE = Core::Utils::OnlyOnce.new
+      private_constant :SAMPLE_TRACE_LOG_ONLY_ONCE
+
+      def sample_span(trace_op, span)
+        begin
+          @span_sampler.sample!(trace_op, span)
+        rescue StandardError => e
+          SAMPLE_SPAN_LOG_ONLY_ONCE.run do
+            Datadog.logger.warn { "Failed to sample span: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
+          end
+        end
+      end
+
+      SAMPLE_SPAN_LOG_ONLY_ONCE = Core::Utils::OnlyOnce.new
+      private_constant :SAMPLE_SPAN_LOG_ONLY_ONCE
 
       # Flush finished spans from the trace buffer, send them to writer.
       def flush_trace(trace_op)
@@ -471,9 +492,14 @@ module Datadog
           trace = @trace_flush.consume!(trace_op)
           write(trace) if trace && !trace.empty?
         rescue StandardError => e
-          Datadog.logger.debug { "Failed to flush trace: #{e}" }
+          FLUSH_TRACE_LOG_ONLY_ONCE.run do
+            Datadog.logger.warn { "Failed to flush trace: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
+          end
         end
       end
+
+      FLUSH_TRACE_LOG_ONLY_ONCE = Core::Utils::OnlyOnce.new
+      private_constant :FLUSH_TRACE_LOG_ONLY_ONCE
 
       # Send the trace to the writer to enqueue the spans list in the agent
       # sending queue.
@@ -500,6 +526,5 @@ module Datadog
         end
       end
     end
-    # rubocop:enable Metrics/ClassLength
   end
 end

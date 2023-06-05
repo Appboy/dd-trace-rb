@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'spec_helper'
 
 require 'benchmark'
@@ -99,14 +97,16 @@ RSpec.describe Datadog::Core::Error do
           root_caller = /from.*in `middle'/
 
           expect(error.backtrace)
-            .to match(/
-                       #{wrapper_error_message}.*
-                       #{wrapper_caller}.*
-                       #{middle_error_message}.*
-                       #{middle_caller}.*
-                       #{root_error_message}.*
-                       #{root_caller}.*
-                       /mx)
+            .to match(
+              /
+             #{wrapper_error_message}.*
+             #{wrapper_caller}.*
+             #{middle_error_message}.*
+             #{middle_caller}.*
+             #{root_error_message}.*
+             #{root_caller}.*
+             /mx
+            )
 
           # Expect 2 "first-class" exception lines: 'root cause' and 'wrapper layer'.
           expect(error.backtrace.each_line.reject { |l| l.start_with?("\tfrom") }).to have(3).items
@@ -128,7 +128,7 @@ RSpec.describe Datadog::Core::Error do
             end
           end
 
-          it 'reports errors only once', if: (RUBY_VERSION < '2.6.0' || PlatformHelpers.truffleruby?) do
+          it 'reports errors only once', if: (RUBY_VERSION < '2.6.0' || PlatformHelpers.truffleruby? || PlatformHelpers.jruby? && RUBY_ENGINE_VERSION >= '9.3.7.0') do # rubocop:disable Layout/LineLength
             expect(error.type).to eq('RuntimeError')
             expect(error.message).to eq('first error')
 
@@ -149,7 +149,7 @@ RSpec.describe Datadog::Core::Error do
             expect(error.backtrace.each_line.reject { |l| l.start_with?("\tfrom") }).to have(2).items
           end
 
-          it 'reports errors only once', if: (RUBY_VERSION >= '2.6.0' && PlatformHelpers.jruby?) do
+          it 'reports errors only once', if: (RUBY_VERSION >= '2.6.0' && PlatformHelpers.jruby? && RUBY_ENGINE_VERSION < '9.3.7.0') do # rubocop:disable Layout/LineLength
             expect(error.type).to eq('RuntimeError')
             expect(error.message).to eq('circular causes')
 

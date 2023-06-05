@@ -1,21 +1,13 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'securerandom'
 require 'logger'
 
 require 'datadog/core/configuration/settings'
-require 'datadog/core/diagnostics/ext'
 require 'datadog/core/environment/ext'
 require 'datadog/core/runtime/ext'
 require 'datadog/core/utils/time'
 require 'datadog/profiling/ext'
-require 'datadog/tracing/configuration/ext'
-require 'datadog/tracing/flush'
-require 'datadog/tracing/sampling/priority_sampler'
-require 'datadog/tracing/tracer'
-require 'datadog/tracing/writer'
 
 RSpec.describe Datadog::Core::Configuration::Settings do
   subject(:settings) { described_class.new(options) }
@@ -64,9 +56,9 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
       it { is_expected.to be false }
 
-      context "when #{Datadog::Core::Diagnostics::Ext::DD_TRACE_DEBUG}" do
+      context "when #{Datadog::Core::Configuration::Ext::Diagnostics::ENV_DEBUG_ENABLED}" do
         around do |example|
-          ClimateControl.modify(Datadog::Core::Diagnostics::Ext::DD_TRACE_DEBUG => environment) do
+          ClimateControl.modify(Datadog::Core::Configuration::Ext::Diagnostics::ENV_DEBUG_ENABLED => environment) do
             example.run
           end
         end
@@ -121,9 +113,11 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       describe '#enabled' do
         subject(:enabled) { settings.diagnostics.health_metrics.enabled }
 
-        context "when #{Datadog::Core::Diagnostics::Ext::Health::Metrics::ENV_ENABLED}" do
+        context "when #{Datadog::Core::Configuration::Ext::Diagnostics::ENV_HEALTH_METRICS_ENABLED}" do
           around do |example|
-            ClimateControl.modify(Datadog::Core::Diagnostics::Ext::Health::Metrics::ENV_ENABLED => environment) do
+            ClimateControl.modify(
+              Datadog::Core::Configuration::Ext::Diagnostics::ENV_HEALTH_METRICS_ENABLED => environment
+            ) do
               example.run
             end
           end
@@ -228,6 +222,22 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
       it { expect(settings.env).to eq(env) }
     end
+
+    context 'when given a symbol' do
+      let(:env) { :symbol }
+
+      before { set_env }
+
+      it { expect(settings.env).to eq('symbol') }
+    end
+
+    context 'when given `nil`' do
+      let(:env) { nil }
+
+      before { set_env }
+
+      it { expect(settings.env).to be_nil }
+    end
   end
 
   describe '#logger' do
@@ -239,12 +249,14 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
     describe '#instance=' do
       let(:logger) do
-        double(:logger,
-               debug: true,
-               info: true,
-               warn: true,
-               error: true,
-               level: true)
+        double(
+          :logger,
+          debug: true,
+          info: true,
+          warn: true,
+          error: true,
+          level: true
+        )
       end
 
       it 'updates the #instance setting' do
@@ -328,17 +340,35 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
     describe '#advanced' do
       describe '#max_events' do
+        before { allow(Datadog.logger).to receive(:warn) }
+
         subject(:max_events) { settings.profiling.advanced.max_events }
 
         it { is_expected.to eq(32768) }
       end
 
       describe '#max_events=' do
+        before { allow(Datadog.logger).to receive(:warn) }
+
         it 'updates the #max_events setting' do
           expect { settings.profiling.advanced.max_events = 1234 }
             .to change { settings.profiling.advanced.max_events }
             .from(32768)
             .to(1234)
+        end
+
+        it 'logs a warning informing customers this has been deprecated for removal' do
+          expect(Datadog.logger).to receive(:warn).with(/deprecated for removal/)
+
+          settings.profiling.advanced.max_events = 1234
+        end
+
+        context 'when value is set to default' do
+          it 'does not log a warning' do
+            expect(Datadog.logger).to_not receive(:warn)
+
+            settings.profiling.advanced.max_events = 32768
+          end
         end
       end
 
@@ -393,9 +423,9 @@ RSpec.describe Datadog::Core::Configuration::Settings do
                 it { is_expected.to be true }
               end
 
-              { 'true' => true, 'false' => false }.each do |string, value|
-                context "is defined as #{string}" do
-                  let(:environment) { string }
+              [true, false].each do |value|
+                context "is defined as #{value}" do
+                  let(:environment) { value.to_s }
 
                   it { is_expected.to be value }
                 end
@@ -425,6 +455,207 @@ RSpec.describe Datadog::Core::Configuration::Settings do
           expect { settings.profiling.advanced.code_provenance_enabled = false }
             .to change { settings.profiling.advanced.code_provenance_enabled }
             .from(true)
+            .to(false)
+        end
+      end
+
+      describe '#force_enable_new_profiler=' do
+        it 'logs a warning informing customers this no longer does anything' do
+          expect(Datadog.logger).to receive(:warn).with(/no longer does anything/)
+
+          settings.profiling.advanced.force_enable_new_profiler = true
+        end
+      end
+
+      describe '#legacy_transport_enabled=' do
+        it 'logs a warning informing customers this no longer does anything' do
+          expect(Datadog.logger).to receive(:warn).with(/no longer does anything/)
+
+          settings.profiling.advanced.legacy_transport_enabled = true
+        end
+      end
+
+      describe '#force_enable_legacy_profiler' do
+        before { allow(Datadog.logger).to receive(:warn) }
+
+        subject(:force_enable_legacy_profiler) { settings.profiling.advanced.force_enable_legacy_profiler }
+
+        context 'when DD_PROFILING_FORCE_ENABLE_LEGACY' do
+          around do |example|
+            ClimateControl.modify('DD_PROFILING_FORCE_ENABLE_LEGACY' => environment) do
+              example.run
+            end
+          end
+
+          context 'is not defined' do
+            let(:environment) { nil }
+
+            it { is_expected.to be false }
+          end
+
+          [true, false].each do |value|
+            context "is defined as #{value}" do
+              let(:environment) { value.to_s }
+
+              it { is_expected.to be value }
+            end
+          end
+        end
+      end
+
+      describe '#force_enable_legacy_profiler=' do
+        before { allow(Datadog.logger).to receive(:warn) }
+
+        it 'updates the #force_enable_legacy_profiler setting' do
+          expect { settings.profiling.advanced.force_enable_legacy_profiler = true }
+            .to change { settings.profiling.advanced.force_enable_legacy_profiler }
+            .from(false)
+            .to(true)
+        end
+
+        it 'logs a warning informing customers this has been deprecated for removal' do
+          expect(Datadog.logger).to receive(:warn).with(/deprecated for removal/)
+
+          settings.profiling.advanced.force_enable_legacy_profiler = 1234
+        end
+
+        context 'when value is set to false' do
+          it 'does not log a warning' do
+            expect(Datadog.logger).to_not receive(:warn)
+
+            settings.profiling.advanced.force_enable_legacy_profiler = false
+          end
+        end
+      end
+
+      describe '#force_enable_gc_profiling' do
+        subject(:force_enable_gc_profiling) { settings.profiling.advanced.force_enable_gc_profiling }
+
+        context 'when DD_PROFILING_FORCE_ENABLE_GC' do
+          around do |example|
+            ClimateControl.modify('DD_PROFILING_FORCE_ENABLE_GC' => environment) do
+              example.run
+            end
+          end
+
+          context 'is not defined' do
+            let(:environment) { nil }
+
+            it { is_expected.to be false }
+          end
+
+          [true, false].each do |value|
+            context "is defined as #{value}" do
+              let(:environment) { value.to_s }
+
+              it { is_expected.to be value }
+            end
+          end
+        end
+      end
+
+      describe '#force_enable_gc_profiling=' do
+        it 'updates the #force_enable_gc_profiling setting' do
+          expect { settings.profiling.advanced.force_enable_gc_profiling = true }
+            .to change { settings.profiling.advanced.force_enable_gc_profiling }
+            .from(false)
+            .to(true)
+        end
+      end
+
+      describe '#allocation_counting_enabled' do
+        subject(:allocation_counting_enabled) { settings.profiling.advanced.allocation_counting_enabled }
+
+        context 'on Ruby 2.x' do
+          before { skip("Spec doesn't run on Ruby 3.x") unless RUBY_VERSION.start_with?('2.') }
+
+          it { is_expected.to be true }
+        end
+
+        context 'on Ruby 3.x' do
+          before { skip("Spec doesn't run on Ruby 2.x") if RUBY_VERSION.start_with?('2.') }
+
+          it { is_expected.to be false }
+        end
+      end
+
+      describe '#allocation_counting_enabled=' do
+        it 'updates the #allocation_counting_enabled setting' do
+          settings.profiling.advanced.allocation_counting_enabled = true
+
+          expect { settings.profiling.advanced.allocation_counting_enabled = false }
+            .to change { settings.profiling.advanced.allocation_counting_enabled }
+            .from(true)
+            .to(false)
+        end
+      end
+
+      describe '#skip_mysql2_check' do
+        subject(:skip_mysql2_check) { settings.profiling.advanced.skip_mysql2_check }
+
+        context 'when DD_PROFILING_SKIP_MYSQL2_CHECK' do
+          around do |example|
+            ClimateControl.modify('DD_PROFILING_SKIP_MYSQL2_CHECK' => environment) do
+              example.run
+            end
+          end
+
+          context 'is not defined' do
+            let(:environment) { nil }
+
+            it { is_expected.to be false }
+          end
+
+          [true, false].each do |value|
+            context "is defined as #{value}" do
+              let(:environment) { value.to_s }
+
+              it { is_expected.to be value }
+            end
+          end
+        end
+      end
+
+      describe '#skip_mysql2_check=' do
+        it 'updates the #skip_mysql2_check setting' do
+          expect { settings.profiling.advanced.skip_mysql2_check = true }
+            .to change { settings.profiling.advanced.skip_mysql2_check }
+            .from(false)
+            .to(true)
+        end
+      end
+
+      describe '#no_signals_workaround_enabled' do
+        subject(:no_signals_workaround_enabled) { settings.profiling.advanced.no_signals_workaround_enabled }
+
+        context 'when DD_PROFILING_NO_SIGNALS_WORKAROUND_ENABLED' do
+          around do |example|
+            ClimateControl.modify('DD_PROFILING_NO_SIGNALS_WORKAROUND_ENABLED' => environment) do
+              example.run
+            end
+          end
+
+          context 'is not defined' do
+            let(:environment) { nil }
+
+            it { is_expected.to be :auto }
+          end
+
+          [true, false].each do |value|
+            context "is defined as #{value}" do
+              let(:environment) { value.to_s }
+
+              it { is_expected.to be value }
+            end
+          end
+        end
+      end
+
+      describe '#no_signals_workaround_enabled=' do
+        it 'updates the #no_signals_workaround_enabled setting' do
+          expect { settings.profiling.advanced.no_signals_workaround_enabled = false }
+            .to change { settings.profiling.advanced.no_signals_workaround_enabled }
+            .from(:auto)
             .to(false)
         end
       end
@@ -603,6 +834,22 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
       it { expect(settings.service).to eq(service) }
     end
+
+    context 'when given a symbol' do
+      let(:service) { :symbol }
+
+      before { set_service }
+
+      it { expect(settings.service).to eq('symbol') }
+    end
+
+    context 'when given `nil`' do
+      let(:service) { nil }
+
+      before { set_service }
+
+      it { expect(settings.service).to be_nil }
+    end
   end
 
   describe '#service_without_fallback' do
@@ -695,6 +942,14 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
               it { is_expected.to eq({}) }
             end
+          end
+        end
+
+        context 'with multiple colons' do
+          let(:env_tags) { 'key:va:lue' }
+
+          it 'allows for colons in value' do
+            is_expected.to eq('key' => 'va:lue')
           end
         end
 
@@ -835,6 +1090,8 @@ RSpec.describe Datadog::Core::Configuration::Settings do
     end
   end
 
+  # Important note: These settings are used as inputs of the AgentSettingsResolver and are used by all components
+  # that consume its result (e.g. tracing, profiling, and telemetry, as of January 2023).
   describe '#agent' do
     describe '#host' do
       subject(:host) { settings.agent.host }
@@ -869,490 +1126,6 @@ RSpec.describe Datadog::Core::Configuration::Settings do
             .from(nil)
             .to(port)
         end
-      end
-    end
-  end
-
-  describe '#tracing' do
-    describe '#analytics' do
-      describe '#enabled' do
-        subject(:enabled) { settings.tracing.analytics.enabled }
-
-        context "when #{Datadog::Tracing::Configuration::Ext::Analytics::ENV_TRACE_ANALYTICS_ENABLED}" do
-          around do |example|
-            ClimateControl.modify(
-              Datadog::Tracing::Configuration::Ext::Analytics::ENV_TRACE_ANALYTICS_ENABLED => environment
-            ) do
-              example.run
-            end
-          end
-
-          context 'is not defined' do
-            let(:environment) { nil }
-
-            it { is_expected.to be nil }
-          end
-
-          context 'is defined' do
-            let(:environment) { 'true' }
-
-            it { is_expected.to be true }
-          end
-        end
-      end
-
-      describe '#enabled=' do
-        after { settings.runtime_metrics.reset! }
-
-        it 'changes the #enabled setting' do
-          expect { settings.tracing.analytics.enabled = true }
-            .to change { settings.tracing.analytics.enabled }
-            .from(nil)
-            .to(true)
-        end
-      end
-    end
-
-    describe '#distributed_tracing' do
-      describe '#propagation_extract_style' do
-        subject(:propagation_extract_style) { settings.tracing.distributed_tracing.propagation_extract_style }
-
-        context "when #{Datadog::Tracing::Configuration::Ext::Distributed::ENV_PROPAGATION_STYLE_EXTRACT}" do
-          around do |example|
-            ClimateControl.modify(
-              Datadog::Tracing::Configuration::Ext::Distributed::ENV_PROPAGATION_STYLE_EXTRACT => environment
-            ) do
-              example.run
-            end
-          end
-
-          context 'is not defined' do
-            let(:environment) { nil }
-
-            it do
-              is_expected.to eq(
-                [
-                  Datadog::Tracing::Configuration::Ext::Distributed::PROPAGATION_STYLE_DATADOG,
-                  Datadog::Tracing::Configuration::Ext::Distributed::PROPAGATION_STYLE_B3,
-                  Datadog::Tracing::Configuration::Ext::Distributed::PROPAGATION_STYLE_B3_SINGLE_HEADER
-                ]
-              )
-            end
-          end
-
-          context 'is defined' do
-            let(:environment) { 'B3,B3 single header' }
-
-            it do
-              is_expected.to eq(
-                [
-                  Datadog::Tracing::Configuration::Ext::Distributed::PROPAGATION_STYLE_B3,
-                  Datadog::Tracing::Configuration::Ext::Distributed::PROPAGATION_STYLE_B3_SINGLE_HEADER
-                ]
-              )
-            end
-          end
-        end
-      end
-
-      describe '#propagation_inject_style' do
-        subject(:propagation_inject_style) { settings.tracing.distributed_tracing.propagation_inject_style }
-
-        context "when #{Datadog::Tracing::Configuration::Ext::Distributed::ENV_PROPAGATION_STYLE_INJECT}" do
-          around do |example|
-            ClimateControl.modify(
-              Datadog::Tracing::Configuration::Ext::Distributed::ENV_PROPAGATION_STYLE_INJECT => environment
-            ) do
-              example.run
-            end
-          end
-
-          context 'is not defined' do
-            let(:environment) { nil }
-
-            it { is_expected.to eq([Datadog::Tracing::Configuration::Ext::Distributed::PROPAGATION_STYLE_DATADOG]) }
-          end
-
-          context 'is defined' do
-            let(:environment) { 'Datadog,B3' }
-
-            it do
-              is_expected.to eq(
-                [
-                  Datadog::Tracing::Configuration::Ext::Distributed::PROPAGATION_STYLE_DATADOG,
-                  Datadog::Tracing::Configuration::Ext::Distributed::PROPAGATION_STYLE_B3
-                ]
-              )
-            end
-          end
-        end
-      end
-    end
-
-    describe '#enabled' do
-      subject(:enabled) { settings.tracing.enabled }
-
-      it { is_expected.to be true }
-
-      context "when #{Datadog::Core::Diagnostics::Ext::DD_TRACE_ENABLED}" do
-        around do |example|
-          ClimateControl.modify(Datadog::Core::Diagnostics::Ext::DD_TRACE_ENABLED => enable) do
-            example.run
-          end
-        end
-
-        context 'is not defined' do
-          let(:enable) { nil }
-
-          it { is_expected.to be true }
-        end
-
-        context 'is set to true' do
-          let(:enable) { 'true' }
-
-          it { is_expected.to be true }
-        end
-
-        context 'is set to false' do
-          let(:enable) { 'false' }
-
-          it { is_expected.to be false }
-        end
-      end
-    end
-
-    describe '#enabled=' do
-      it 'updates the #enabled setting' do
-        expect { settings.tracing.enabled = false }
-          .to change { settings.tracing.enabled }
-          .from(true)
-          .to(false)
-      end
-    end
-
-    describe '#instance' do
-      subject(:instance) { settings.tracing.instance }
-
-      it { is_expected.to be nil }
-    end
-
-    describe '#instance=' do
-      let(:tracer) { instance_double(Datadog::Tracing::Tracer) }
-
-      it 'updates the #instance setting' do
-        expect { settings.tracing.instance = tracer }
-          .to change { settings.tracing.instance }
-          .from(nil)
-          .to(tracer)
-      end
-    end
-
-    describe '#log_injection' do
-      subject(:log_injection) { settings.tracing.log_injection }
-
-      context "when #{Datadog::Tracing::Configuration::Ext::Correlation::ENV_LOGS_INJECTION_ENABLED}" do
-        around do |example|
-          ClimateControl.modify(
-            Datadog::Tracing::Configuration::Ext::Correlation::ENV_LOGS_INJECTION_ENABLED => log_injection_env
-          ) do
-            example.run
-          end
-        end
-
-        context 'is not defined' do
-          let(:log_injection_env) { nil }
-
-          it { is_expected.to be(true) }
-        end
-
-        context 'is defined' do
-          let(:log_injection_env) { 'false' }
-
-          it { is_expected.to be(false) }
-        end
-      end
-    end
-
-    describe '#partial_flush' do
-      describe '#enabled' do
-        subject(:enabled) { settings.tracing.partial_flush.enabled }
-
-        it { is_expected.to be false }
-      end
-
-      describe '#enabled=' do
-        it 'updates the #enabled setting' do
-          expect { settings.tracing.partial_flush.enabled = true }
-            .to change { settings.tracing.partial_flush.enabled }
-            .from(false)
-            .to(true)
-        end
-      end
-
-      describe '#min_spans_threshold' do
-        subject(:min_spans_threshold) { settings.tracing.partial_flush.min_spans_threshold }
-
-        it { is_expected.to eq(500) }
-      end
-
-      describe '#min_spans_threshold=' do
-        let(:value) { 1234 }
-
-        it 'updates the #min_spans_before_partial_flush setting' do
-          expect { settings.tracing.partial_flush.min_spans_threshold = value }
-            .to change { settings.tracing.partial_flush.min_spans_threshold }
-            .from(500)
-            .to(value)
-        end
-      end
-    end
-
-    describe '#priority_sampling' do
-      subject(:priority_sampling) { settings.tracing.priority_sampling }
-
-      it { is_expected.to be nil }
-    end
-
-    describe '#priority_sampling=' do
-      it 'updates the #priority_sampling setting' do
-        expect { settings.tracing.priority_sampling = true }
-          .to change { settings.tracing.priority_sampling }
-          .from(nil)
-          .to(true)
-      end
-    end
-
-    describe '#report_hostname' do
-      subject(:report_hostname) { settings.tracing.report_hostname }
-
-      context "when #{Datadog::Tracing::Configuration::Ext::NET::ENV_REPORT_HOSTNAME}" do
-        around do |example|
-          ClimateControl.modify(Datadog::Tracing::Configuration::Ext::NET::ENV_REPORT_HOSTNAME => environment) do
-            example.run
-          end
-        end
-
-        context 'is not defined' do
-          let(:environment) { nil }
-
-          it { is_expected.to be false }
-        end
-
-        context 'is defined' do
-          let(:environment) { 'true' }
-
-          it { is_expected.to be true }
-        end
-      end
-    end
-
-    describe '#report_hostname=' do
-      it 'changes the #report_hostname setting' do
-        expect { settings.tracing.report_hostname = true }
-          .to change { settings.tracing.report_hostname }
-          .from(false)
-          .to(true)
-      end
-    end
-
-    describe '#sampler' do
-      subject(:sampler) { settings.tracing.sampler }
-
-      it { is_expected.to be nil }
-    end
-
-    describe '#sampler=' do
-      let(:sampler) { instance_double(Datadog::Tracing::Sampling::PrioritySampler) }
-
-      it 'updates the #sampler setting' do
-        expect { settings.tracing.sampler = sampler }
-          .to change { settings.tracing.sampler }
-          .from(nil)
-          .to(sampler)
-      end
-    end
-
-    describe '#sampling' do
-      describe '#rate_limit' do
-        subject(:rate_limit) { settings.tracing.sampling.rate_limit }
-
-        context 'default' do
-          it { is_expected.to eq(100) }
-        end
-
-        context 'when ENV is provided' do
-          around do |example|
-            ClimateControl.modify(Datadog::Tracing::Configuration::Ext::Sampling::ENV_RATE_LIMIT => '20.0') do
-              example.run
-            end
-          end
-
-          it { is_expected.to eq(20.0) }
-        end
-      end
-
-      describe '#default_rate' do
-        subject(:default_rate) { settings.tracing.sampling.default_rate }
-
-        context 'default' do
-          it { is_expected.to be nil }
-        end
-
-        context 'when ENV is provided' do
-          around do |example|
-            ClimateControl.modify(Datadog::Tracing::Configuration::Ext::Sampling::ENV_SAMPLE_RATE => '0.5') do
-              example.run
-            end
-          end
-
-          it { is_expected.to eq(0.5) }
-        end
-      end
-    end
-
-    describe '#test_mode' do
-      describe '#enabled' do
-        subject(:enabled) { settings.tracing.test_mode.enabled }
-
-        it { is_expected.to be false }
-
-        context "when #{Datadog::Tracing::Configuration::Ext::Test::ENV_MODE_ENABLED}" do
-          around do |example|
-            ClimateControl.modify(Datadog::Tracing::Configuration::Ext::Test::ENV_MODE_ENABLED => enable) do
-              example.run
-            end
-          end
-
-          context 'is not defined' do
-            let(:enable) { nil }
-
-            it { is_expected.to be false }
-          end
-
-          context 'is set to true' do
-            let(:enable) { 'true' }
-
-            it { is_expected.to be true }
-          end
-
-          context 'is set to false' do
-            let(:enable) { 'false' }
-
-            it { is_expected.to be false }
-          end
-        end
-      end
-
-      describe '#trace_flush' do
-        subject(:trace_flush) { settings.tracing.test_mode.trace_flush }
-
-        context 'default' do
-          it { is_expected.to be nil }
-        end
-      end
-
-      describe '#trace_flush=' do
-        let(:trace_flush) { instance_double(Datadog::Tracing::Flush::Finished) }
-
-        it 'updates the #trace_flush setting' do
-          expect { settings.tracing.test_mode.trace_flush = trace_flush }
-            .to change { settings.tracing.test_mode.trace_flush }
-            .from(nil)
-            .to(trace_flush)
-        end
-      end
-
-      describe '#enabled=' do
-        it 'updates the #enabled setting' do
-          expect { settings.tracing.test_mode.enabled = true }
-            .to change { settings.tracing.test_mode.enabled }
-            .from(false)
-            .to(true)
-        end
-      end
-
-      describe '#writer_options' do
-        subject(:writer_options) { settings.tracing.test_mode.writer_options }
-
-        it { is_expected.to eq({}) }
-
-        context 'when modified' do
-          it 'does not modify the default by reference' do
-            settings.tracing.test_mode.writer_options[:foo] = :bar
-            expect(settings.tracing.test_mode.writer_options).to_not be_empty
-            expect(settings.tracing.test_mode.options[:writer_options].default_value).to be_empty
-          end
-        end
-      end
-
-      describe '#writer_options=' do
-        let(:options) { { priority_sampling: true } }
-
-        it 'updates the #writer_options setting' do
-          expect { settings.tracing.test_mode.writer_options = options }
-            .to change { settings.tracing.test_mode.writer_options }
-            .from({})
-            .to(options)
-        end
-      end
-    end
-
-    describe '#transport_options' do
-      subject(:transport_options) { settings.tracing.transport_options }
-
-      it { is_expected.to be nil }
-    end
-
-    describe '#transport_options=' do
-      let(:config_proc) { proc { |t| t.adapter :test } }
-
-      it 'updates the #transport_options setting' do
-        expect { settings.tracing.transport_options = config_proc }
-          .to change { settings.tracing.transport_options }
-          .from(nil)
-          .to(config_proc)
-      end
-    end
-
-    describe '#writer' do
-      subject(:writer) { settings.tracing.writer }
-
-      it { is_expected.to be nil }
-    end
-
-    describe '#writer=' do
-      let(:writer) { instance_double(Datadog::Tracing::Writer) }
-
-      it 'updates the #writer setting' do
-        expect { settings.tracing.writer = writer }
-          .to change { settings.tracing.writer }
-          .from(nil)
-          .to(writer)
-      end
-    end
-
-    describe '#writer_options' do
-      subject(:writer_options) { settings.tracing.writer_options }
-
-      it { is_expected.to eq({}) }
-
-      context 'when modified' do
-        it 'does not modify the default by reference' do
-          settings.tracing.writer_options[:foo] = :bar
-          expect(settings.tracing.writer_options).to_not be_empty
-          expect(settings.tracing.options[:writer_options].default_value).to be_empty
-        end
-      end
-    end
-
-    describe '#writer_options=' do
-      let(:options) { { priority_sampling: true } }
-
-      it 'updates the #writer_options setting' do
-        expect { settings.tracing.writer_options = options }
-          .to change { settings.tracing.writer_options }
-          .from({})
-          .to(options)
       end
     end
   end
@@ -1414,6 +1187,113 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       before { set_version }
 
       it { expect(settings.version).to eq(version) }
+    end
+  end
+
+  describe '#telemetry' do
+    around do |example|
+      ClimateControl.modify(Datadog::Core::Telemetry::Ext::ENV_ENABLED => environment) do
+        example.run
+      end
+    end
+    let(:environment) { 'true' }
+
+    describe '#enabled' do
+      subject(:enabled) { settings.telemetry.enabled }
+
+      context "when #{Datadog::Core::Telemetry::Ext::ENV_ENABLED}" do
+        context 'is not defined' do
+          let(:environment) { nil }
+
+          it { is_expected.to be true }
+        end
+
+        [true, false].each do |value|
+          context "is defined as #{value}" do
+            let(:environment) { value.to_s }
+
+            it { is_expected.to be value }
+          end
+        end
+      end
+    end
+
+    describe '#enabled=' do
+      let(:environment) { 'true' }
+      it 'updates the #enabled setting' do
+        expect { settings.telemetry.enabled = false }
+          .to change { settings.telemetry.enabled }
+          .from(true)
+          .to(false)
+      end
+    end
+  end
+
+  describe '#remote' do
+    describe '#enabled' do
+      subject(:enabled) { settings.remote.enabled }
+
+      context "when #{Datadog::Core::Remote::Ext::ENV_ENABLED}" do
+        around do |example|
+          ClimateControl.modify(Datadog::Core::Remote::Ext::ENV_ENABLED => environment) do
+            example.run
+          end
+        end
+
+        context 'is not defined' do
+          let(:environment) { nil }
+
+          it { is_expected.to be true }
+        end
+
+        context 'is defined' do
+          let(:environment) { 'true' }
+
+          it { is_expected.to be true }
+        end
+      end
+    end
+
+    describe '#enabled=' do
+      it 'updates the #enabled setting' do
+        expect { settings.remote.enabled = false }
+          .to change { settings.remote.enabled }
+          .from(true)
+          .to(false)
+      end
+    end
+
+    describe '#poll_interval_seconds' do
+      subject(:enabled) { settings.remote.poll_interval_seconds }
+
+      context "when #{Datadog::Core::Remote::Ext::ENV_POLL_INTERVAL_SECONDS}" do
+        around do |example|
+          ClimateControl.modify(Datadog::Core::Remote::Ext::ENV_POLL_INTERVAL_SECONDS => environment) do
+            example.run
+          end
+        end
+
+        context 'is not defined' do
+          let(:environment) { nil }
+
+          it { is_expected.to eq 5.0 }
+        end
+
+        context 'is defined' do
+          let(:environment) { '1' }
+
+          it { is_expected.to eq 1.0 }
+        end
+      end
+    end
+
+    describe '#poll_interval_seconds=' do
+      it 'updates the #poll_interval_seconds setting' do
+        expect { settings.remote.poll_interval_seconds = 1 }
+          .to change { settings.remote.poll_interval_seconds }
+          .from(5.0)
+          .to(1.0)
+      end
     end
   end
 end

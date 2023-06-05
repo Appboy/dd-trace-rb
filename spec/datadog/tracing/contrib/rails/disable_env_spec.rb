@@ -1,5 +1,3 @@
-# typed: ignore
-
 # This scenario requires Rails to *not* have been patched yet.
 # This file cannot be run after any tests that patch Rails, but
 # it can be the first Rails test in a process.
@@ -30,11 +28,14 @@ MESSAGE
   let(:controllers) { [controller] }
 
   let(:controller) do
-    stub_const('TestController', Class.new(ActionController::Base) do
-      def index
-        head :ok
+    stub_const(
+      'TestController',
+      Class.new(ActionController::Base) do
+        def index
+          head :ok
+        end
       end
-    end)
+    )
   end
 
   it 'does not instrument' do

@@ -1,11 +1,10 @@
-# typed: false
+# frozen_string_literal: true
 
 require 'resque'
 
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/sidekiq/ext'
+require_relative '../../metadata/ext'
+require_relative '../analytics'
+require_relative '../sidekiq/ext'
 
 module Datadog
   module Tracing
@@ -39,8 +38,12 @@ module Datadog
               span.resource = args.first.is_a?(Hash) && args.first['job_class'] || name
               span.span_type = Tracing::Metadata::Ext::AppTypes::TYPE_WORKER
 
+              span.set_tag(Contrib::Ext::Messaging::TAG_SYSTEM, Ext::TAG_COMPONENT)
+
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_JOB)
+
+              span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CONSUMER)
 
               # Set analytics sample rate
               if Contrib::Analytics.enabled?(datadog_configuration[:analytics_enabled])

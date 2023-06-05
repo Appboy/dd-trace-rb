@@ -1,30 +1,34 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
 require 'ddtrace'
 require 'que'
 
 RSpec.describe Datadog::Tracing::Contrib::Que::Tracer do
-  let(:job_args) do
+  let(:job_options) do
     {
-      field_one: 1,
       queue: 'low',
       priority: 10,
       tags: { a: 1, b: 2 }
     }
   end
+  let(:job_args) { { field_one: 1 } }
   let(:job_class) do
-    stub_const('TestJobClass', Class.new(::Que::Job) do
-      def run(*args); end
-    end)
+    stub_const(
+      'TestJobClass',
+      Class.new(::Que::Job) do
+        def run(*args); end
+      end
+    )
   end
   let(:error_job_class) do
-    stub_const('ErrorJobClass', Class.new(::Que::Job) do
-      def run(*_args)
-        raise StandardError, 'with some error'
+    stub_const(
+      'ErrorJobClass',
+      Class.new(::Que::Job) do
+        def run(*_args)
+          raise StandardError, 'with some error'
+        end
       end
-    end)
+    )
   end
 
   before do
@@ -42,7 +46,7 @@ RSpec.describe Datadog::Tracing::Contrib::Que::Tracer do
   end
 
   describe '#call' do
-    subject(:enqueue) { job_class.enqueue(**job_args) }
+    subject(:enqueue) { job_class.enqueue(job_args, job_options: job_options) }
 
     context 'with default options' do
       let(:configuration_options) { {} }
@@ -53,11 +57,12 @@ RSpec.describe Datadog::Tracing::Contrib::Que::Tracer do
         expect(span.service).to eq(tracer.default_service)
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('que')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('job')
-        expect(span.get_tag(Datadog::Tracing::Contrib::Que::Ext::TAG_JOB_QUEUE)).to eq(job_args[:queue])
-        expect(span.get_tag(Datadog::Tracing::Contrib::Que::Ext::TAG_JOB_PRIORITY)).to eq(job_args[:priority])
+        expect(span.get_tag(Datadog::Tracing::Contrib::Que::Ext::TAG_JOB_QUEUE)).to eq(job_options[:queue])
+        expect(span.get_tag(Datadog::Tracing::Contrib::Que::Ext::TAG_JOB_PRIORITY)).to eq(job_options[:priority])
         expect(span.get_tag(Datadog::Tracing::Contrib::Que::Ext::TAG_JOB_ERROR_COUNT)).to eq(0)
         expect(span.get_tag(Datadog::Tracing::Contrib::Que::Ext::TAG_JOB_EXPIRED_AT)).to eq('')
         expect(span.get_tag(Datadog::Tracing::Contrib::Que::Ext::TAG_JOB_FINISHED_AT)).to eq('')
+        expect(span.get_tag('messaging.system')).to eq('que')
       end
 
       it 'does not capture info for disabled tags' do
@@ -74,6 +79,13 @@ RSpec.describe Datadog::Tracing::Contrib::Que::Tracer do
         expect(span.end_time).not_to be_nil
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::Errors::TAG_TYPE)).to eq('StandardError')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::Errors::TAG_STACK)).not_to be_nil
+        expect(span.get_tag('messaging.system')).to eq('que')
+      end
+
+      it 'has span.kind tag with value consumer' do
+        enqueue
+
+        expect(span.get_tag('span.kind')).to eq('consumer')
       end
     end
 
@@ -97,7 +109,7 @@ RSpec.describe Datadog::Tracing::Contrib::Que::Tracer do
         enqueue
 
         actual_span_value   = span.get_tag(Datadog::Tracing::Contrib::Que::Ext::TAG_JOB_DATA)
-        expected_span_value = { tags: job_args[:tags] }.to_s
+        expected_span_value = { tags: job_options[:tags] }.to_s
 
         expect(actual_span_value).to eq(expected_span_value)
       end

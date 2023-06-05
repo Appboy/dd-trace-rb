@@ -1,12 +1,10 @@
-# typed: true
-
-require 'datadog/core/utils/only_once'
-require 'datadog/core/utils/time'
-require 'datadog/core/worker'
-require 'datadog/core/workers/polling'
-require 'datadog/profiling/backtrace_location'
-require 'datadog/profiling/events/stack'
-require 'datadog/profiling/native_extension'
+require_relative '../../core/utils/only_once'
+require_relative '../../core/utils/time'
+require_relative '../../core/worker'
+require_relative '../../core/workers/polling'
+require_relative '../backtrace_location'
+require_relative '../events/stack'
+require_relative '../native_extension'
 
 module Datadog
   module Profiling
@@ -15,7 +13,7 @@ module Datadog
       # Runs on its own background thread.
       #
       # This class has the prefix "Old" because it will be deprecated by the new native CPU Profiler
-      class OldStack < Core::Worker # rubocop:disable Metrics/ClassLength
+      class OldStack < Core::Worker
         include Core::Workers::Polling
 
         DEFAULT_MAX_TIME_USAGE_PCT = 2.0
@@ -75,9 +73,7 @@ module Datadog
           # Cache this buffer, since it's pretty expensive to keep accessing it
           @stack_sample_event_recorder = recorder[Events::StackSample]
           # See below for details on why this is needed
-          @needs_process_waiter_workaround =
-            Gem::Version.new(RUBY_VERSION) >= Gem::Version.new('2.3') &&
-            Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.7')
+          @needs_process_waiter_workaround = Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.7')
         end
 
         def start
@@ -216,6 +212,13 @@ module Datadog
             lineno,
             string_table.fetch_string(path)
           )
+        end
+
+        def reset_after_fork
+          recorder.reset_after_fork
+
+          # NOTE: We could perhaps also call #reset_cpu_time_tracking here, although it's not needed because we always
+          # call in in #start.
         end
 
         private

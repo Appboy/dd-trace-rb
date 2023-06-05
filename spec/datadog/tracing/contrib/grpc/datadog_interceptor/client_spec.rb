@@ -1,8 +1,8 @@
-# typed: false
-
 require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
+require 'datadog/tracing/contrib/environment_service_name_examples'
+require 'datadog/tracing/contrib/span_attribute_schema_examples'
 
 require 'grpc'
 require 'ddtrace'
@@ -29,9 +29,10 @@ RSpec.describe 'tracing on the client connection' do
   end
 
   context 'using client-specific configurations' do
+    let(:deadline) { Time.utc(2022, 1, 2, 3, 4, 5, 678901) }
     let(:keywords) do
       { request: instance_double(Object),
-        call: instance_double('GRPC::ActiveCall', peer: peer),
+        call: instance_double('GRPC::ActiveCall', peer: peer, deadline: deadline),
         method: 'MyService.Endpoint',
         metadata: { some: 'datum' } }
     end
@@ -58,16 +59,22 @@ RSpec.describe 'tracing on the client connection' do
       span = fetch_spans.last
       expect(span.service).to eq 'cepsr'
       expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE)).to eq('cepsr')
+      expect(
+        span.get_tag(Datadog::Tracing::Contrib::GRPC::Ext::TAG_CLIENT_DEADLINE)
+      ).to eq '2022-01-02T03:04:05.678Z'
     end
   end
 
   shared_examples 'span data contents' do
-    specify { expect(span.name).to eq 'grpc.client' }
-    specify { expect(span.span_type).to eq 'http' }
-    specify { expect(span.service).to eq 'rspec' }
-    specify { expect(span.resource).to eq 'myservice.endpoint' }
-    specify { expect(span.get_tag('error.stack')).to be_nil }
-    specify { expect(span.get_tag('some')).to eq 'datum' }
+    it { expect(span.name).to eq 'grpc.client' }
+    it { expect(span.span_type).to eq 'http' }
+    it { expect(span.service).to eq 'rspec' }
+    it { expect(span.resource).to eq 'myservice.endpoint' }
+    it { expect(span.get_tag('grpc.client.deadline')).to be_nil }
+    it { expect(span.get_tag('error.stack')).to be_nil }
+    it { expect(span.get_tag('some')).to eq 'datum' }
+    it { expect(span.get_tag('rpc.system')).to eq('grpc') }
+    it { expect(span.get_tag('span.kind')).to eq('client') }
 
     it 'has component and operation tags' do
       expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('grpc')
@@ -84,6 +91,28 @@ RSpec.describe 'tracing on the client connection' do
     end
 
     it_behaves_like 'measured span for integration', false
+    it_behaves_like 'environment service name', 'DD_TRACE_GRPC_SERVICE_NAME' do
+      let(:configuration_options) { {} }
+    end
+    it_behaves_like 'schema version span'
+  end
+
+  shared_examples 'inject distributed tracing metadata' do
+    context 'when distributed tracing is disabled' do
+      let(:configuration_options) { { service_name: 'rspec', distributed_tracing: false } }
+
+      it 'doesn\'t inject the trace headers in gRPC metadata' do
+        expect(keywords[:metadata]).to eq(original_metadata)
+      end
+    end
+
+    context 'when distributed tracing is enabled' do
+      let(:configuration_options) { { service_name: 'rspec', distributed_tracing: true } }
+
+      it 'injects distribution data in gRPC metadata' do
+        expect(keywords[:metadata].keys).to include('x-datadog-trace-id', 'x-datadog-parent-id', 'x-datadog-tags')
+      end
+    end
   end
 
   describe '#request_response' do
@@ -91,28 +120,35 @@ RSpec.describe 'tracing on the client connection' do
       { request: instance_double(Object),
         call: instance_double('GRPC::ActiveCall', peer: peer),
         method: 'MyService.Endpoint',
-        metadata: { some: 'datum' } }
+        metadata: original_metadata.clone }
     end
+
+    let(:original_metadata) { { some: 'datum' } }
 
     before do
       subject.request_response(**keywords) {}
     end
 
     it_behaves_like 'span data contents'
+
+    it_behaves_like 'inject distributed tracing metadata'
   end
 
   describe '#client_streamer' do
     let(:keywords) do
       { call: instance_double('GRPC::ActiveCall', peer: peer),
         method: 'MyService.Endpoint',
-        metadata: { some: 'datum' } }
+        metadata: original_metadata.clone }
     end
+    let(:original_metadata) { { some: 'datum' } }
 
     before do
       subject.client_streamer(**keywords) {}
     end
 
     it_behaves_like 'span data contents'
+
+    it_behaves_like 'inject distributed tracing metadata'
   end
 
   describe '#server_streamer' do
@@ -120,14 +156,18 @@ RSpec.describe 'tracing on the client connection' do
       { request: instance_double(Object),
         call: instance_double('GRPC::ActiveCall', peer: peer),
         method: 'MyService.Endpoint',
-        metadata: { some: 'datum' } }
+        metadata: original_metadata.clone }
     end
+
+    let(:original_metadata) { { some: 'datum' } }
 
     before do
       subject.server_streamer(**keywords) {}
     end
 
     it_behaves_like 'span data contents'
+
+    it_behaves_like 'inject distributed tracing metadata'
   end
 
   describe '#bidi_streamer' do
@@ -135,13 +175,17 @@ RSpec.describe 'tracing on the client connection' do
       { requests: instance_double(Array),
         call: instance_double('GRPC::ActiveCall', peer: peer),
         method: 'MyService.Endpoint',
-        metadata: { some: 'datum' } }
+        metadata: original_metadata.clone }
     end
+
+    let(:original_metadata) { { some: 'datum' } }
 
     before do
       subject.bidi_streamer(**keywords) {}
     end
 
     it_behaves_like 'span data contents'
+
+    it_behaves_like 'inject distributed tracing metadata'
   end
 end

@@ -1,100 +1,35 @@
-# typed: false
+RSpec.describe Datadog::Profiling::Flush do
+  describe '.new' do
+    let(:start) { instance_double(Time, 'start time') }
+    let(:finish) { instance_double(Time, 'finish time') }
+    let(:pprof_file_name) { 'the_pprof_file_name.pprof' }
+    let(:pprof_data) { 'the_pprof_data' }
+    let(:code_provenance_file_name) { 'the_code_provenance_file_name.json' }
+    let(:code_provenance_data) { 'the_code_provenance_data' }
+    let(:tags_as_array) { [%w[tag_a value_a], %w[tag_b value_b]] }
 
-RSpec.describe Datadog::Profiling::OldFlush do
-  describe '#new' do
-    let(:start) { double('start') }
-    let(:finish) { double('finish') }
-    let(:event_groups) { double('event_groups') }
-    let(:event_count) { double('event_count') }
-    let(:code_provenance) { double('code_provenance') }
-
-    context 'given only required arguments' do
-      subject(:identifier) do
-        described_class.new(
-          start: start,
-          finish: finish,
-          event_groups: event_groups,
-          event_count: event_count,
-          code_provenance: code_provenance,
-        )
-      end
-
-      it do
-        is_expected.to have_attributes(
-          start: start,
-          finish: finish,
-          event_groups: event_groups,
-          event_count: event_count,
-          code_provenance: code_provenance,
-          runtime_id: Datadog::Core::Environment::Identity.id,
-          service: Datadog.configuration.service,
-          env: Datadog.configuration.env,
-          version: Datadog.configuration.version,
-          host: Datadog::Core::Environment::Socket.hostname,
-          language: Datadog::Core::Environment::Identity.lang,
-          runtime_engine: Datadog::Core::Environment::Identity.lang_engine,
-          runtime_platform: Datadog::Core::Environment::Identity.lang_platform,
-          runtime_version: Datadog::Core::Environment::Identity.lang_version,
-          profiler_version: Datadog::Core::Environment::Identity.tracer_version,
-          tags: Datadog.configuration.tags
-        )
-      end
+    subject(:flush) do
+      described_class.new(
+        start: start,
+        finish: finish,
+        pprof_file_name: pprof_file_name,
+        pprof_data: pprof_data,
+        code_provenance_file_name: code_provenance_file_name,
+        code_provenance_data: code_provenance_data,
+        tags_as_array: tags_as_array,
+      )
     end
 
-    context 'given full arguments' do
-      subject(:identifier) do
-        described_class.new(
-          start: start,
-          finish: finish,
-          event_groups: event_groups,
-          event_count: event_count,
-          code_provenance: code_provenance,
-          runtime_id: runtime_id,
-          service: service,
-          env: env,
-          version: version,
-          host: host,
-          language: language,
-          runtime_engine: runtime_engine,
-          runtime_platform: runtime_platform,
-          runtime_version: runtime_version,
-          profiler_version: profiler_version,
-          tags: tags,
-        )
-      end
-
-      let(:runtime_id) { double('runtime_id') }
-      let(:service) { double('service') }
-      let(:env) { double('env') }
-      let(:version) { double('version') }
-      let(:host) { double('host') }
-      let(:language) { double('language') }
-      let(:runtime_engine) { double('runtime_engine') }
-      let(:runtime_platform) { double('runtime_platform') }
-      let(:runtime_version) { double('runtime_version') }
-      let(:profiler_version) { double('profiler_version') }
-      let(:tags) { double('tags') }
-
-      it do
-        is_expected.to have_attributes(
-          start: start,
-          finish: finish,
-          event_groups: event_groups,
-          event_count: event_count,
-          code_provenance: code_provenance,
-          runtime_id: runtime_id,
-          service: service,
-          env: env,
-          version: version,
-          host: host,
-          language: language,
-          runtime_engine: runtime_engine,
-          runtime_platform: runtime_platform,
-          runtime_version: runtime_version,
-          profiler_version: profiler_version,
-          tags: tags,
-        )
-      end
+    it do
+      expect(flush).to have_attributes(
+        start: start,
+        finish: finish,
+        pprof_file_name: pprof_file_name,
+        pprof_data: pprof_data,
+        code_provenance_file_name: code_provenance_file_name,
+        code_provenance_data: code_provenance_data,
+        tags_as_array: tags_as_array,
+      )
     end
   end
 end

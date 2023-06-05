@@ -1,18 +1,13 @@
-# typed: true
-
-require 'datadog/tracing/context'
-require 'datadog/tracing/distributed/headers/ext'
-require 'datadog/tracing/propagation/http'
-require 'datadog/tracing/trace_operation'
-require 'datadog/opentracer/propagator'
+require_relative '../tracing/context'
+require_relative '../tracing/propagation/http'
+require_relative '../tracing/trace_operation'
+require_relative 'propagator'
 
 module Datadog
   module OpenTracer
     # OpenTracing propagator for Datadog::OpenTracer::Tracer
     module RackPropagator
       extend Propagator
-      extend Tracing::Distributed::Headers::Ext
-      include Tracing::Distributed::Headers::Ext
 
       BAGGAGE_PREFIX = 'ot-baggage-'.freeze
       BAGGAGE_PREFIX_FORMATTED = 'HTTP_OT_BAGGAGE_'.freeze
@@ -23,10 +18,14 @@ module Datadog
         # @param span_context [SpanContext]
         # @param carrier [Carrier] A carrier object of Rack type
         def inject(span_context, carrier)
-          active_trace = span_context.datadog_context.active_trace
+          digest = if span_context.datadog_context && span_context.datadog_context.active_trace
+                     span_context.datadog_context.active_trace.to_digest
+                   else
+                     span_context.datadog_trace_digest
+                   end
 
           # Inject Datadog trace properties
-          Tracing::Propagation::HTTP.inject!(active_trace, carrier)
+          Tracing::Propagation::HTTP.inject!(digest, carrier)
 
           # Inject baggage
           span_context.baggage.each do |key, value|

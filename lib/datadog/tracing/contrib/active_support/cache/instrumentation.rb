@@ -1,8 +1,8 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/core/utils'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/active_support/ext'
+require_relative '../../../../core/utils'
+require_relative '../../../metadata/ext'
+require_relative '../ext'
 
 module Datadog
   module Tracing
@@ -15,6 +15,8 @@ module Datadog
             module_function
 
             def start_trace_cache(payload)
+              return unless enabled?
+
               # In most of the cases Rails ``fetch()`` and ``read()`` calls are nested.
               # This check ensures that two reads are not nested since they don't provide
               # interesting details.
@@ -22,12 +24,12 @@ module Datadog
               # to avoid any kind of issue.
               current_span = Tracing.active_span
               return if current_span.try(:name) == Ext::SPAN_CACHE &&
-                        (
-                          payload[:action] == Ext::RESOURCE_CACHE_GET &&
-                          current_span.try(:resource) == Ext::RESOURCE_CACHE_GET ||
-                          payload[:action] == Ext::RESOURCE_CACHE_MGET &&
-                          current_span.try(:resource) == Ext::RESOURCE_CACHE_MGET
-                        )
+                (
+                  payload[:action] == Ext::RESOURCE_CACHE_GET &&
+                  current_span.try(:resource) == Ext::RESOURCE_CACHE_GET ||
+                  payload[:action] == Ext::RESOURCE_CACHE_MGET &&
+                  current_span.try(:resource) == Ext::RESOURCE_CACHE_MGET
+                )
 
               tracing_context = payload.fetch(:tracing_context)
 
@@ -40,8 +42,10 @@ module Datadog
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_CACHE)
 
-              # Tag as an external peer service
-              span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, service)
+              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                # Tag as an external peer service
+                span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, service)
+              end
 
               tracing_context[:dd_cache_span] = span
             rescue StandardError => e
@@ -49,6 +53,8 @@ module Datadog
             end
 
             def finish_trace_cache(payload)
+              return unless enabled?
+
               # retrieve the tracing context and continue the trace
               tracing_context = payload.fetch(:tracing_context)
               span = tracing_context[:dd_cache_span]
@@ -74,6 +80,8 @@ module Datadog
             end
 
             def finish_trace_cache_multi(payload)
+              return unless enabled?
+
               # retrieve the tracing context and continue the trace
               tracing_context = payload.fetch(:tracing_context)
               span = tracing_context[:dd_cache_span]
@@ -97,6 +105,10 @@ module Datadog
               end
             rescue StandardError => e
               Datadog.logger.debug(e.message)
+            end
+
+            def enabled?
+              Tracing.enabled? && Datadog.configuration.tracing[:active_support][:enabled]
             end
 
             # Defines instrumentation for ActiveSupport cache reading

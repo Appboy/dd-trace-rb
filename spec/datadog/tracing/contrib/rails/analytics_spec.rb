@@ -1,5 +1,3 @@
-# typed: false
-
 require 'datadog/tracing/contrib/analytics_examples'
 require 'datadog/tracing/contrib/rails/rails_helper'
 
@@ -30,11 +28,14 @@ RSpec.describe 'Rails trace analytics' do
     subject(:result) { action.call(env) }
 
     let(:controller) do
-      stub_const('TestController', Class.new(base_class) do
-        def index
-          # Do nothing
+      stub_const(
+        'TestController',
+        Class.new(base_class) do
+          def index
+            # Do nothing
+          end
         end
-      end)
+      )
     end
     let(:name) { :index }
     let(:base_class) { ActionController::Metal }

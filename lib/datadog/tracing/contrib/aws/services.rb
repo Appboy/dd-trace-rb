@@ -1,9 +1,6 @@
-# typed: true
-
 module Datadog
   module Tracing
     module Contrib
-      # rubocop:disable Metrics/ModuleLength:
       module Aws
         SERVICES = %w[
           ACM
@@ -116,8 +113,17 @@ module Datadog
           WorkSpaces
           XRay
         ].freeze
+
+        SERVICE_HANDLERS = {
+          'sqs' => Service::SQS.new,
+          'sns' => Service::SNS.new,
+          'dynamodb' => Service::DynamoDB.new,
+          'kinesis' => Service::Kinesis.new,
+          'eventbridge' => Service::EventBridge.new,
+          'states' => Service::States.new,
+          's3' => Service::S3.new
+        }.freeze
       end
-      # rubocop:enable Metrics/ModuleLength:
     end
   end
 end

@@ -1,6 +1,6 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/appsec/configuration'
+require_relative 'configuration'
 
 module Datadog
   module AppSec
@@ -29,39 +29,10 @@ module Datadog
         end
 
         # Writer methods
-        def trace_rate_limit=(arg)
-          dsl = AppSec::Configuration::DSL.new
-          dsl.trace_rate_limit = arg
-          @settings.merge(dsl)
-        end
 
-        def options(arg)
+        def instrument(name, _unused = {})
           dsl = AppSec::Configuration::DSL.new
-          dsl.options arg
-          @settings.merge(dsl)
-        end
-
-        def instruments(arg)
-          dsl = AppSec::Configuration::DSL.new
-          dsl.instruments arg
-          @settings.merge(dsl)
-        end
-
-        def ruleset=(arg)
-          dsl = AppSec::Configuration::DSL.new
-          dsl.ruleset = arg
-          @settings.merge(dsl)
-        end
-
-        def instrument(*args)
-          dsl = AppSec::Configuration::DSL.new
-          dsl.instrument(*args)
-          @settings.merge(dsl)
-        end
-
-        def waf_timeout=(arg)
-          dsl = AppSec::Configuration::DSL.new
-          dsl.waf_timeout = arg
+          dsl.instrument(name)
           @settings.merge(dsl)
         end
 
@@ -71,27 +42,74 @@ module Datadog
           @settings.merge(dsl)
         end
 
+        def ruleset=(arg)
+          dsl = AppSec::Configuration::DSL.new
+          dsl.ruleset = arg
+          @settings.merge(dsl)
+        end
+
+        def ip_denylist=(arg)
+          dsl = AppSec::Configuration::DSL.new
+          dsl.ip_denylist = arg
+          @settings.merge(dsl)
+        end
+
+        def user_id_denylist=(arg)
+          dsl = AppSec::Configuration::DSL.new
+          dsl.user_id_denylist = arg
+          @settings.merge(dsl)
+        end
+
+        def waf_timeout=(arg)
+          dsl = AppSec::Configuration::DSL.new
+          dsl.waf_timeout = arg
+          @settings.merge(dsl)
+        end
+
         def waf_debug=(arg)
           dsl = AppSec::Configuration::DSL.new
           dsl.waf_debug = arg
           @settings.merge(dsl)
         end
 
+        def trace_rate_limit=(arg)
+          dsl = AppSec::Configuration::DSL.new
+          dsl.trace_rate_limit = arg
+          @settings.merge(dsl)
+        end
+
+        def obfuscator_key_regex=(arg)
+          dsl = AppSec::Configuration::DSL.new
+          dsl.obfuscator_key_regex = arg
+          @settings.merge(dsl)
+        end
+
+        def obfuscator_value_regex=(arg)
+          dsl = AppSec::Configuration::DSL.new
+          dsl.obfuscator_value_regex = arg
+          @settings.merge(dsl)
+        end
+
         # Reader methods
-        def [](arg)
-          @settings[arg]
+
+        def enabled
+          @settings.enabled
         end
 
         def ruleset
           @settings.ruleset
         end
 
-        def waf_timeout
-          @settings.waf_timeout
+        def ip_denylist
+          @settings.ip_denylist
         end
 
-        def enabled
-          @settings.enabled
+        def user_id_denylist
+          @settings.user_id_denylist
+        end
+
+        def waf_timeout
+          @settings.waf_timeout
         end
 
         def waf_debug
@@ -100,6 +118,14 @@ module Datadog
 
         def trace_rate_limit
           @settings.trace_rate_limit
+        end
+
+        def obfuscator_key_regex
+          @settings.obfuscator_key_regex
+        end
+
+        def obfuscator_value_regex
+          @settings.obfuscator_key_regex
         end
 
         def merge(arg)

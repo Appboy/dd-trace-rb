@@ -1,8 +1,7 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
 require 'datadog/tracing/contrib/integration_examples'
+require 'datadog/tracing/contrib/span_attribute_schema_examples'
 require 'ddtrace'
 
 require 'spec/datadog/tracing/contrib/rails/support/deprecation'
@@ -66,6 +65,8 @@ RSpec.describe 'ActiveRecord instrumentation' do
     end
 
     context 'and service_name' do
+      it_behaves_like 'schema version span'
+
       context 'is not set' do
         it { expect(span.service).to eq('mysql2') }
       end
@@ -104,10 +105,12 @@ RSpec.describe 'ActiveRecord instrumentation' do
 
             Datadog.configure do |c|
               c.tracing.instrument :active_record, service_name: 'bad-no-match'
-              c.tracing.instrument :active_record, describes: { makara_role: primary_role },
-                                                   service_name: primary_service_name
-              c.tracing.instrument :active_record, describes: { makara_role: secondary_role },
-                                                   service_name: secondary_service_name
+              c.tracing.instrument :active_record,
+                describes: { makara_role: primary_role },
+                service_name: primary_service_name
+              c.tracing.instrument :active_record,
+                describes: { makara_role: secondary_role },
+                service_name: secondary_service_name
             end
           end
 

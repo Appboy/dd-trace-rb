@@ -1,9 +1,6 @@
-# typed: ignore
-
-require 'datadog/tracing'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/grpc/ext'
-require 'datadog/tracing/contrib/grpc/configuration/settings'
+require_relative '../analytics'
+require_relative 'ext'
+require_relative 'configuration/settings'
 
 module Datadog
   module Tracing
@@ -51,6 +48,10 @@ module Datadog
 
             def analytics_enabled?
               Contrib::Analytics.enabled?(datadog_configuration[:analytics_enabled])
+            end
+
+            def distributed_tracing?
+              Datadog.configuration_for(self, :distributed_tracing) || datadog_configuration[:distributed_tracing]
             end
 
             def analytics_sample_rate

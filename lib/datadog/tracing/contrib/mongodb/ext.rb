@@ -1,5 +1,3 @@
-# typed: true
-
 module Datadog
   module Tracing
     module Contrib
@@ -8,6 +6,7 @@ module Datadog
         # @public_api Changing resource names, tag names, or environment variables creates breaking changes.
         module Ext
           ENV_ENABLED = 'DD_TRACE_MONGO_ENABLED'.freeze
+          ENV_SERVICE_NAME = 'DD_TRACE_MONGO_SERVICE_NAME'.freeze
           ENV_ANALYTICS_ENABLED = 'DD_TRACE_MONGO_ANALYTICS_ENABLED'.freeze
           ENV_ANALYTICS_SAMPLE_RATE = 'DD_TRACE_MONGO_ANALYTICS_SAMPLE_RATE'.freeze
           DEFAULT_PEER_SERVICE_NAME = 'mongodb'.freeze
@@ -20,6 +19,13 @@ module Datadog
           TAG_ROWS = 'mongodb.rows'.freeze
           TAG_COMPONENT = 'mongodb'.freeze
           TAG_OPERATION_COMMAND = 'command'.freeze
+          TAG_SYSTEM = 'mongodb'.freeze
+
+          # Temporary namespace to accommodate unified tags which has naming collision, before
+          # making breaking changes
+          module DB
+            TAG_COLLECTION = 'db.mongodb.collection'.freeze
+          end
         end
       end
     end

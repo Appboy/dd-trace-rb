@@ -1,6 +1,6 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/analytics'
+require_relative '../analytics'
 
 module Datadog
   module Tracing
@@ -19,7 +19,7 @@ module Datadog
           end
 
           def self.railtie_supported?
-            !(defined?(::Rails::VERSION::MAJOR) && ::Rails::VERSION::MAJOR >= 3 && defined?(::Rails::Railtie)).nil?
+            !!(defined?(::Rails::VERSION::MAJOR) && ::Rails::VERSION::MAJOR >= 3 && defined?(::Rails::Railtie))
           end
         end
       end

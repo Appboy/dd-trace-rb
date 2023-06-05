@@ -1,6 +1,7 @@
 inherit_from: .rubocop_todo.yml
 
 require:
+  - rubocop-packaging
   - rubocop-performance
   - rubocop-rspec
 
@@ -16,14 +17,16 @@ AllCops:
     - 'Rakefile'
   Exclude:
     - 'Appraisals'
-    - '*.gemspec'
     - 'lib/ddtrace/**/vendor/**/*.rb'
     - 'lib/datadog/**/vendor/**/*.rb'
     - 'integration/apps/*/bin/*'
     - 'integration/apps/*/Gemfile'
+    - 'integration/apps/hanami/Rakefile'
     - 'lib/datadog/profiling/pprof/pprof_pb.rb'
     - 'spec/**/**/interesting_backtrace_helper.rb' # This file needs quite a few bizarre code patterns by design
+    - 'vendor/bundle/**/*'
   NewCops: disable # Don't allow new cops to be enabled implicitly.
+  SuggestExtensions: false # Stop pushing suggestions constantly.
 
 Layout/LineLength:
   Max: 124
@@ -61,7 +64,7 @@ Style/NumericLiterals:
   Enabled: false
 
 Metrics/ClassLength:
-  Max: 140
+  Enabled: false
 
 Metrics/BlockLength:
   Max: 42
@@ -70,8 +73,7 @@ Metrics/BlockLength:
     - spec/**/*
 
 Metrics/ModuleLength:
-  Exclude:
-    - spec/**/*
+  Enabled: false
 
 Metrics/ParameterLists:
   Enabled: false
@@ -105,10 +107,15 @@ Style/GuardClause:
 Style/CaseEquality:
   Enabled: false
 
+# Tests don't need strict string concatenation rules.
+Style/StringConcatenation:
+  Exclude:
+    - spec/**/*
+
 # New cops since Rubocop 1.0.
 # We have to explicitly opt-in for new cops to apply
 # before the next major release.
-Gemspec/DateAssignment: # (new in 1.10)
+Gemspec/DeprecatedAttributeAssignment: # (Gemspec/DateAssignment integrated in 1.31.0)
   Enabled: true
 Layout/SpaceBeforeBrackets: # (new in 1.7)
   Enabled: true
@@ -124,8 +131,9 @@ Lint/EmptyClass: # (new in 1.3)
   Enabled: true
 Lint/LambdaWithoutLiteralBlock: # (new in 1.8)
   Enabled: true
+# Prevents `return` in an assignment block `var = begin; return; end` block.
 Lint/NoReturnInBeginEndBlocks: # (new in 1.2)
-  Enabled: true
+  Enabled: false
 Lint/NumberedParameterAssignment: # (new in 1.9)
   Enabled: true
 Lint/OrAssignmentToConstant: # (new in 1.9)
@@ -182,8 +190,6 @@ Performance/Squeeze: # (new in 1.7)
   Enabled: true
 Performance/StringInclude: # (new in 1.7)
   Enabled: true
-Performance/Sum: # (new in 1.8)
-  Enabled: true
 
 # Requires Ruby 2.2
 Style/HashSyntax:
@@ -211,6 +217,10 @@ Style/CollectionCompact:
 
 # Requires Ruby 2.4
 Performance/RegexpMatch:
+  Enabled: false
+
+# Requires Ruby 2.4
+Performance/Sum:
   Enabled: false
 
 # Requires Ruby 2.5
@@ -262,9 +272,11 @@ RSpec/EmptyLineAfterSubject:
 RSpec/EmptyLineAfterFinalLet:
   Enabled: false
 
-# TODO: Disabling until we categorize which file are safe to do so.
+# Ensures static strings are not recreated on every invocation.
 Style/FrozenStringLiteralComment:
-  Enabled: false
+  Enabled: true
+  Include:
+    - 'lib/**/*.rb'
 
 # Replaces `x == 0` with `x.zero?` and similar.
 # These methods are ~2x slower than the simple math comparison.
@@ -368,10 +380,35 @@ Naming/FileName:
   Exclude:
     - 'integration/**/Gemfile'
     - 'integration/**/Rakefile'
+    - 'Steepfile'
 
 # Enforces boolean parameters with default to be keyword arguments.
 Style/OptionalBooleanParameter:
   Enabled: false
+
+Layout/ArgumentAlignment:
+  EnforcedStyle: with_fixed_indentation
+
+Layout/BlockAlignment:
+  EnforcedStyleAlignWith: start_of_block
+
+Layout/FirstArgumentIndentation:
+  EnforcedStyle: consistent
+
+Layout/FirstMethodArgumentLineBreak:
+  Enabled: true
+
+Layout/FirstMethodParameterLineBreak:
+  Enabled: true
+
+Layout/MultilineMethodArgumentLineBreaks:
+  Enabled: true
+
+Layout/MultilineMethodCallIndentation:
+  EnforcedStyle: indented
+
+Layout/MultilineOperationIndentation:
+  EnforcedStyle: indented
 
 Lint/UnusedBlockArgument:
   # Required keyword arguments normally cannot be omitted or renamed:
@@ -391,4 +428,14 @@ Style/TrailingCommaInHashLiteral:
   Enabled: false
 
 Naming/VariableNumber:
+  Enabled: false
+
+# Requires that the Rubocop linter should be configured to
+# match the same version as `spec.required_rubygems_version` in our gemspec file.
+# This is not currently possible, as we'd like to use updated versions of Rubocop
+# that have already dropped support for our minimum supported Ruby version.
+Gemspec/RequiredRubyVersion:
+  Enabled: false
+
+Style/WordArray:
   Enabled: false

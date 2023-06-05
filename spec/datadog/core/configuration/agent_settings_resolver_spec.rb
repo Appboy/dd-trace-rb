@@ -1,5 +1,3 @@
-# typed: false
-
 require 'datadog/core/configuration/agent_settings_resolver'
 require 'datadog/core/configuration/settings'
 
@@ -36,6 +34,7 @@ RSpec.describe Datadog::Core::Configuration::AgentSettingsResolver do
 
   before do
     # Environment does not have existing unix socket for the base testing case
+    allow(File).to receive(:exist?).and_call_original # To avoid breaking debugging
     allow(File).to receive(:exist?).with('/var/run/datadog/apm.socket').and_return(false)
   end
 
@@ -56,7 +55,7 @@ RSpec.describe Datadog::Core::Configuration::AgentSettingsResolver do
       let(:hostname) { nil }
       let(:port) { nil }
 
-      it 'configures the agent to connect to unix:/var/run/datadog/apm.socket' do
+      it 'configures the agent to connect to unix:///var/run/datadog/apm.socket' do
         expect(resolver).to have_attributes(
           **settings,
           adapter: :unix,
@@ -199,6 +198,25 @@ RSpec.describe Datadog::Core::Configuration::AgentSettingsResolver do
           expect(logger).to_not receive(:warn).with(/Configuration mismatch/)
 
           resolver
+        end
+      end
+
+      context 'when there is a mix of http configuration and uds configuration' do
+        let(:with_agent_host) { 'custom-hostname' }
+        let(:environment) { super().merge('DD_TRACE_AGENT_URL' => 'unix:///some/path') }
+
+        it 'prioritizes the http configuration' do
+          expect(resolver).to have_attributes(hostname: 'custom-hostname', adapter: :net_http)
+        end
+
+        it 'logs a warning' do
+          expect(logger).to receive(:warn).with(/Configuration mismatch.*configuration for unix domain socket/)
+
+          resolver
+        end
+
+        it 'does not include a uds_path in the configuration' do
+          expect(resolver).to have_attributes(uds_path: nil)
         end
       end
     end
@@ -422,6 +440,20 @@ RSpec.describe Datadog::Core::Configuration::AgentSettingsResolver do
       end
     end
 
+    context 'when the uri scheme is unix' do
+      let(:environment) { { 'DD_TRACE_AGENT_URL' => 'unix:///path/to/apm.socket' } }
+
+      it 'contacts the agent via a unix domain socket' do
+        expect(resolver).to have_attributes(
+          **settings,
+          adapter: :unix,
+          uds_path: '/path/to/apm.socket',
+          hostname: nil,
+          port: nil,
+        )
+      end
+    end
+
     context 'when the uri scheme is not http OR https' do
       let(:environment) { { 'DD_TRACE_AGENT_URL' => 'steam://custom-hostname:1234' } }
 
@@ -545,11 +577,11 @@ RSpec.describe Datadog::Core::Configuration::AgentSettingsResolver do
 
         it 'includes the given proc in the resolved settings as the ' \
           'deprecated_for_removal_transport_configuration_proc and falls back to the defaults' do
-          expect(resolver).to have_attributes(
-            **settings,
-            deprecated_for_removal_transport_configuration_proc: transport_options
-          )
-        end
+            expect(resolver).to have_attributes(
+              **settings,
+              deprecated_for_removal_transport_configuration_proc: transport_options
+            )
+          end
 
         it 'logs a debug message' do
           expect(logger).to receive(:debug)

@@ -1,15 +1,16 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/rails/rails_helper'
 
 RSpec.describe 'Rails ActionController' do
   let(:rails_options) { {} }
   let(:controller) do
-    stub_const('TestController', Class.new(base_class) do
-      def index
-        # Do nothing
+    stub_const(
+      'TestController',
+      Class.new(base_class) do
+        def index
+          # Do nothing
+        end
       end
-    end)
+    )
   end
   let(:name) { :index }
   let(:base_class) { ActionController::Base }
@@ -41,6 +42,19 @@ RSpec.describe 'Rails ActionController' do
           expect(result).to have(3).items
           expect(spans).to have(1).items
           expect(spans.first.name).to eq('rails.action_controller')
+        end
+
+        context 'with tracing disabled' do
+          before do
+            Datadog.configure { |c| c.tracing.enabled = false }
+            expect(Datadog.logger).to_not receive(:error)
+            expect(Datadog::Tracing).to_not receive(:trace)
+          end
+
+          it 'runs the action without tracing' do
+            expect { result }.to_not raise_error
+            expect(spans).to have(0).items
+          end
         end
 
         context 'when response is overridden' do
@@ -97,11 +111,14 @@ RSpec.describe 'Rails ActionController' do
           let(:observed) { {} }
           let(:controller) do
             observed = self.observed
-            stub_const('TestController', Class.new(base_class) do
-              define_method(:index) do
-                observed[:active_span_resource] = Datadog::Tracing.active_span.resource
+            stub_const(
+              'TestController',
+              Class.new(base_class) do
+                define_method(:index) do
+                  observed[:active_span_resource] = Datadog::Tracing.active_span.resource
+                end
               end
-            end)
+            )
           end
 
           it 'sets the span resource before calling the controller' do

@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/appsec/reactive/engine'
+require_relative 'engine'
 
 module Datadog
   module AppSec
@@ -8,14 +8,14 @@ module Datadog
       # Reactive Engine nested operation tracking
       class Operation
         attr_reader :reactive,
-                    :parent,
-                    :name
+          :parent,
+          :name
 
         def initialize(name, parent = nil, reactive_engine = nil)
           Datadog.logger.debug { "operation: #{name} initialize" }
           @name = name
           @parent = parent
-          @reactive = reactive_engine || parent && parent.reactive || Reactive::Engine.new
+          @reactive = select_reactive_engine(reactive_engine, parent)
 
           # TODO: concurrent store
           # TODO: constant
@@ -40,9 +40,26 @@ module Datadog
           Thread.current[:datadog_security_active_operation] = parent
         end
 
+        private
+
+        def select_reactive_engine(reactive, parent)
+          return reactive if reactive
+
+          return parent.reactive unless parent.nil?
+
+          Reactive::Engine.new
+        end
+
         class << self
           def active
             Thread.current[:datadog_security_active_operation]
+          end
+
+          private
+
+          # For testing only.
+          def reset!
+            Thread.current[:datadog_security_active_operation] = nil
           end
         end
       end

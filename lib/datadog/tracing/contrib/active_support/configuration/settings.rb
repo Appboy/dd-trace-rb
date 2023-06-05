@@ -1,7 +1,7 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/configuration/settings'
-require 'datadog/tracing/contrib/active_support/ext'
+require_relative '../../configuration/settings'
+require_relative '../ext'
 
 module Datadog
   module Tracing
@@ -26,7 +26,15 @@ module Datadog
               o.lazy
             end
 
-            option :cache_service, default: Ext::SERVICE_CACHE
+            option :cache_service do |o|
+              o.default do
+                Contrib::SpanAttributeSchema.fetch_service_name(
+                  '',
+                  Ext::SERVICE_CACHE
+                )
+              end
+              o.lazy
+            end
           end
         end
       end

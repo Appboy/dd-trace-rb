@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing/metadata/ext'
+require_relative '../../metadata/ext'
 
 module Datadog
   module Tracing

@@ -1,11 +1,9 @@
-# typed: false
-
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/elasticsearch/ext'
-require 'datadog/tracing/contrib/integration'
-require 'datadog/tracing/contrib/patcher'
+require_relative '../../metadata/ext'
+require_relative '../analytics'
+require_relative 'ext'
+require_relative '../ext'
+require_relative '../integration'
+require_relative '../patcher'
 
 module Datadog
   module Tracing
@@ -24,7 +22,7 @@ module Datadog
           def patch
             require 'uri'
             require 'json'
-            require 'datadog/tracing/contrib/elasticsearch/quantize'
+            require_relative 'quantize'
 
             patch_elasticsearch_transport_client
           end
@@ -83,13 +81,19 @@ module Datadog
 
                     span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
                     span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_QUERY)
+                    span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
+
+                    span.set_tag(Contrib::Ext::DB::TAG_SYSTEM, Ext::TAG_SYSTEM)
 
                     # load JSON for the following fields unless they're already strings
                     params = JSON.generate(params) if params && !params.is_a?(String)
                     body = JSON.generate(body) if body && !body.is_a?(String)
 
                     # Tag as an external peer service
-                    span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+                    if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                      span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+                    end
+
                     span.set_tag(Tracing::Metadata::Ext::TAG_PEER_HOSTNAME, host) if host
 
                     # Set analytics sample rate

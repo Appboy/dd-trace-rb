@@ -1,9 +1,7 @@
-# typed: false
-
 require 'time'
 
-require 'datadog/tracing/context'
-require 'datadog/tracing/tracer'
+require_relative '../tracing/context'
+require_relative '../tracing/tracer'
 
 module Datadog
   module OpenTracer
@@ -52,13 +50,15 @@ module Datadog
       #   yield the newly-started Scope. If `finish_on_close` is true then the
       #   Span will be finished automatically after the block is executed.
       # @return [Scope] The newly-started and activated Scope
-      def start_active_span(operation_name,
-                            child_of: nil,
-                            references: nil,
-                            start_time: Time.now,
-                            tags: nil,
-                            ignore_active_scope: false,
-                            finish_on_close: true)
+      def start_active_span(
+        operation_name,
+        child_of: nil,
+        references: nil,
+        start_time: Time.now,
+        tags: nil,
+        ignore_active_scope: false,
+        finish_on_close: true
+      )
 
         # When meant to automatically determine the parent,
         # Use the active scope first, otherwise fall back to any
@@ -124,12 +124,14 @@ module Datadog
       #   References#CHILD_OF reference to the ScopeManager#active.
       # @return [Span] the newly-started Span instance, which has not been
       #   automatically registered via the ScopeManager
-      def start_span(operation_name,
-                     child_of: nil,
-                     references: nil,
-                     start_time: Time.now,
-                     tags: nil,
-                     ignore_active_scope: false)
+      def start_span(
+        operation_name,
+        child_of: nil,
+        references: nil,
+        start_time: Time.now,
+        tags: nil,
+        ignore_active_scope: false
+      )
 
         # Derive the OpenTracer::SpanContext to inherit from.
         parent_span_context = inherited_span_context(child_of, ignore_active_scope: ignore_active_scope)
@@ -147,12 +149,10 @@ module Datadog
           tags: tags || {}
         )
 
-        # Build or extend the OpenTracer::SpanContext
-        span_context = if parent_span_context
-                         SpanContextFactory.clone(span_context: parent_span_context)
-                       else
-                         SpanContextFactory.build(datadog_context: datadog_context)
-                       end
+        span_context = SpanContextFactory.build(
+          datadog_context: datadog_context || datadog_tracer.send(:call_context),
+          baggage: parent_span_context ? parent_span_context.baggage.dup : {}
+        )
 
         # Wrap the Datadog span and OpenTracer::Span context in a OpenTracer::Span
         Span.new(datadog_span: datadog_span, span_context: span_context)

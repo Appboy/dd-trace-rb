@@ -1,13 +1,10 @@
-# typed: ignore
-
 require 'faraday'
 
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/propagation/http'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/faraday/ext'
-require 'datadog/tracing/contrib/http_annotation_helper'
+require_relative '../../metadata/ext'
+require_relative '../../propagation/http'
+require_relative '../analytics'
+require_relative 'ext'
+require_relative '../http_annotation_helper'
 
 module Datadog
   module Tracing
@@ -40,15 +37,19 @@ module Datadog
 
           def annotate!(span, env, options)
             span.resource = resource_name(env)
-            service_name(env[:url].host, options)
-            span.service = options[:split_by_domain] ? env[:url].host : options[:service_name]
+            span.service = service_name(env[:url].host, options)
             span.span_type = Tracing::Metadata::Ext::HTTP::TYPE_OUTBOUND
+
+            span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
 
             span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
             span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_REQUEST)
 
-            # Tag as an external peer service
-            span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+            if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+              # Tag as an external peer service
+              span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+            end
+
             span.set_tag(Tracing::Metadata::Ext::TAG_PEER_HOSTNAME, env[:url].host)
 
             # Set analytics sample rate

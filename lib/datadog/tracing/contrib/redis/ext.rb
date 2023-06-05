@@ -1,5 +1,3 @@
-# typed: true
-
 module Datadog
   module Tracing
     module Contrib
@@ -8,6 +6,7 @@ module Datadog
         # @public_api Changing resource names, tag names, or environment variables creates breaking changes.
         module Ext
           ENV_ENABLED = 'DD_TRACE_REDIS_ENABLED'.freeze
+          ENV_SERVICE_NAME = 'DD_TRACE_REDIS_SERVICE_NAME'.freeze
           ENV_ANALYTICS_ENABLED = 'DD_TRACE_REDIS_ANALYTICS_ENABLED'.freeze
           ENV_ANALYTICS_SAMPLE_RATE = 'DD_TRACE_REDIS_ANALYTICS_SAMPLE_RATE'.freeze
           ENV_COMMAND_ARGS = 'DD_REDIS_COMMAND_ARGS'.freeze
@@ -16,12 +15,14 @@ module Datadog
           SPAN_COMMAND = 'redis.command'.freeze
           TAG_DB = 'out.redis_db'.freeze
           TAG_RAW_COMMAND = 'redis.raw_command'.freeze
+          ### BRAZE MODIFICATION
+          METRIC_RAW_COMMAND_LEN = 'redis.raw_command_length'.freeze
+          ### END BRAZE MODIFICATION
           TYPE = 'redis'.freeze
           TAG_COMPONENT = 'redis'.freeze
           TAG_OPERATION_COMMAND = 'command'.freeze
-          # BRAZE MODIFICATION
-          METRIC_RAW_COMMAND_LEN = 'redis.raw_command_length'.freeze
-          # END BRAZE MODIFICATION
+          TAG_SYSTEM = 'redis'.freeze
+          TAG_DATABASE_INDEX = 'db.redis.database_index'.freeze
         end
       end
     end

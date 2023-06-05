@@ -1,16 +1,12 @@
-# typed: false
-
-require 'datadog/core'
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/rack/ext'
+require_relative '../../../core'
+require_relative '../../metadata/ext'
+require_relative '../analytics'
+require_relative '../rack/ext'
 
 module Datadog
   module Tracing
     module Contrib
       module Grape
-        # rubocop:disable Metrics/ModuleLength
         # Endpoint module includes a list of subscribers to create
         # traces when a Grape endpoint is hit
         module Endpoint
@@ -43,7 +39,7 @@ module Datadog
 
               # collect endpoint details
               endpoint = payload.fetch(:endpoint)
-              # BRAZE MODIFICATION
+              ### BRAZE MODIFICATION
               # OLD
               # api_view = api_view(endpoint.options[:for])
               # NEW
@@ -53,7 +49,7 @@ module Datadog
               if api_view.blank?
                 api_view = api_view(api)
               end
-              # END BRAZE MODIFICATION
+              ### END BRAZE MODIFICATION
               request_method = endpoint.options.fetch(:method).first
               path = endpoint_expand_path(endpoint)
               resource = "#{api_view} #{request_method} #{path}"
@@ -92,7 +88,7 @@ module Datadog
               begin
                 # collect endpoint details
                 endpoint = payload.fetch(:endpoint)
-                # BRAZE MODIFICATION
+                ### BRAZE MODIFICATION
                 # OLD
                 # api_view = api_view(endpoint.options[:for])
                 # NEW
@@ -102,7 +98,7 @@ module Datadog
                 if api_view.blank?
                   api_view = api_view(api)
                 end
-                # END BRAZE MODIFICATION
+                ### END BRAZE MODIFICATION
                 request_method = endpoint.options.fetch(:method).first
                 path = endpoint_expand_path(endpoint)
 
@@ -266,7 +262,6 @@ module Datadog
             end
           end
         end
-        # rubocop:enable Metrics/ModuleLength
       end
     end
   end

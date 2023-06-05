@@ -1,7 +1,7 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/configuration/settings'
-require 'datadog/tracing/contrib/httprb/ext'
+require_relative '../../configuration/settings'
+require_relative '../ext'
 
 module Datadog
   module Tracing
@@ -27,7 +27,22 @@ module Datadog
             end
 
             option :distributed_tracing, default: true
-            option :service_name, default: Ext::DEFAULT_PEER_SERVICE_NAME
+
+            option :service_name do |o|
+              o.default do
+                Contrib::SpanAttributeSchema.fetch_service_name(
+                  Ext::ENV_SERVICE_NAME,
+                  Ext::DEFAULT_PEER_SERVICE_NAME
+                )
+              end
+              o.lazy
+            end
+
+            option :error_status_codes do |o|
+              o.default { env_to_list(Ext::ENV_ERROR_STATUS_CODES, 400...600, comma_separated_only: false) }
+              o.lazy
+            end
+
             option :split_by_domain, default: false
           end
         end

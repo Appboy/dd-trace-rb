@@ -1,7 +1,7 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/patcher'
-require 'datadog/tracing/contrib/pg/connection'
+require_relative '../patcher'
+require_relative 'instrumentation'
 
 module Datadog
   module Tracing
@@ -18,7 +18,11 @@ module Datadog
           end
 
           def patch
-            ::PG::Connection.send(:include, Connection)
+            patch_pg_connection
+          end
+
+          def patch_pg_connection
+            ::PG::Connection.include(Instrumentation)
           end
         end
       end

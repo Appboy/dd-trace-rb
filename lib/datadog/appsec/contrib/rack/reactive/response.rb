@@ -1,6 +1,4 @@
-# typed: true
-
-require 'datadog/appsec/contrib/rack/response'
+# frozen_string_literal: true
 
 module Datadog
   module AppSec
@@ -9,50 +7,57 @@ module Datadog
         module Reactive
           # Dispatch data from a Rack response to the WAF context
           module Response
-            def self.publish(op, response)
+            ADDRESSES = [
+              'response.status',
+              'response.headers',
+            ].freeze
+            private_constant :ADDRESSES
+
+            def self.publish(op, gateway_response)
               catch(:block) do
-                op.publish('response.status', Rack::Response.status(response))
+                op.publish('response.status', gateway_response.status)
+                op.publish('response.headers', gateway_response.headers)
 
                 nil
               end
             end
 
             def self.subscribe(op, waf_context)
-              addresses = [
-                'response.status',
-              ]
-
-              op.subscribe(*addresses) do |*values|
-                Datadog.logger.debug { "reacted to #{addresses.inspect}: #{values.inspect}" }
+              op.subscribe(*ADDRESSES) do |*values|
+                Datadog.logger.debug { "reacted to #{ADDRESSES.inspect}: #{values.inspect}" }
 
                 response_status = values[0]
+                response_headers = values[1]
+                response_headers_no_cookies = response_headers.dup.tap { |h| h.delete('set-cookie') }
 
                 waf_args = {
                   'server.response.status' => response_status.to_s,
+                  'server.response.headers' => response_headers,
+                  'server.response.headers.no_cookies' => response_headers_no_cookies,
                 }
 
                 waf_timeout = Datadog::AppSec.settings.waf_timeout
-                action, result = waf_context.run(waf_args, waf_timeout)
+                result = waf_context.run(waf_args, waf_timeout)
 
                 Datadog.logger.debug { "WAF TIMEOUT: #{result.inspect}" } if result.timeout
 
-                # TODO: encapsulate return array in a type
-                case action
-                when :monitor
+                case result.status
+                when :match
                   Datadog.logger.debug { "WAF: #{result.inspect}" }
-                  yield [action, result, false]
-                when :block
-                  Datadog.logger.debug { "WAF: #{result.inspect}" }
-                  yield [action, result, true]
-                  throw(:block, [action, result, true])
-                when :good
+
+                  block = result.actions.include?('block')
+
+                  yield [result, block]
+
+                  throw(:block, [result, true]) if block
+                when :ok
                   Datadog.logger.debug { "WAF OK: #{result.inspect}" }
                 when :invalid_call
                   Datadog.logger.debug { "WAF CALL ERROR: #{result.inspect}" }
                 when :invalid_rule, :invalid_flow, :no_rule
                   Datadog.logger.debug { "WAF RULE ERROR: #{result.inspect}" }
                 else
-                  Datadog.logger.debug { "WAF UNKNOWN: #{action.inspect} #{result.inspect}" }
+                  Datadog.logger.debug { "WAF UNKNOWN: #{result.status.inspect} #{result.inspect}" }
                 end
               end
             end

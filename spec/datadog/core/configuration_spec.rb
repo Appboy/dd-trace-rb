@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 require 'datadog/profiling/spec_helper'
 
@@ -10,6 +8,14 @@ require 'datadog/tracing/tracer'
 
 RSpec.describe Datadog::Core::Configuration do
   let(:default_log_level) { ::Logger::INFO }
+  let(:telemetry_client) { instance_double(Datadog::Core::Telemetry::Client) }
+
+  before do
+    allow(telemetry_client).to receive(:started!)
+    allow(telemetry_client).to receive(:stop!)
+    allow(telemetry_client).to receive(:emit_closing!)
+    allow(Datadog::Core::Telemetry::Client).to receive(:new).and_return(telemetry_client)
+  end
 
   context 'when extended by a class' do
     subject(:test_class) { stub_const('TestClass', Class.new { extend Datadog::Core::Configuration }) }
@@ -21,11 +27,11 @@ RSpec.describe Datadog::Core::Configuration do
         before do
           allow(Datadog::Core::Configuration::Components).to receive(:new)
             .and_wrap_original do |m, *args|
-            new_components = m.call(*args)
-            allow(new_components).to receive(:shutdown!)
-            allow(new_components).to receive(:startup!)
-            new_components
-          end
+              new_components = m.call(*args)
+              allow(new_components).to receive(:shutdown!)
+              allow(new_components).to receive(:startup!)
+              new_components
+            end
         end
 
         context 'and components have been initialized' do
@@ -73,6 +79,7 @@ RSpec.describe Datadog::Core::Configuration do
               .with(test_class.configuration)
 
             expect(new_components).to_not have_received(:shutdown!)
+            expect(telemetry_client).to have_received(:started!)
           end
         end
       end
@@ -85,6 +92,7 @@ RSpec.describe Datadog::Core::Configuration do
           # Enable
           test_class.configure do |c|
             c.diagnostics.debug = true
+            c.logger.instance = Datadog::Core::Logger.new(StringIO.new)
           end
 
           # Assert state change
@@ -362,7 +370,7 @@ RSpec.describe Datadog::Core::Configuration do
       subject(:configure_onto) { test_class.configure_onto(object, **options) }
 
       let(:object) { Object.new }
-      let(:options) { {} }
+      let(:options) { { any: :thing } }
 
       it 'attaches a pin to the object' do
         expect(Datadog::Core::Pin)

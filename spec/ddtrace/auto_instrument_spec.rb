@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'rack/test'
 
@@ -102,6 +100,14 @@ RSpec.describe 'Auto Instrumentation of non Rails' do
 
       expect(route_span).to_not have_error
     end
+  end
+end
+
+RSpec.describe 'LOADED variable' do
+  subject(:auto_instrument) { load 'ddtrace/auto_instrument.rb' }
+  it do
+    auto_instrument
+    expect(Datadog::AutoInstrument::LOADED).to eq(true)
   end
 end
 

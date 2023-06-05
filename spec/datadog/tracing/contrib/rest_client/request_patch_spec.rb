@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'rest_client'
 require 'restclient/request'
 
@@ -12,6 +10,8 @@ require 'datadog/tracing/contrib/rest_client/request_patch'
 require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
+require 'datadog/tracing/contrib/environment_service_name_examples'
+require 'datadog/tracing/contrib/span_attribute_schema_examples'
 
 RSpec.describe Datadog::Tracing::Contrib::RestClient::RequestPatch do
   let(:configuration_options) { {} }
@@ -53,6 +53,9 @@ RSpec.describe Datadog::Tracing::Contrib::RestClient::RequestPatch do
       it 'returns response' do
         expect(request.body).to eq(response)
       end
+
+      it_behaves_like 'environment service name', 'DD_TRACE_REST_CLIENT_SERVICE_NAME'
+      it_behaves_like 'schema version span'
 
       describe 'created span' do
         context 'response is successfull' do
@@ -98,6 +101,10 @@ RSpec.describe Datadog::Tracing::Contrib::RestClient::RequestPatch do
           it 'has correct component and operation tags' do
             expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('rest_client')
             expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('request')
+          end
+
+          it 'has `client` as `span.kind`' do
+            expect(span.get_tag('span.kind')).to eq('client')
           end
 
           it_behaves_like 'a peer service span' do
@@ -164,6 +171,21 @@ RSpec.describe Datadog::Tracing::Contrib::RestClient::RequestPatch do
 
     it_behaves_like 'instrumented request'
 
+    context 'when basic auth in url' do
+      let(:host) { 'username:password@example.com' }
+
+      before do
+        stub_request(:get, /example.com/).to_return(status: status, body: response)
+      end
+
+      it 'does not collect auth info' do
+        request
+
+        expect(span.get_tag('http.url')).to eq('/sample/path')
+        expect(span.get_tag('out.host')).to eq('example.com')
+      end
+    end
+
     context 'that returns a custom response object' do
       subject(:request) do
         RestClient::Request.execute(method: :get, url: url) { response }
@@ -224,6 +246,9 @@ RSpec.describe Datadog::Tracing::Contrib::RestClient::RequestPatch do
             it_behaves_like 'a peer service span' do
               let(:peer_hostname) { host }
             end
+
+            it_behaves_like 'environment service name', 'DD_TRACE_REST_CLIENT_SERVICE_NAME'
+            it_behaves_like 'schema version span'
           end
         end
       end
@@ -304,6 +329,20 @@ RSpec.describe Datadog::Tracing::Contrib::RestClient::RequestPatch do
           expect(a_request(:get, url).with(headers: { 'X-Datadog-Sampling-Priority' => sampling_priority.to_s }))
             .to_not have_been_made
         end
+      end
+    end
+
+    context 'when split by domain' do
+      let(:configuration_options) { super().merge(split_by_domain: true) }
+
+      before { request }
+
+      it 'has correct service name' do
+        expect(span.service).to eq('example.com')
+      end
+
+      it_behaves_like 'a peer service span' do
+        let(:peer_hostname) { 'example.com' }
       end
     end
   end

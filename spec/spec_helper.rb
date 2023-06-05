@@ -1,9 +1,11 @@
-# typed: ignore
-
 $LOAD_PATH.unshift File.expand_path('..', __dir__)
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
+
+Thread.main.name = 'Thread.main' unless Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.3')
+
 require 'pry'
 require 'rspec/collection_matchers'
+require 'rspec/wait'
 require 'webmock/rspec'
 require 'climate_control'
 
@@ -24,6 +26,7 @@ require 'datadog/tracing/span'
 
 require 'support/configuration_helpers'
 require 'support/container_helpers'
+require 'support/core_helpers'
 require 'support/faux_transport'
 require 'support/faux_writer'
 require 'support/health_metric_helpers'
@@ -34,6 +37,7 @@ require 'support/network_helpers'
 require 'support/object_helpers'
 require 'support/object_space_helper'
 require 'support/platform_helpers'
+require 'support/rack_support'
 require 'support/span_helpers'
 require 'support/spy_transport'
 require 'support/synchronization_helpers'
@@ -59,12 +63,14 @@ WebMock.disable!
 RSpec.configure do |config|
   config.include ConfigurationHelpers
   config.include ContainerHelpers
+  config.include CoreHelpers
   config.include HealthMetricHelpers
   config.include HttpHelpers
   config.include LogHelpers
   config.include MetricHelpers
   config.include NetworkHelpers
   config.include ObjectHelpers
+  config.include RackSupport
   config.include SpanHelpers
   config.include SynchronizationHelpers
   config.include TestHelpers
@@ -86,6 +92,10 @@ RSpec.configure do |config|
   config.order = :random
   config.filter_run focus: true
   config.run_all_when_everything_filtered = true
+
+  # rspec-wait configuration
+  config.wait_timeout = 5 # default timeout for `wait_for(...)`, in seconds
+  config.wait_delay = 0.01 # default retry delay for `wait_for(...)`, in seconds
 
   if config.files_to_run.one?
     # Use the documentation formatter for detailed output,
@@ -156,7 +166,10 @@ RSpec.configure do |config|
         # teardown in those tests.
         # They currently flood the output, making our test
         # suite output unreadable.
-        if example.file_path.start_with?('./spec/datadog/core/workers/', './spec/ddtrace/workers/')
+        if example.file_path.start_with?(
+          './spec/datadog/core/workers/',
+          './spec/ddtrace/workers/'
+        )
           puts # Add newline so we get better output when the progress formatter is being used
           RSpec.warning("FIXME: #{example.file_path}:#{example.metadata[:line_number]} is leaking threads")
           next
@@ -241,5 +254,45 @@ end
 
 Thread.prepend(DatadogThreadDebugger)
 
+require 'spec/support/thread_helpers'
+# Enforce test time limit, to allow us to debug why some test runs get stuck in CI
+if ENV.key?('CI')
+  ThreadHelpers.with_leaky_thread_creation('Deadline thread') do
+    Thread.new do
+      Thread.current.name = 'spec_helper.rb CI debugging Deadline thread' unless RUBY_VERSION.start_with?('2.1.', '2.2.')
+
+      sleep_time = 30 * 60 # 30 minutes
+      sleep(sleep_time)
+
+      warn "Test too longer than #{sleep_time}s to finish, aborting test run."
+      warn 'Stack trace of all running threads:'
+
+      Thread.list.select { |t| t.alive? && t != Thread.current }.each_with_index.map do |t, idx|
+        backtrace = t.backtrace
+        backtrace = ['(Not available)'] if backtrace.nil? || backtrace.empty?
+
+        msg = "#{idx}: #{t} (#{t.class.name})",
+              'Thread Backtrace:',
+              backtrace.map { |l| "\t#{l}" }.join("\n"),
+              "\n"
+
+        warn(msg) rescue puts(msg)
+      end
+
+      Kernel.exit(1)
+    end
+  end
+end
+
 # Helper matchers
 RSpec::Matchers.define_negated_matcher :not_be, :be
+
+ThreadHelpers.with_leaky_thread_creation("Timeout's internal thread") do
+  # The Ruby Timeout class uses a long-lived class-level thread that is never terminated.
+  # Creating it early here ensures tests that tests that check for leaking threads are not
+  # triggered by the creation of this thread.
+  #
+  # This has to be one once for the lifetime of this process, and was introduced in Ruby 3.1.
+  # Before 3.1, a thread was created and destroyed on every Timeout#timeout call.
+  Timeout.ensure_timeout_thread_created if Timeout.respond_to?(:ensure_timeout_thread_created)
+end

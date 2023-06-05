@@ -1,6 +1,6 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/shoryuken/tracer'
+require_relative 'tracer'
 
 module Datadog
   module Tracing

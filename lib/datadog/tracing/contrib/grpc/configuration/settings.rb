@@ -1,8 +1,8 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/span_operation'
-require 'datadog/tracing/contrib/configuration/settings'
-require 'datadog/tracing/contrib/grpc/ext'
+require_relative '../../../span_operation'
+require_relative '../../configuration/settings'
+require_relative '../ext'
 
 module Datadog
   module Tracing
@@ -27,7 +27,18 @@ module Datadog
               o.lazy
             end
 
-            option :service_name, default: Ext::DEFAULT_PEER_SERVICE_NAME
+            option :distributed_tracing, default: true
+
+            option :service_name do |o|
+              o.default do
+                Contrib::SpanAttributeSchema.fetch_service_name(
+                  Ext::ENV_SERVICE_NAME,
+                  Ext::DEFAULT_PEER_SERVICE_NAME
+                )
+              end
+              o.lazy
+            end
+
             option :error_handler, default: Tracing::SpanOperation::Events::DEFAULT_ON_ERROR
           end
         end

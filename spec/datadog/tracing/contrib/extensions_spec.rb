@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 
 require 'datadog/tracing/contrib'
@@ -17,9 +15,12 @@ RSpec.describe Datadog::Tracing::Contrib::Extensions do
     end
 
     let(:configurable_module) do
-      stub_const('Configurable', Module.new do
-        include Datadog::Tracing::Contrib::Configurable
-      end)
+      stub_const(
+        'Configurable',
+        Module.new do
+          include Datadog::Tracing::Contrib::Configurable
+        end
+      )
     end
 
     before { registry.add(integration_name, integration) }
@@ -41,6 +42,11 @@ RSpec.describe Datadog::Tracing::Contrib::Extensions do
             it 'configures & patches the integration' do
               expect(integration).to receive(:configure).with(:default, any_args)
               expect(integration).to receive(:patch).and_call_original
+              configure
+            end
+
+            it 'sends a telemetry integrations change event' do
+              expect_any_instance_of(Datadog::Core::Telemetry::Client).to receive(:integrations_change!)
               configure
             end
           end
@@ -154,13 +160,16 @@ RSpec.describe Datadog::Tracing::Contrib::Extensions do
               end
 
               let(:patcher_module) do
-                stub_const('Patcher', Module.new do
-                  include Datadog::Tracing::Contrib::Patcher
+                stub_const(
+                  'Patcher',
+                  Module.new do
+                    include Datadog::Tracing::Contrib::Patcher
 
-                  def self.patch
-                    true
+                    def self.patch
+                      true
+                    end
                   end
-                end)
+                )
               end
             end
 

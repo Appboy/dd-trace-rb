@@ -1,4 +1,4 @@
-# typed: false
+# frozen_string_literal: true
 
 module Datadog
   # Datadog::Kit holds public-facing APIs for higher level user-facing
@@ -8,4 +8,4 @@ module Datadog
   end
 end
 
-require 'datadog/kit/identity'
+require_relative 'kit/identity'

@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-# typed: false
-
-require 'datadog/tracing/contrib/que/tracer'
+require_relative 'tracer'
 
 module Datadog
   module Tracing

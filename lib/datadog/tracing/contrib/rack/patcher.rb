@@ -1,5 +1,3 @@
-# typed: false
-
 module Datadog
   module Tracing
     module Contrib
@@ -91,16 +89,26 @@ module Datadog
               if get_option(:application)
                 MiddlewareNamePatcher.patch
               else
-                Datadog.logger.warn(%(
+                Datadog.logger.warn(
+                  %(
                 Rack :middleware_names requires you to also pass :application.
                 Middleware names have NOT been patched; please provide :application.
-                e.g. use: :rack, middleware_names: true, application: my_rack_app).freeze)
+                e.g. use: :rack, middleware_names: true, application: my_rack_app).freeze
+                )
               end
             end
           end
 
           def get_option(option)
             Datadog.configuration.tracing[:rack].get_option(option)
+          end
+
+          def patch_successful
+            MiddlewarePatcher.patch_successful || MiddlewareNamePatcher.patch_successful
+          end
+
+          def patch_error_result
+            MiddlewarePatcher.patch_error_result || MiddlewareNamePatcher.patch_error_result
           end
         end
       end

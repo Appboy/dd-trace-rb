@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'datadog/core/workers/async'
@@ -596,7 +594,7 @@ RSpec.describe Datadog::Tracing::Workers::AsyncTraceWriter do
             expect_in_fork do
               # Queue up traces, wait for worker to process them.
               traces.each { |trace| writer.write(trace) }
-              try_wait_until(attempts: 30) { !writer.work_pending? }
+              try_wait_until(seconds: 3) { !writer.work_pending? }
               writer.stop
 
               # Verify state of the writer

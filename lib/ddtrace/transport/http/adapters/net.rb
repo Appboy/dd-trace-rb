@@ -1,7 +1,5 @@
-# typed: true
-
-require 'ddtrace/transport/response'
-require 'datadog/core/vendor/multipart-post/net/http/post/multipart'
+require_relative '../../response'
+require_relative '../../../../datadog/core/vendor/multipart-post/net/http/post/multipart'
 
 module Datadog
   module Transport
@@ -15,6 +13,7 @@ module Datadog
             :timeout,
             :ssl
 
+          # in seconds
           DEFAULT_TIMEOUT = 30
 
           # @deprecated Positional parameters are deprecated. Use named parameters instead.
@@ -52,6 +51,18 @@ module Datadog
             else
               raise UnknownHTTPMethod, env
             end
+          end
+
+          def get(env)
+            get = ::Net::HTTP::Get.new(env.path, env.headers)
+
+            # Connect and send the request
+            http_response = open do |http|
+              http.request(get)
+            end
+
+            # Build and return response
+            Response.new(http_response)
           end
 
           def post(env)

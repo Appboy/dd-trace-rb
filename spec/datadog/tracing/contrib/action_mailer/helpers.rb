@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'rails'
 
 RSpec.shared_context 'ActionMailer helpers' do
@@ -20,11 +18,13 @@ RSpec.shared_context 'ActionMailer helpers' do
         default from: 'test@example.com'
 
         def test_mail(_arg)
-          mail(to: 'test@example.com',
-               body: 'sk test',
-               subject: 'miniswan',
-               bcc: 'test_a@example.com,test_b@example.com',
-               cc: ['test_c@example.com', 'test_d@example.com'])
+          mail(
+            to: 'test@example.com',
+            body: 'sk test',
+            subject: 'miniswan',
+            bcc: 'test_a@example.com,test_b@example.com',
+            cc: ['test_c@example.com', 'test_d@example.com']
+          )
         end
       end
     )

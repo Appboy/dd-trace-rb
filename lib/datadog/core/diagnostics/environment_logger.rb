@@ -1,5 +1,3 @@
-# typed: true
-
 require 'date'
 require 'json'
 require 'rbconfig'
@@ -106,10 +104,14 @@ module Datadog
           Datadog.configuration.version
         end
 
-        # @return [String] target agent URL for trace flushing
+        # @return [String, nil] target agent URL for trace flushing
         def agent_url
           # Retrieve the effect agent URL, regardless of how it was configured
           transport = Tracing.send(:tracer).writer.transport
+
+          # return `nil` with IO transport
+          return unless transport.respond_to?(:client)
+
           adapter = transport.client.api.adapter
           adapter.url
         end
@@ -151,7 +153,7 @@ module Datadog
         def sampling_rules
           sampler = Datadog.configuration.tracing.sampler
           return nil unless sampler.is_a?(Tracing::Sampling::PrioritySampler) &&
-                            sampler.priority_sampler.is_a?(Tracing::Sampling::RuleSampler)
+            sampler.priority_sampler.is_a?(Tracing::Sampling::RuleSampler)
 
           sampler.priority_sampler.rules.map do |rule|
             next unless rule.is_a?(Tracing::Sampling::SimpleRule)
@@ -217,9 +219,9 @@ module Datadog
           !!Datadog.configuration.diagnostics.health_metrics.enabled
         end
 
-        # TODO: Populate when profiling is implemented
-        # def profiling_enabled
-        # end
+        def profiling_enabled
+          !!Datadog.configuration.profiling.enabled
+        end
 
         # TODO: Populate when automatic log correlation is implemented
         # def logs_correlation_enabled
@@ -250,6 +252,7 @@ module Datadog
             partial_flushing_enabled: partial_flushing_enabled,
             priority_sampling_enabled: priority_sampling_enabled,
             health_metrics_enabled: health_metrics_enabled,
+            profiling_enabled: profiling_enabled,
             **instrumented_integrations_settings
           }
         end

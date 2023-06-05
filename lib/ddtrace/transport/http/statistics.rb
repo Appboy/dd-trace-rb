@@ -1,6 +1,4 @@
-# typed: true
-
-require 'ddtrace/transport/statistics'
+require_relative '../statistics'
 
 module Datadog
   module Transport

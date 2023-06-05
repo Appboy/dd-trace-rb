@@ -1,4 +1,4 @@
-# typed: true
+# frozen_string_literal: true
 
 module Datadog
   module Tracing
@@ -10,6 +10,7 @@ module Datadog
             super
 
             span.set_tag(Ext::TAG_GROUP, payload[:group_id])
+            span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CONSUMER)
           end
         end
       end

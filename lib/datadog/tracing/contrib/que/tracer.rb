@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-# typed: true
-
-require 'datadog/tracing/contrib/analytics'
+require_relative '../analytics'
 
 module Datadog
   module Tracing
@@ -18,6 +16,8 @@ module Datadog
             }
 
             Tracing.trace(Ext::SPAN_JOB, **trace_options) do |request_span|
+              request_span.set_tag(Contrib::Ext::Messaging::TAG_SYSTEM, Ext::TAG_COMPONENT)
+
               request_span.resource = job.class.name.to_s
 
               request_span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
@@ -32,6 +32,8 @@ module Datadog
               request_span.set_tag(Ext::TAG_JOB_FINISHED_AT, job.que_attrs[:finished_at])
               request_span.set_tag(Ext::TAG_JOB_ARGS, job.que_attrs[:args]) if configuration[:tag_args]
               request_span.set_tag(Ext::TAG_JOB_DATA, job.que_attrs[:data]) if configuration[:tag_data]
+
+              request_span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CONSUMER)
 
               set_sample_rate(request_span)
               Contrib::Analytics.set_measured(request_span)

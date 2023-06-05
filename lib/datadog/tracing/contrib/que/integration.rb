@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-# typed: false
-
-require 'datadog/tracing/contrib/integration'
-require 'datadog/tracing/contrib/que/ext'
-require 'datadog/tracing/contrib/que/configuration/settings'
-require 'datadog/tracing/contrib/que/patcher'
+require_relative '../integration'
+require_relative 'ext'
+require_relative 'configuration/settings'
+require_relative 'patcher'
 
 module Datadog
   module Tracing

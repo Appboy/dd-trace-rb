@@ -1,16 +1,14 @@
-# typed: true
-
 require 'time'
 
-require 'datadog/core'
-require 'datadog/core/environment/identity'
-require 'datadog/core/utils'
-require 'datadog/core/utils/time'
+require_relative '../core/environment/identity'
+require_relative '../core/utils'
+require_relative '../core/utils/time'
 
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/event'
-require 'datadog/tracing/span'
-require 'datadog/tracing/metadata'
+require_relative 'event'
+require_relative 'metadata'
+require_relative 'metadata/ext'
+require_relative 'span'
+require_relative 'utils'
 
 module Datadog
   module Tracing
@@ -18,7 +16,6 @@ module Datadog
     # It gives a Span a context which can be used to
     # build a Span. When completed, it yields the Span.
     #
-    # rubocop:disable Metrics/ClassLength
     # @public_api
     class SpanOperation
       include Metadata
@@ -62,9 +59,9 @@ module Datadog
         self.type = type
         self.resource = resource
 
-        @id = Core::Utils.next_id
+        @id = Tracing::Utils.next_id
         @parent_id = parent_id || 0
-        @trace_id = trace_id || Core::Utils.next_id
+        @trace_id = trace_id || Tracing::Utils::TraceId.next_id
 
         @status = 0
 
@@ -468,7 +465,8 @@ module Datadog
           start_time: @start_time,
           status: @status,
           type: @type,
-          trace_id: @trace_id
+          trace_id: @trace_id,
+          service_entry: parent.nil? || (service && parent.service != service)
         )
       end
 
@@ -515,6 +513,5 @@ module Datadog
       alias :span_type :type
       alias :span_type= :type=
     end
-    # rubocop:enable Metrics/ClassLength
   end
 end

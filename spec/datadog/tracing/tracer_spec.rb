@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'time'
@@ -7,7 +5,7 @@ require 'time'
 require 'datadog/core'
 require 'datadog/core/environment/identity'
 require 'datadog/core/environment/socket'
-require 'datadog/core/utils'
+
 require 'datadog/tracing'
 require 'datadog/tracing/context'
 require 'datadog/tracing/correlation'
@@ -16,6 +14,7 @@ require 'datadog/tracing/sampling/ext'
 require 'datadog/tracing/span_operation'
 require 'datadog/tracing/trace_operation'
 require 'datadog/tracing/tracer'
+require 'datadog/tracing/utils'
 require 'datadog/tracing/writer'
 
 RSpec.describe Datadog::Tracing::Tracer do
@@ -25,13 +24,6 @@ RSpec.describe Datadog::Tracing::Tracer do
   subject(:tracer) { described_class.new(writer: writer, **tracer_options) }
 
   after { tracer.shutdown! }
-
-  shared_context 'parent span' do
-    let(:parent_span) { tracer.start_span('parent', service: service) }
-    let(:service) { 'test-service' }
-    let(:trace_id) { parent_span.trace_id }
-    let(:span_id) { parent_span.span_id }
-  end
 
   describe '::new' do
     context 'given :trace_flush' do
@@ -192,25 +184,6 @@ RSpec.describe Datadog::Tracing::Tracer do
         it 'sets the span name from the name argument' do
           trace
           expect(span.name).to eq(name)
-        end
-
-        it 'tracks the number of allocations made in the span' do
-          skip 'Test unstable; improve stability before re-enabling.'
-
-          # Create and discard first trace.
-          # When warming up, it might have more allocations than subsequent traces.
-          tracer.trace(name) {}
-          writer.spans
-
-          # Then create traces to compare
-          tracer.trace(name) {}
-          tracer.trace(name) { Object.new }
-
-          first, second = writer.spans
-
-          # Different versions of Ruby will allocate a different number of
-          # objects, so this is what works across the board.
-          expect(second.allocations).to eq(first.allocations + 1)
         end
 
         context 'with diagnostics debug enabled' do
@@ -535,6 +508,26 @@ RSpec.describe Datadog::Tracing::Tracer do
           end
         end
       end
+
+      context 'for span sampling' do
+        let(:tracer_options) { super().merge(span_sampler: span_sampler) }
+        let(:span_sampler) { instance_double(Datadog::Tracing::Sampling::Span::Sampler) }
+        let(:block) do
+          proc do |span_op, trace_op|
+            @span_op = span_op
+            @trace_op = trace_op
+          end
+        end
+
+        before do
+          allow(span_sampler).to receive(:sample!)
+        end
+
+        it 'invokes the span sampler with the current span and trace operation' do
+          trace
+          expect(span_sampler).to have_received(:sample!).with(@trace_op, @span_op.finish)
+        end
+      end
     end
 
     context 'without a block' do
@@ -596,6 +589,23 @@ RSpec.describe Datadog::Tracing::Tracer do
           expect(parent).to be_root_span
           expect(child.send(:parent)).to be(parent)
           expect(child.end_time).to be > parent.end_time
+        end
+      end
+
+      context 'for span sampling' do
+        let(:tracer_options) { super().merge(span_sampler: span_sampler) }
+        let(:span_sampler) { instance_double(Datadog::Tracing::Sampling::Span::Sampler) }
+
+        before do
+          allow(span_sampler).to receive(:sample!)
+        end
+
+        it 'invokes the span sampler with the current span and trace operation' do
+          span_op = trace
+          trace_op = tracer.active_trace
+          span = span_op.finish
+
+          expect(span_sampler).to have_received(:sample!).with(trace_op, span)
         end
       end
     end
@@ -788,10 +798,11 @@ RSpec.describe Datadog::Tracing::Tracer do
     context 'given a TraceDigest' do
       let(:digest) do
         Datadog::Tracing::TraceDigest.new(
-          span_id: Datadog::Core::Utils.next_id,
-          trace_id: Datadog::Core::Utils.next_id,
+          span_id: Datadog::Tracing::Utils.next_id,
+          trace_distributed_tags: { '_dd.p.test' => 'value' },
+          trace_id: Datadog::Tracing::Utils.next_id,
           trace_origin: 'synthetics',
-          trace_sampling_priority: Datadog::Tracing::Sampling::Ext::Priority::USER_KEEP
+          trace_sampling_priority: Datadog::Tracing::Sampling::Ext::Priority::USER_KEEP,
         )
       end
 
@@ -801,8 +812,10 @@ RSpec.describe Datadog::Tracing::Tracer do
         tracer.trace('operation') do |span, trace|
           expect(trace).to have_attributes(
             origin: digest.trace_origin,
-            sampling_priority: digest.trace_sampling_priority
+            sampling_priority: digest.trace_sampling_priority,
           )
+
+          expect(trace.send(:distributed_tags)).to eq('_dd.p.test' => 'value')
 
           expect(span).to have_attributes(
             parent_id: digest.span_id,

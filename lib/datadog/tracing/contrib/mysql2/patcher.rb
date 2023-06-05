@@ -1,7 +1,7 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/patcher'
-require 'datadog/tracing/contrib/mysql2/instrumentation'
+require_relative '../patcher'
+require_relative 'instrumentation'
 
 module Datadog
   module Tracing

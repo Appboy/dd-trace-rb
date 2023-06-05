@@ -1,9 +1,7 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'datadog/tracing/distributed/helpers'
-require 'datadog/tracing/span'
+require 'datadog/tracing/utils'
 
 RSpec.describe Datadog::Tracing::Distributed::Helpers do
   describe '#clamp_sampling_priority' do
@@ -23,42 +21,47 @@ RSpec.describe Datadog::Tracing::Distributed::Helpers do
     end
   end
 
-  describe '#truncate_base16_number' do
-    subject(:number) { described_class.truncate_base16_number(value) }
-
+  describe '.parse_decimal_id' do
     [
-      %w[1 1],
-
-      # Test removing leading zeros
-      %w[0 0],
-      %w[000000 0],
-      %w[000001 1],
-      %w[000010 10],
-
-      # Test lowercase
-      %w[DEADBEEF deadbeef],
-
-      # Test at boundary (64-bit)
-      # 64-bit max, which is 17 characters long, so we truncate to the last 16, which is all zeros
-      [(2**64).to_s(16), '0'],
-      # 64-bit - 1, which is the max 16 characters we allow
-      [((2**64) - 1).to_s(16), 'ffffffffffffffff'],
-
-      # Our max generated id
-      [Datadog::Tracing::Span::RUBY_MAX_ID.to_s(16), '3fffffffffffffff'],
-      # Our max external id
-      # DEV: This is the same as (2**64) above, but use the constant to be sure
-      [Datadog::Tracing::Span::EXTERNAL_MAX_ID.to_s(16), '0'],
-
-      # 128-bit max, which is 32 characters long, so we truncate to the last 16, which is all zeros
-      [(2**128).to_s(16), '0'],
-      # 128-bit - 1, which is 32 characters long and all `f`s
-      [((2**128) - 1).to_s(16), 'ffffffffffffffff']
+      [nil, nil],
+      ['', nil],
+      ['not a number', nil],
+      ['1 2', nil], # "1 2".to_i => 1, but it's an invalid format
+      ['1.2', nil],
+      ['0', 0],
+      ['1', 1],
+      ['-1', -1],
+      ['123456789', 123456789],
     ].each do |value, expected|
-      context "with input of #{value}" do
-        let(:value) { value }
+      context "when given #{value.inspect}" do
+        it { expect(described_class.parse_decimal_id(value)).to eq(expected) }
+      end
+    end
+  end
 
-        it { is_expected.to eq(expected) }
+  describe '.parse_hex_id' do
+    context 'when given with `length`' do
+      [
+        [nil, nil],
+        ['', nil],
+        ['not a number', nil],
+        ['1 2', nil], # "1 2".to_i => 1, but it's an invalid format
+        ['1.2', nil],
+        ['0', 0],
+        ['1', 1],
+        ['-1', -1],
+        ['123456789', 0x123456789],
+        ['abcdef', 0xabcdef], # lower case
+        ['ABCDEF', 0xabcdef], # upper case
+        ['00123456789', 0x123456789], # leading zeros
+        ['000abcdef', 0xabcdef], # leading zeros
+        ['000ABCDEF', 0xabcdef], # leading zeros
+        ['aaaaaaaaaaaaaaaaffffffffffffffff', 0xaaaaaaaaaaaaaaaaffffffffffffffff], # 128 bits
+        ['ffffffffffffffff', 0xffffffffffffffff], # 64 bits
+      ].each do |value, expected|
+        context "when given #{value.inspect}" do
+          it { expect(described_class.parse_hex_id(value)).to eq(expected) }
+        end
       end
     end
   end

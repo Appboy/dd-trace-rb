@@ -1,5 +1,3 @@
-# typed: ignore
-
 require 'datadog/tracing/contrib/support/spec_helper'
 require_relative 'support/helper'
 
@@ -16,8 +14,6 @@ RSpec.describe 'Server tracer' do
     Sidekiq::Testing.server_middleware do |chain|
       chain.add(Datadog::Tracing::Contrib::Sidekiq::ServerTracer)
     end
-
-    Sidekiq::Extensions.enable_delay! if Sidekiq::VERSION > '5.0.0'
   end
 
   it 'traces async job run' do
@@ -26,6 +22,7 @@ RSpec.describe 'Server tracer' do
     expect(spans).to have(2).items
 
     span, _push = spans
+
     expect(span.service).to eq(tracer.default_service)
     expect(span.resource).to eq('EmptyWorker')
     expect(span.get_tag('sidekiq.job.queue')).to eq('default')
@@ -36,19 +33,24 @@ RSpec.describe 'Server tracer' do
     expect(span.get_metric('_dd.measured')).to eq(1.0)
     expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('sidekiq')
     expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('job')
+    expect(span.get_tag('span.kind')).to eq('consumer')
+    expect(span.get_tag('messaging.system')).to eq('sidekiq')
   end
 
   context 'with job run failing' do
     let(:job_class) { ErrorWorker }
 
     before do
-      stub_const('ErrorWorker', Class.new do
-        include Sidekiq::Worker
+      stub_const(
+        'ErrorWorker',
+        Class.new do
+          include Sidekiq::Worker
 
-        def perform
-          raise ZeroDivisionError, 'job error'
+          def perform
+            raise ZeroDivisionError, 'job error'
+          end
         end
-      end)
+      )
     end
 
     it 'traces async job run' do
@@ -66,6 +68,8 @@ RSpec.describe 'Server tracer' do
       expect(span).to be_root_span
       expect(span.get_tag('sidekiq.job.args')).to be_nil
       expect(span.get_metric('_dd.measured')).to eq(1.0)
+      expect(span.get_tag('span.kind')).to eq('consumer')
+      expect(span.get_tag('messaging.system')).to eq('sidekiq')
     end
   end
 
@@ -73,11 +77,14 @@ RSpec.describe 'Server tracer' do
     before do
       allow(Datadog.configuration.tracing).to receive(:[]).with(:sidekiq).and_return(sidekiq_options)
 
-      stub_const('CustomWorker', Class.new do
-        include Sidekiq::Worker
+      stub_const(
+        'CustomWorker',
+        Class.new do
+          include Sidekiq::Worker
 
-        def perform(id) end
-      end)
+          def perform(id) end
+        end
+      )
     end
 
     it 'traces async job run' do
@@ -95,6 +102,7 @@ RSpec.describe 'Server tracer' do
       expect(empty.status).to eq(0)
       expect(empty).to be_root_span
       expect(empty.get_metric('_dd.measured')).to eq(1.0)
+      expect(empty.get_tag('span.kind')).to eq('consumer')
 
       expect(custom.service).to eq(tracer.default_service)
       expect(custom.resource).to eq('CustomWorker')
@@ -103,6 +111,8 @@ RSpec.describe 'Server tracer' do
       expect(custom).to be_root_span
       expect(custom.get_tag('sidekiq.job.args')).to eq(['?'].to_s)
       expect(custom.get_metric('_dd.measured')).to eq(1.0)
+      expect(custom.get_tag('span.kind')).to eq('consumer')
+      expect(custom.get_tag('messaging.system')).to eq('sidekiq')
     end
 
     context 'with tag_args' do
@@ -152,6 +162,8 @@ RSpec.describe 'Server tracer' do
         expect(empty.status).to eq(0)
         expect(empty).to be_root_span
         expect(empty.get_metric('_dd.measured')).to eq(1.0)
+        expect(empty.get_tag('span.kind')).to eq('consumer')
+        expect(empty.get_tag('messaging.system')).to eq('sidekiq')
 
         expect(custom.service).to eq('sidekiq-slow')
         expect(custom.resource).to eq('CustomWorker')
@@ -160,28 +172,36 @@ RSpec.describe 'Server tracer' do
         expect(custom).to be_root_span
         expect(custom.get_tag('sidekiq.job.args')).to eq(['random_id'].to_s)
         expect(custom.get_metric('_dd.measured')).to eq(1.0)
+        expect(custom.get_tag('span.kind')).to eq('consumer')
+        expect(custom.get_tag('messaging.system')).to eq('sidekiq')
       end
     end
   end
 
-  context 'with delayed extensions' do
-    subject(:do_work) { DelayableClass.delay.do_work }
+  context 'with delayed extensions',
+    skip: Sidekiq::VERSION >= '7' ? 'Delayed extensions were disabled in Sidekiq 5 and removed in Sidekiq 7.' : nil do
+      subject(:do_work) { DelayableClass.delay.do_work }
 
-    before do
-      if Gem::Version.new(RUBY_VERSION) >= Gem::Version.new('3.1.0')
-        pending 'Broken in Ruby 3.1.0-preview1, see https://github.com/mperham/sidekiq/issues/5064'
-      end
-
-      stub_const('DelayableClass', Class.new do
-        def self.do_work
-          puts 'a'
+      before do
+        if Gem::Version.new(RUBY_VERSION) >= Gem::Version.new('3.1.0')
+          pending 'Broken in Ruby 3.1.0-preview1, see https://github.com/mperham/sidekiq/issues/5064'
         end
-      end)
-    end
 
-    it 'traces with correct resource' do
-      do_work
-      expect(spans.first.resource).to eq('DelayableClass.do_work')
+        Sidekiq::Extensions.enable_delay! if Sidekiq::VERSION > '5.0.0'
+
+        stub_const(
+          'DelayableClass',
+          Class.new do
+            def self.do_work
+              puts 'a'
+            end
+          end
+        )
+      end
+
+      it 'traces with correct resource' do
+        do_work
+        expect(spans.first.resource).to eq('DelayableClass.do_work')
+      end
     end
-  end
 end

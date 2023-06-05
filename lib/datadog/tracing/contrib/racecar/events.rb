@@ -1,8 +1,8 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'datadog/tracing/contrib/racecar/events/batch'
-require 'datadog/tracing/contrib/racecar/events/message'
-require 'datadog/tracing/contrib/racecar/events/consume'
+require_relative 'events/batch'
+require_relative 'events/message'
+require_relative 'events/consume'
 
 module Datadog
   module Tracing

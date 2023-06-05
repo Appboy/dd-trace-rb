@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'ddtrace'
@@ -27,11 +25,23 @@ RSpec.describe Datadog::Core::Configuration::Base do
 
             it { is_expected.to be_a_kind_of(Datadog::Core::Configuration::OptionDefinition) }
 
+            it 'sets default properties' do
+              expect(definition.type).to be_a_kind_of(Class)
+              expect(definition.type.ancestors).to include(described_class)
+
+              is_expected.to have_attributes(
+                default: kind_of(Proc),
+                lazy: true,
+                resetter: kind_of(Proc)
+              )
+            end
+
             describe 'when instantiated' do
               subject(:option) { Datadog::Core::Configuration::Option.new(definition, self) }
+              let(:settings_object) { option.default_value }
 
-              it { expect(option.default_value).to be_a_kind_of(described_class) }
-              it { expect(option.default_value.option_defined?(:enabled)).to be true }
+              it { expect(settings_object).to be_a_kind_of(described_class) }
+              it { expect(settings_object.option_defined?(:enabled)).to be true }
             end
           end
         end
@@ -103,6 +113,32 @@ RSpec.describe Datadog::Core::Configuration::Base do
         it do
           is_expected.to be(options_hash)
           expect(base_object).to have_received(:options_hash)
+        end
+      end
+
+      describe '#dig' do
+        subject(:dig) { base_object.dig(*options) }
+        let(:options) { 'debug' }
+
+        let(:settings) { base_class.send(:settings, name, &block) }
+        let(:name) { :debug }
+        let(:block) { proc { option :enabled, default: true } }
+        let(:definition) { base_class.options[name] }
+
+        before do
+          settings
+          definition
+        end
+
+        context 'when given one arg' do
+          let(:options) { 'debug' }
+          it { is_expected.to be_a_kind_of(Datadog::Core::Configuration::Options) }
+        end
+
+        context 'when given more than one arg' do
+          let(:options) { %w[debug enabled] }
+
+          it { is_expected.to be(true) }
         end
       end
 

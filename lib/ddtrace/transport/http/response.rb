@@ -1,6 +1,6 @@
-# typed: false
+# frozen_string_literal: true
 
-require 'ddtrace/transport/response'
+require_relative '../response'
 
 module Datadog
   module Transport

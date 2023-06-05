@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 
 require 'ddtrace/transport/traces'
@@ -97,8 +95,14 @@ RSpec.describe Datadog::Transport::Traces::Chunker do
 
         let(:max_size) { 1 }
 
+        before do
+          Datadog.configuration.diagnostics.debug = true
+          allow(Datadog.logger).to receive(:debug)
+        end
+
         it 'drops all traces except the smallest' do
           is_expected.to eq([['1', 1]])
+          expect(Datadog.logger).to have_lazy_debug_logged(/Payload too large/)
           expect(health_metrics).to have_received(:transport_trace_too_large).with(1).twice
         end
       end
@@ -175,8 +179,8 @@ RSpec.describe Datadog::Transport::Traces::Transport do
 
       allow(Datadog::Transport::HTTP::Client).to receive(:new).with(api_v1).and_return(client_v1)
       allow(Datadog::Transport::HTTP::Client).to receive(:new).with(api_v2).and_return(client_v2)
-      allow(client_v1).to receive(:send_payload).with(request).and_return(response)
-      allow(client_v2).to receive(:send_payload).with(request).and_return(response)
+      allow(client_v1).to receive(:send_traces_payload).with(request).and_return(response)
+      allow(client_v2).to receive(:send_traces_payload).with(request).and_return(response)
 
       allow(Datadog::Transport::Traces::Request).to receive(:new).and_return(request)
     end
@@ -186,7 +190,7 @@ RSpec.describe Datadog::Transport::Traces::Transport do
 
       it 'sends to only the current API once' do
         is_expected.to eq(responses)
-        expect(client_v2).to have_received(:send_payload).with(request).once
+        expect(client_v2).to have_received(:send_traces_payload).with(request).once
 
         expect(health_metrics).to have_received(:transport_chunked).with(1)
       end
@@ -202,7 +206,7 @@ RSpec.describe Datadog::Transport::Traces::Transport do
 
         it 'successfully sends a single request' do
           is_expected.to eq(responses)
-          expect(client_v2).to have_received(:send_payload).with(request).once
+          expect(client_v2).to have_received(:send_traces_payload).with(request).once
 
           expect(health_metrics).to have_received(:transport_chunked).with(1)
         end
@@ -228,8 +232,8 @@ RSpec.describe Datadog::Transport::Traces::Transport do
       it 'attempts each API once as it falls back after each failure' do
         is_expected.to eq(responses)
 
-        expect(client_v2).to have_received(:send_payload).with(request).once
-        expect(client_v1).to have_received(:send_payload).with(request).once
+        expect(client_v2).to have_received(:send_traces_payload).with(request).once
+        expect(client_v1).to have_received(:send_traces_payload).with(request).once
 
         expect(health_metrics).to have_received(:transport_chunked).with(1)
       end
@@ -244,8 +248,8 @@ RSpec.describe Datadog::Transport::Traces::Transport do
       it 'attempts each API once as it falls back after each failure' do
         is_expected.to eq(responses)
 
-        expect(client_v2).to have_received(:send_payload).with(request).once
-        expect(client_v1).to have_received(:send_payload).with(request).once
+        expect(client_v2).to have_received(:send_traces_payload).with(request).once
+        expect(client_v1).to have_received(:send_traces_payload).with(request).once
 
         expect(health_metrics).to have_received(:transport_chunked).with(1)
       end

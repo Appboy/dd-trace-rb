@@ -1,6 +1,4 @@
-# typed: true
-
-require 'datadog/core/utils/time'
+require_relative '../../core/utils/time'
 
 module Datadog
   module Tracing
@@ -38,6 +36,9 @@ module Datadog
         # @param max_tokens [Numeric] Limit of available tokens
         def initialize(rate, max_tokens = rate)
           super()
+
+          raise ArgumentError, "rate must be a number: #{rate}" unless rate.is_a?(Numeric)
+          raise ArgumentError, "max_tokens must be a number: #{max_tokens}" unless max_tokens.is_a?(Numeric)
 
           @rate = rate
           @max_tokens = max_tokens

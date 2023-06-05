@@ -1,5 +1,3 @@
-# typed: ignore
-
 # This (very bizarre file) gets used from `stack_spec.rb`. It tries to reproduce the most interesting (contrived?) call
 # stack I can think of, with as many weird variants as possible.
 # The objective is to thoroughly test our stack trace sampling abilities.
@@ -135,6 +133,7 @@ module IbhMoreGlobals
 end
 
 def ibh_method_with_complex_parameters(a, b = nil, *c, (d), f:, g: nil, **h, &i)
+  d.to_s # Dummy call to avoid warning on legacy Rubies
   $ibh_anonymous_module.hello
 end
 

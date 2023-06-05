@@ -1,5 +1,3 @@
-# typed: false
-
 require 'datadog/tracing/contrib/support/spec_helper'
 
 require 'datadog/tracing/contrib/patcher'
@@ -24,9 +22,12 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'when patcher does not define .patch' do
           let(:patcher) do
-            stub_const('TestPatcher', Class.new do
-              include Datadog::Tracing::Contrib::Patcher
-            end)
+            stub_const(
+              'TestPatcher',
+              Class.new do
+                include Datadog::Tracing::Contrib::Patcher
+              end
+            )
           end
 
           it { expect(patch).to be nil }
@@ -35,13 +36,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
         context 'when patcher defines .patch' do
           context 'and .target_version is not defined' do
             let(:patcher) do
-              stub_const('TestPatcher', Class.new do
-                include Datadog::Tracing::Contrib::Patcher
+              stub_const(
+                'TestPatcher',
+                Class.new do
+                  include Datadog::Tracing::Contrib::Patcher
 
-                def self.patch
-                  :patched
+                  def self.patch
+                    :patched
+                  end
                 end
-              end)
+              )
             end
 
             it do
@@ -53,17 +57,20 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
           context 'and .target_version is defined' do
             let(:patcher) do
-              stub_const('TestPatcher', Class.new do
-                include Datadog::Tracing::Contrib::Patcher
+              stub_const(
+                'TestPatcher',
+                Class.new do
+                  include Datadog::Tracing::Contrib::Patcher
 
-                def self.patch
-                  :patched
-                end
+                  def self.patch
+                    :patched
+                  end
 
-                def self.target_version
-                  Gem::Version.new(1.0)
+                  def self.target_version
+                    Gem::Version.new(1.0)
+                  end
                 end
-              end)
+              )
             end
 
             it do
@@ -81,13 +88,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
           context 'and .target_version is not defined' do
             let(:patcher) do
-              stub_const('TestPatcher', Class.new do
-                include Datadog::Tracing::Contrib::Patcher
+              stub_const(
+                'TestPatcher',
+                Class.new do
+                  include Datadog::Tracing::Contrib::Patcher
 
-                def self.patch
-                  raise StandardError, 'Patch error!'
+                  def self.patch
+                    raise StandardError, 'Patch error!'
+                  end
                 end
-              end)
+              )
             end
 
             it 'handles the error' do
@@ -101,17 +111,20 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
           context 'and .target_version is defined' do
             let(:patcher) do
-              stub_const('TestPatcher', Class.new do
-                include Datadog::Tracing::Contrib::Patcher
+              stub_const(
+                'TestPatcher',
+                Class.new do
+                  include Datadog::Tracing::Contrib::Patcher
 
-                def self.patch
-                  raise StandardError, 'Patch error!'
-                end
+                  def self.patch
+                    raise StandardError, 'Patch error!'
+                  end
 
-                def self.target_version
-                  Gem::Version.new(1.0)
+                  def self.target_version
+                    Gem::Version.new(1.0)
+                  end
                 end
-              end)
+              )
             end
 
             it 'handles the error' do
@@ -130,9 +143,12 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'when patcher does not define .patch' do
           let(:patcher) do
-            stub_const('TestPatcher', Class.new do
-              include Datadog::Tracing::Contrib::Patcher
-            end)
+            stub_const(
+              'TestPatcher',
+              Class.new do
+                include Datadog::Tracing::Contrib::Patcher
+              end
+            )
           end
 
           context 'and patch has not been applied' do
@@ -148,13 +164,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'when patcher defines .patch' do
           let(:patcher) do
-            stub_const('TestPatcher', Class.new do
-              include Datadog::Tracing::Contrib::Patcher
+            stub_const(
+              'TestPatcher',
+              Class.new do
+                include Datadog::Tracing::Contrib::Patcher
 
-              def self.patch
-                :patched
+                def self.patch
+                  :patched
+                end
               end
-            end)
+            )
           end
 
           context 'and patch has not been applied' do
@@ -174,7 +193,7 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         subject(:on_patch_error) { patcher.on_patch_error(error) }
 
-        let(:error) { instance_double('error', class: StandardError, backtrace: []) }
+        let(:error) { instance_double('error', class: StandardError, message: nil, backtrace: []) }
 
         before do
           allow(Datadog.logger).to receive(:error)
@@ -196,13 +215,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'and .target_version is defined' do
           let(:patcher) do
-            stub_const('TestPatcher', Class.new do
-              include Datadog::Tracing::Contrib::Patcher
+            stub_const(
+              'TestPatcher',
+              Class.new do
+                include Datadog::Tracing::Contrib::Patcher
 
-              def self.target_version
-                Gem::Version.new(1.0)
+                def self.target_version
+                  Gem::Version.new(1.0)
+                end
               end
-            end)
+            )
           end
 
           it 'handles the error' do
@@ -220,9 +242,12 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
       subject(:patcher) { patcher_class.new }
 
       let(:patcher_class) do
-        stub_const('TestPatcher', Class.new do
-          include Datadog::Tracing::Contrib::Patcher
-        end)
+        stub_const(
+          'TestPatcher',
+          Class.new do
+            include Datadog::Tracing::Contrib::Patcher
+          end
+        )
       end
 
       describe '#patch' do
@@ -234,13 +259,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'when patcher defines #patch' do
           let(:patcher_class) do
-            stub_const('TestPatcher', Class.new do
-              include Datadog::Tracing::Contrib::Patcher
+            stub_const(
+              'TestPatcher',
+              Class.new do
+                include Datadog::Tracing::Contrib::Patcher
 
-              def patch
-                :patched
+                def patch
+                  :patched
+                end
               end
-            end)
+            )
           end
 
           it { expect(patch).to be :patched }
@@ -252,7 +280,7 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         subject(:on_patch_error) { patcher.on_patch_error(error) }
 
-        let(:error) { instance_double('error', class: StandardError, backtrace: []) }
+        let(:error) { instance_double('error', class: StandardError, message: nil, backtrace: []) }
 
         before do
           allow(Datadog.logger).to receive(:error)
@@ -274,13 +302,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'and .target_version is defined' do
           let(:patcher_class) do
-            stub_const('TestPatcher', Class.new do
-              include Datadog::Tracing::Contrib::Patcher
+            stub_const(
+              'TestPatcher',
+              Class.new do
+                include Datadog::Tracing::Contrib::Patcher
 
-              def target_version
-                Gem::Version.new(1.0)
+                def target_version
+                  Gem::Version.new(1.0)
+                end
               end
-            end)
+            )
           end
 
           it 'handles the error' do
@@ -304,9 +335,12 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'when patcher does not define .patch' do
           let(:patcher) do
-            stub_const('TestPatcher', Module.new do
-              include Datadog::Tracing::Contrib::Patcher
-            end)
+            stub_const(
+              'TestPatcher',
+              Module.new do
+                include Datadog::Tracing::Contrib::Patcher
+              end
+            )
           end
 
           it { expect(patch).to be nil }
@@ -315,13 +349,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
         context 'when patcher defines .patch' do
           context 'and .target_version is not defined' do
             let(:patcher) do
-              stub_const('TestPatcher', Module.new do
-                include Datadog::Tracing::Contrib::Patcher
+              stub_const(
+                'TestPatcher',
+                Module.new do
+                  include Datadog::Tracing::Contrib::Patcher
 
-                def self.patch
-                  :patched
+                  def self.patch
+                    :patched
+                  end
                 end
-              end)
+              )
             end
 
             it do
@@ -333,17 +370,20 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
           context 'and .target_version is defined' do
             let(:patcher) do
-              stub_const('TestPatcher', Module.new do
-                include Datadog::Tracing::Contrib::Patcher
+              stub_const(
+                'TestPatcher',
+                Module.new do
+                  include Datadog::Tracing::Contrib::Patcher
 
-                def self.patch
-                  :patched
-                end
+                  def self.patch
+                    :patched
+                  end
 
-                def self.target_version
-                  Gem::Version.new(1.0)
+                  def self.target_version
+                    Gem::Version.new(1.0)
+                  end
                 end
-              end)
+              )
             end
 
             it do
@@ -361,13 +401,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
           context 'and .target_version is not defined' do
             let(:patcher) do
-              stub_const('TestPatcher', Module.new do
-                include Datadog::Tracing::Contrib::Patcher
+              stub_const(
+                'TestPatcher',
+                Module.new do
+                  include Datadog::Tracing::Contrib::Patcher
 
-                def self.patch
-                  raise StandardError, 'Patch error!'
+                  def self.patch
+                    raise StandardError, 'Patch error!'
+                  end
                 end
-              end)
+              )
             end
 
             it 'handles the error' do
@@ -381,17 +424,20 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
           context 'and .target_version is defined' do
             let(:patcher) do
-              stub_const('TestPatcher', Module.new do
-                include Datadog::Tracing::Contrib::Patcher
+              stub_const(
+                'TestPatcher',
+                Module.new do
+                  include Datadog::Tracing::Contrib::Patcher
 
-                def self.patch
-                  raise StandardError, 'Patch error!'
-                end
+                  def self.patch
+                    raise StandardError, 'Patch error!'
+                  end
 
-                def self.target_version
-                  Gem::Version.new(1.0)
+                  def self.target_version
+                    Gem::Version.new(1.0)
+                  end
                 end
-              end)
+              )
             end
 
             it 'handles the error' do
@@ -410,9 +456,12 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'when patcher does not define .patch' do
           let(:patcher) do
-            stub_const('TestPatcher', Module.new do
-              include Datadog::Tracing::Contrib::Patcher
-            end)
+            stub_const(
+              'TestPatcher',
+              Module.new do
+                include Datadog::Tracing::Contrib::Patcher
+              end
+            )
           end
 
           context 'and patch has not been applied' do
@@ -428,13 +477,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'when patcher defines .patch' do
           let(:patcher) do
-            stub_const('TestPatcher', Module.new do
-              include Datadog::Tracing::Contrib::Patcher
+            stub_const(
+              'TestPatcher',
+              Module.new do
+                include Datadog::Tracing::Contrib::Patcher
 
-              def self.patch
-                :patched
+                def self.patch
+                  :patched
+                end
               end
-            end)
+            )
           end
 
           context 'and patch has not been applied' do
@@ -454,7 +506,7 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         subject(:on_patch_error) { patcher.on_patch_error(error) }
 
-        let(:error) { instance_double('error', class: StandardError, backtrace: []) }
+        let(:error) { instance_double('error', class: StandardError, message: nil, backtrace: []) }
 
         before do
           allow(Datadog.logger).to receive(:error)
@@ -476,13 +528,16 @@ RSpec.describe Datadog::Tracing::Contrib::Patcher do
 
         context 'and .target_version is defined' do
           let(:patcher) do
-            stub_const('TestPatcher', Module.new do
-              include Datadog::Tracing::Contrib::Patcher
+            stub_const(
+              'TestPatcher',
+              Module.new do
+                include Datadog::Tracing::Contrib::Patcher
 
-              def self.target_version
-                Gem::Version.new(1.0)
+                def self.target_version
+                  Gem::Version.new(1.0)
+                end
               end
-            end)
+            )
           end
 
           it 'handles the error' do

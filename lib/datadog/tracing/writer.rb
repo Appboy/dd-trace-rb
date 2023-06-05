@@ -1,12 +1,8 @@
-# typed: true
+require_relative 'event'
+require_relative 'runtime/metrics'
+require_relative 'workers'
 
-require 'datadog/core'
-
-require 'datadog/tracing/event'
-require 'datadog/tracing/runtime/metrics'
-require 'datadog/tracing/workers'
-
-require 'ddtrace/transport/http'
+require_relative '../../ddtrace/transport/http'
 
 module Datadog
   module Tracing
@@ -174,6 +170,13 @@ module Datadog
             super(:after_send)
           end
         end
+      end
+
+      private
+
+      def reset_stats!
+        @traces_flushed = 0
+        @transport.stats.reset!
       end
     end
   end

@@ -1,16 +1,13 @@
-# typed: true
-
-require 'datadog/core/configuration/components'
-require 'datadog/core/configuration/settings'
-require 'datadog/core/logger'
-require 'datadog/core/pin'
+require_relative 'configuration/components'
+require_relative 'configuration/settings'
+require_relative 'telemetry/emitter'
+require_relative 'logger'
+require_relative 'pin'
 
 module Datadog
   module Core
     # Configuration provides a unique access point for configurations
-    module Configuration # rubocop:disable Metrics/ModuleLength
-      include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
-
+    module Configuration
       # Used to ensure that @components initialization/reconfiguration is performed one-at-a-time, by a single thread.
       #
       # This is important because components can end up being accessed from multiple application threads (for instance on
@@ -89,7 +86,9 @@ module Datadog
             if components?
               replace_components!(configuration, @components)
             else
-              build_components(configuration)
+              components = build_components(configuration)
+              components.telemetry.started!
+              components
             end
           )
         end
@@ -209,7 +208,11 @@ module Datadog
       # Used internally to ensure a clean environment between test runs.
       def reset!
         safely_synchronize do |write_components|
-          @components.shutdown! if components?
+          if components?
+            @components.shutdown!
+            @temp_logger = nil # Reset to ensure instance and log level are reset for next run
+          end
+
           write_components.call(nil)
           configuration.reset!
         end

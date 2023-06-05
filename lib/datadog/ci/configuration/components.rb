@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/ci/flush'
+require_relative '../flush'
 
 module Datadog
   module CI

@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-# typed: false
+require_relative '../tracing/contrib/analytics'
 
-require 'datadog/tracing/contrib/analytics'
-
-require 'datadog/ci/ext/app_types'
-require 'datadog/ci/ext/test'
+require_relative 'ext/app_types'
+require_relative 'ext/test'
 
 require 'rbconfig'
 

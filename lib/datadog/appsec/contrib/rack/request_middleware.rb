@@ -1,10 +1,13 @@
-# typed: ignore
-
 require 'json'
 
-require 'datadog/appsec/instrumentation/gateway'
-require 'datadog/appsec/processor'
-require 'datadog/appsec/assets'
+require_relative 'gateway/request'
+require_relative 'gateway/response'
+require_relative '../../instrumentation/gateway'
+require_relative '../../processor'
+require_relative '../../response'
+
+require_relative '../../../tracing/client_ip'
+require_relative '../../../tracing/contrib/rack/header_collection'
 
 module Datadog
   module AppSec
@@ -17,49 +20,85 @@ module Datadog
             @app = app
 
             @oneshot_tags_sent = false
-            @processor = Datadog::AppSec::Processor.new
           end
 
+          # rubocop:disable Metrics/AbcSize,Metrics/PerceivedComplexity,Metrics/CyclomaticComplexity,Metrics/MethodLength
           def call(env)
-            return @app.call(env) unless @processor.ready?
+            return @app.call(env) unless Datadog::AppSec.enabled?
+
+            Datadog::Core::Remote.active_remote.barrier(:once) unless Datadog::Core::Remote.active_remote.nil?
+
+            processor = nil
+            ready = false
+            scope = nil
+
+            # For a given request, keep using the first Rack stack scope for
+            # nested apps. Don't set `context` local variable so that on popping
+            # out of this nested stack we don't finalize the parent's context
+            return @app.call(env) if active_scope(env)
+
+            Datadog::AppSec.reconfigure_lock do
+              processor = Datadog::AppSec.processor
+
+              if !processor.nil? && processor.ready?
+                scope = Datadog::AppSec::Scope.activate_scope(active_trace, active_span, processor)
+                env[Datadog::AppSec::Ext::SCOPE_KEY] = scope
+                ready = true
+              end
+            end
 
             # TODO: handle exceptions, except for @app.call
 
-            context = @processor.new_context
+            return @app.call(env) unless ready
 
-            env['datadog.waf.context'] = context
-            request = ::Rack::Request.new(env)
+            gateway_request = Gateway::Request.new(env)
 
-            add_appsec_tags
+            add_appsec_tags(processor, active_trace, active_span, env)
 
-            request_return, request_response = Instrumentation.gateway.push('rack.request', request) do
-              @app.call(env)
+            request_return, request_response = catch(::Datadog::AppSec::Ext::INTERRUPT) do
+              Instrumentation.gateway.push('rack.request', gateway_request) do
+                @app.call(env)
+              end
             end
 
             if request_response && request_response.any? { |action, _event| action == :block }
-              request_return = [403, { 'Content-Type' => 'text/html' }, [Datadog::AppSec::Assets.blocked]]
+              request_return = AppSec::Response.negotiate(env).to_rack
             end
 
-            response = ::Rack::Response.new(request_return[2], request_return[0], request_return[1])
-            response.instance_eval do
-              @waf_context = context
+            gateway_response = Gateway::Response.new(
+              request_return[2],
+              request_return[0],
+              request_return[1],
+              scope: scope
+            )
+
+            _response_return, response_response = Instrumentation.gateway.push('rack.response', gateway_response)
+
+            scope.processor_context.events.each do |e|
+              e[:response] ||= gateway_response
+              e[:request]  ||= gateway_request
             end
 
-            _response_return, _response_response = Instrumentation.gateway.push('rack.response', response)
+            AppSec::Event.record(active_span, *scope.processor_context.events)
 
-            context.events.each do |e|
-              e[:response] ||= response
-              e[:request]  ||= request
+            if response_response && response_response.any? { |action, _event| action == :block }
+              request_return = AppSec::Response.negotiate(env).to_rack
             end
-
-            AppSec::Event.record(*context.events)
 
             request_return
           ensure
-            add_waf_runtime_tags(context) if context
+            if scope
+              add_waf_runtime_tags(active_span, scope.processor_context)
+              Datadog::AppSec::Scope.deactivate_scope
+            end
           end
+          # rubocop:enable Metrics/AbcSize,Metrics/PerceivedComplexity,Metrics/CyclomaticComplexity,Metrics/MethodLength
 
           private
+
+          def active_scope(env)
+            env[Datadog::AppSec::Ext::SCOPE_KEY]
+          end
 
           def active_trace
             # TODO: factor out tracing availability detection
@@ -69,41 +108,64 @@ module Datadog
             Datadog::Tracing.active_trace
           end
 
-          def add_appsec_tags
-            return unless active_trace
+          def active_span
+            # TODO: factor out tracing availability detection
 
-            active_trace.set_tag('_dd.appsec.enabled', 1)
-            active_trace.set_tag('_dd.runtime_family', 'ruby')
-            active_trace.set_tag('_dd.appsec.waf.version', Datadog::AppSec::WAF::VERSION::BASE_STRING)
+            return unless defined?(Datadog::Tracing)
 
-            if @processor.ruleset_info
-              active_trace.set_tag('_dd.appsec.event_rules.version', @processor.ruleset_info[:version])
+            Datadog::Tracing.active_span
+          end
+
+          def add_appsec_tags(processor, trace, span, env)
+            return unless trace
+
+            span.set_tag('_dd.appsec.enabled', 1)
+            span.set_tag('_dd.runtime_family', 'ruby')
+            span.set_tag('_dd.appsec.waf.version', Datadog::AppSec::WAF::VERSION::BASE_STRING)
+
+            if span && span.get_tag(Tracing::Metadata::Ext::HTTP::TAG_CLIENT_IP).nil?
+              request_header_collection = Datadog::Tracing::Contrib::Rack::Header::RequestHeaderCollection.new(env)
+
+              # always collect client ip, as this is part of AppSec provided functionality
+              Datadog::Tracing::ClientIp.set_client_ip_tag!(
+                span,
+                headers: request_header_collection,
+                remote_ip: env['REMOTE_ADDR']
+              )
+            end
+
+            if processor.ruleset_info
+              span.set_tag('_dd.appsec.event_rules.version', processor.ruleset_info[:version])
 
               unless @oneshot_tags_sent
                 # Small race condition, but it's inoccuous: worst case the tags
                 # are sent a couple of times more than expected
                 @oneshot_tags_sent = true
 
-                active_trace.set_tag('_dd.appsec.event_rules.loaded', @processor.ruleset_info[:loaded].to_f)
-                active_trace.set_tag('_dd.appsec.event_rules.error_count', @processor.ruleset_info[:failed].to_f)
-                active_trace.set_tag('_dd.appsec.event_rules.errors', JSON.dump(@processor.ruleset_info[:errors]))
-                active_trace.set_tag('_dd.appsec.event_rules.addresses', JSON.dump(@processor.addresses))
+                span.set_tag('_dd.appsec.event_rules.loaded', processor.ruleset_info[:loaded].to_f)
+                span.set_tag('_dd.appsec.event_rules.error_count', processor.ruleset_info[:failed].to_f)
+                span.set_tag('_dd.appsec.event_rules.errors', JSON.dump(processor.ruleset_info[:errors]))
+                span.set_tag('_dd.appsec.event_rules.addresses', JSON.dump(processor.addresses))
 
                 # Ensure these tags reach the backend
-                active_trace.keep!
+                trace.keep!
+                trace.set_tag(
+                  Datadog::Tracing::Metadata::Ext::Distributed::TAG_DECISION_MAKER,
+                  Datadog::Tracing::Sampling::Ext::Decision::ASM
+                )
               end
             end
           end
 
-          def add_waf_runtime_tags(context)
-            return unless active_trace
+          def add_waf_runtime_tags(span, context)
+            return unless span
             return unless context
 
-            active_trace.set_tag('_dd.appsec.waf.timeouts', context.timeouts)
+            span.set_tag('_dd.appsec.waf.timeouts', context.timeouts)
 
             # these tags expect time in us
-            active_trace.set_tag('_dd.appsec.waf.duration', context.time_ns / 1000.0)
-            active_trace.set_tag('_dd.appsec.waf.duration_ext', context.time_ext_ns / 1000.0)
+            span.set_tag('_dd.appsec.waf.duration', context.time_ns / 1000.0)
+            span.set_tag('_dd.appsec.waf.duration_ext', context.time_ext_ns / 1000.0)
           end
         end
       end

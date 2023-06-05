@@ -1,7 +1,7 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/core/metrics/metric'
-require 'datadog/core/diagnostics/health'
+require_relative '../../datadog/core/metrics/metric'
+require_relative '../../datadog/core/diagnostics/health'
 
 module Datadog
   module Transport

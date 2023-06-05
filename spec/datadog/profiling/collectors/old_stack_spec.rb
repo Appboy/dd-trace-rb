@@ -1,18 +1,16 @@
-# typed: false
-
 require 'spec_helper'
 require 'datadog/profiling/spec_helper'
 
 require 'datadog/profiling/collectors/old_stack'
 require 'datadog/profiling/trace_identifiers/helper'
-require 'datadog/profiling/recorder'
+require 'datadog/profiling/old_recorder'
 require 'set'
 require 'timeout'
 
 RSpec.describe Datadog::Profiling::Collectors::OldStack do
   subject(:collector) { described_class.new(recorder, **options) }
 
-  let(:recorder) { instance_double(Datadog::Profiling::Recorder) }
+  let(:recorder) { instance_double(Datadog::Profiling::OldRecorder) }
   let(:options) { { max_frames: 50, trace_identifiers_helper: trace_identifiers_helper } }
 
   let(:buffer) { instance_double(Datadog::Profiling::Buffer) }
@@ -23,8 +21,7 @@ RSpec.describe Datadog::Profiling::Collectors::OldStack do
   end
 
   before do
-    skip 'Profiling is not supported on JRuby' if PlatformHelpers.jruby?
-    skip 'Profiling is not supported on TruffleRuby' if PlatformHelpers.truffleruby?
+    skip_if_profiling_not_supported(self)
 
     allow(recorder)
       .to receive(:[])
@@ -86,15 +83,12 @@ RSpec.describe Datadog::Profiling::Collectors::OldStack do
         # See cthread.rb for more details
 
         before do
-          if Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.2')
-            skip 'Test case only applies to Ruby 2.2+ (previous versions did not have the Process::Waiter class)'
-          end
           skip 'Test case only applies to MRI Ruby' if RUBY_ENGINE != 'ruby'
         end
 
         it 'can clean up leftover tracking state on an instance of Process::Waiter without crashing' do
           expect_in_fork do
-            expect(thread_api).to receive(:list).and_return([Process.detach(fork { sleep })])
+            expect(thread_api).to receive(:list).and_return([Process.detach(0)])
 
             start
           end
@@ -484,17 +478,17 @@ RSpec.describe Datadog::Profiling::Collectors::OldStack do
 
     context 'Process::Waiter crash regression tests' do
       before do
-        if Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.2')
-          skip 'Test case only applies to Ruby 2.2+ (previous versions did not have the Process::Waiter class)'
-        end
         skip 'Test case only applies to MRI Ruby' if RUBY_ENGINE != 'ruby'
       end
 
       it 'can sample an instance of Process::Waiter without crashing' do
         expect_in_fork do
-          process_waiter_thread = Process.detach(fork { sleep })
+          forked_process = fork { sleep }
+          process_waiter_thread = Process.detach(forked_process)
 
           expect(collector.collect_thread_event(process_waiter_thread, 0)).to be_truthy
+
+          Process.kill('TERM', forked_process)
         end
       end
     end
@@ -735,33 +729,21 @@ RSpec.describe Datadog::Profiling::Collectors::OldStack do
   describe 'Process::Waiter crash regression tests' do
     # Related to https://bugs.ruby-lang.org/issues/17807 ; see comments on main class for details
 
-    before do
-      if Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.2')
-        skip 'Test case only applies to Ruby 2.2+ (previous versions did not have the Process::Waiter class)'
-      end
-    end
-
-    let(:process_waiter_thread) { Process.detach(fork { sleep }) }
+    let(:process_waiter_thread) { Process.detach(0) }
 
     describe 'the crash' do
       # Let's not get surprised if this shows up in other Ruby versions
 
-      it 'does not affect Ruby < 2.3 nor Ruby >= 2.7' do
-        unless Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.3') ||
-               Gem::Version.new(RUBY_VERSION) >= Gem::Version.new('2.7')
-          skip 'Test case only applies to Ruby < 2.3 or Ruby >= 2.7'
-        end
+      it 'does not affect Ruby >= 2.7' do
+        skip('Test case only applies to Ruby >= 2.7') unless Gem::Version.new(RUBY_VERSION) >= Gem::Version.new('2.7')
 
         expect_in_fork do
           expect(process_waiter_thread.instance_variable_get(:@hello)).to be nil
         end
       end
 
-      it 'affects Ruby >= 2.3 and < 2.7' do
-        unless Gem::Version.new(RUBY_VERSION) >= Gem::Version.new('2.3') &&
-               Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.7')
-          skip 'Test case only applies to Ruby >= 2.3 and < 2.7'
-        end
+      it 'affects Ruby < 2.7' do
+        skip('Test case only applies to Ruby < 2.7') unless Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.7')
 
         expect_in_fork(
           fork_expectations: proc do |status:, stdout:, stderr:|
@@ -772,6 +754,16 @@ RSpec.describe Datadog::Profiling::Collectors::OldStack do
           process_waiter_thread.instance_variable_get(:@hello)
         end
       end
+    end
+  end
+
+  describe '#reset_after_fork' do
+    subject(:reset_after_fork) { collector.reset_after_fork }
+
+    it 'resets the recorder' do
+      expect(recorder).to receive(:reset_after_fork)
+
+      reset_after_fork
     end
   end
 end

@@ -1,8 +1,6 @@
-# typed: false
+require_relative '../../core/environment/ext'
 
-require 'datadog/core/environment/ext'
-
-require 'datadog/tracing/metadata/ext'
+require_relative 'ext'
 
 module Datadog
   module Tracing
@@ -65,10 +63,25 @@ module Datadog
           tags.each { |k, v| set_tag(k, v) }
         end
 
+        # Returns true if the provided `tag` was set to a non-nil value.
+        # False otherwise.
+        #
+        # @param [String] tag the tag or metric to check for presence
+        # @return [Boolean] if the tag is present and not nil
+        def has_tag?(tag) # rubocop:disable Naming/PredicateName
+          !get_tag(tag).nil? # nil is considered not present, thus we can't use `Hash#has_key?`
+        end
+
         # This method removes a tag for the given key.
         def clear_tag(key)
           meta.delete(key)
         end
+
+        # Convenient interface for setting a single tag.
+        alias []= set_tag
+
+        # Convenient interface for getting a single tag.
+        alias [] get_tag
 
         # Return the metric with the given key, nil if it doesn't exist.
         def get_metric(key)
@@ -93,6 +106,12 @@ module Datadog
         # This method removes a metric for the given key. It acts like {#clear_tag}.
         def clear_metric(key)
           metrics.delete(key)
+        end
+
+        # Returns a copy of all metadata.
+        # Keys for `@meta` and `@metrics` don't collide, by construction.
+        def tags
+          @meta.merge(@metrics)
         end
 
         protected

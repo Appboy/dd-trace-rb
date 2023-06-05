@@ -1,9 +1,9 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/core/utils/only_once'
-require 'datadog/tracing/contrib/patcher'
-require 'datadog/tracing/contrib/rack/middlewares'
-require 'datadog/tracing/contrib/sinatra/framework'
+require_relative '../../../core/utils/only_once'
+require_relative '../patcher'
+require_relative '../rack/middlewares'
+require_relative 'framework'
 
 module Datadog
   module Tracing
@@ -40,7 +40,6 @@ module Datadog
 
         # Patcher enables patching of 'sinatra' module.
         module Patcher
-          include Kernel # Ensure that kernel methods are always available (https://sorbet.org/docs/error-reference#7003)
           include Contrib::Patcher
 
           module_function
@@ -50,7 +49,7 @@ module Datadog
           end
 
           def patch
-            require 'datadog/tracing/contrib/sinatra/tracer'
+            require_relative 'tracer'
             register_tracer
 
             patch_default_middlewares
@@ -58,7 +57,7 @@ module Datadog
           end
 
           def register_tracer
-            ::Sinatra.send(:register, Contrib::Sinatra::Tracer)
+            ::Sinatra::Base.register(Contrib::Sinatra::Tracer)
             ::Sinatra::Base.prepend(Sinatra::Tracer::Base)
           end
 

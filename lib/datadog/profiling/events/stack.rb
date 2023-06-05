@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/profiling/event'
+require_relative '../event'
 
 module Datadog
   module Profiling

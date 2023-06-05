@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/core/utils/forking'
+require_relative '../core/utils/forking'
 
 module Datadog
   module Tracing

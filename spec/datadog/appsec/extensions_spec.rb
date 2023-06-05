@@ -1,4 +1,4 @@
-# typed: false
+# frozen_string_literal: true
 
 require 'datadog/appsec/spec_helper'
 
@@ -33,7 +33,12 @@ RSpec.describe Datadog::AppSec::Extensions do
           subject(:configure) { described_class.configure(&block) }
 
           context 'that calls #instrument for an integration' do
-            let(:block) { proc { |c| c.appsec.instrument integration_name } }
+            let(:block) do
+              proc do |c|
+                c.appsec.enabled = true
+                c.appsec.instrument integration_name
+              end
+            end
 
             it 'configures the integration' do
               # If integration_class.loaded? is invoked, it means the correct integration is being activated.
@@ -55,12 +60,12 @@ RSpec.describe Datadog::AppSec::Extensions do
 
       describe '#enabled' do
         subject(:enabled) { settings.enabled }
-        it { is_expected.to eq(true) }
+        it { is_expected.to eq(false) }
       end
 
       describe '#enabled=' do
-        subject(:enabled_) { settings.enabled = false }
-        it { expect { enabled_ }.to change { settings.enabled }.from(true).to(false) }
+        subject(:enabled_) { settings.enabled = true }
+        it { expect { enabled_ }.to change { settings.enabled }.from(false).to(true) }
       end
 
       describe '#ruleset' do
@@ -69,8 +74,8 @@ RSpec.describe Datadog::AppSec::Extensions do
       end
 
       describe '#ruleset=' do
-        subject(:ruleset_) { settings.ruleset = :risky }
-        it { expect { ruleset_ }.to change { settings.ruleset }.from(:recommended).to(:risky) }
+        subject(:ruleset_) { settings.ruleset = :strict }
+        it { expect { ruleset_ }.to change { settings.ruleset }.from(:recommended).to(:strict) }
       end
 
       describe '#waf_timeout' do
@@ -103,24 +108,24 @@ RSpec.describe Datadog::AppSec::Extensions do
         it { expect { trace_rate_limit_ }.to change { settings.trace_rate_limit }.from(100).to(2) }
       end
 
-      describe '#[]' do
-        describe 'when the integration exists' do
-          subject(:get) { settings[integration_name] }
+      describe '#ip_denylist' do
+        subject(:ip_denylist) { settings.ip_denylist }
+        it { is_expected.to eq([]) }
+      end
 
-          let(:integration_options) { { foo: :bar } }
+      describe '#ip_denylist=' do
+        subject(:ip_denylist_) { settings.ip_denylist = ['192.192.1.1'] }
+        it { expect { ip_denylist_ }.to change { settings.ip_denylist }.from([]).to(['192.192.1.1']) }
+      end
 
-          before { settings.instrument(integration_name, integration_options) }
+      describe '#user_id_denylist' do
+        subject(:user_id_denylist) { settings.user_id_denylist }
+        it { is_expected.to eq([]) }
+      end
 
-          it 'retrieves the described configuration' do
-            is_expected.to eq(integration_options)
-          end
-        end
-
-        context 'when the integration doesn\'t exist' do
-          it do
-            expect { settings[:foobar] }.to raise_error(ArgumentError, /foobar/)
-          end
-        end
+      describe '#user_id_denylist=' do
+        subject(:user_id_denylist_) { settings.user_id_denylist = ['24528736564812'] }
+        it { expect { user_id_denylist_ }.to change { settings.user_id_denylist }.from([]).to(['24528736564812']) }
       end
     end
   end

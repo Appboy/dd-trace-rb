@@ -1,7 +1,5 @@
-# typed: false
-
-require 'datadog/core/utils/only_once'
-require 'datadog/profiling/ext/forking'
+require_relative '../../core/utils/only_once'
+require_relative '../ext/forking'
 
 module Datadog
   module Profiling
@@ -13,7 +11,6 @@ module Datadog
         def run
           ACTIVATE_EXTENSIONS_ONLY_ONCE.run do
             begin
-              check_if_cpu_time_profiling_is_supported
               activate_forking_extensions
               setup_at_fork_hooks
             rescue StandardError, ScriptError => e
@@ -40,28 +37,10 @@ module Datadog
           end
         end
 
-        def check_if_cpu_time_profiling_is_supported
-          unsupported = cpu_time_profiling_unsupported_reason
-
-          if unsupported
-            Datadog.logger.info do
-              'CPU time profiling skipped because native CPU time is not supported: ' \
-              "#{unsupported}. Profiles containing 'Wall time' data will still be reported."
-            end
-          end
-        end
-
         def setup_at_fork_hooks
           if Process.respond_to?(:at_fork)
             Process.at_fork(:child) do
               begin
-                # When Ruby forks, clock IDs for each of the threads
-                # will change. We can only update these IDs from the
-                # execution context of the thread that owns it.
-                # This hook will update the IDs for the main thread
-                # after a fork occurs.
-                Thread.current.send(:update_native_ids) if Thread.current.respond_to?(:update_native_ids, true)
-
                 # Restart profiler, if enabled
                 Profiling.start_if_enabled
               rescue StandardError => e
@@ -71,20 +50,6 @@ module Datadog
                 end
               end
             end
-          end
-        end
-
-        def cpu_time_profiling_unsupported_reason
-          # NOTE: Only the first matching reason is returned, so try to keep a nice order on reasons
-
-          if RUBY_ENGINE == 'jruby'
-            'JRuby is not supported'
-          elsif RUBY_PLATFORM.include?('darwin')
-            'Feature requires Linux; macOS is not supported'
-          elsif RUBY_PLATFORM =~ /(mswin|mingw)/
-            'Feature requires Linux; Windows is not supported'
-          elsif !RUBY_PLATFORM.include?('linux')
-            "Feature requires Linux; #{RUBY_PLATFORM} is not supported"
           end
         end
       end

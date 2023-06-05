@@ -1,18 +1,16 @@
-# typed: false
-
-require 'datadog/tracing/contrib/integration'
-require 'datadog/tracing/contrib/pg/configuration/settings'
-require 'datadog/tracing/contrib/pg/patcher'
+require_relative '../integration'
+require_relative 'configuration/settings'
+require_relative 'patcher'
 
 module Datadog
   module Tracing
     module Contrib
       module Pg
-        # Description of PG integration
+        # Description of pg integration
         class Integration
           include Contrib::Integration
 
-          MINIMUM_VERSION = Gem::Version.new('1.3.5')
+          MINIMUM_VERSION = Gem::Version.new('0.18.4')
 
           # @public_api Changing the integration name or integration options can cause breaking changes
           register_as :pg
@@ -22,7 +20,7 @@ module Datadog
           end
 
           def self.loaded?
-            !defined?(::Pg).nil?
+            !defined?(::PG).nil?
           end
 
           def self.compatible?

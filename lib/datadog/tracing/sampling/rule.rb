@@ -1,9 +1,5 @@
-# typed: true
-
-require 'datadog/core'
-
-require 'datadog/tracing/sampling/matcher'
-require 'datadog/tracing/sampling/rate_sampler'
+require_relative 'matcher'
+require_relative 'rate_sampler'
 
 module Datadog
   module Tracing

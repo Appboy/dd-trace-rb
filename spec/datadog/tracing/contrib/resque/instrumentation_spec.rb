@@ -1,5 +1,3 @@
-# typed: ignore
-
 LogHelpers.without_warnings do
   require 'resque'
 end
@@ -71,6 +69,8 @@ RSpec.describe 'Resque instrumentation' do
         expect(span).to_not have_error
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('resque')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('job')
+        expect(span.get_tag('span.kind')).to eq('consumer')
+        expect(span.get_tag('messaging.system')).to eq('resque')
       end
 
       it_behaves_like 'analytics for integration' do
@@ -119,6 +119,8 @@ RSpec.describe 'Resque instrumentation' do
         expect(span).to have_error_type(error_class_name)
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('resque')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION)).to eq('job')
+        expect(span.get_tag('span.kind')).to eq('consumer')
+        expect(span.get_tag('messaging.system')).to eq('resque')
       end
 
       context 'with custom error handler' do

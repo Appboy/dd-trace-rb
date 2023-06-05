@@ -1,6 +1,6 @@
-# typed: true
+# frozen_string_literal: true
 
-require 'datadog/appsec/contrib/rails/request'
+require_relative '../request'
 
 module Datadog
   module AppSec
@@ -9,24 +9,25 @@ module Datadog
         module Reactive
           # Dispatch data from a Rails request to the WAF context
           module Action
-            def self.publish(op, request)
+            ADDRESSES = [
+              'rails.request.body',
+              'rails.request.route_params',
+            ].freeze
+            private_constant :ADDRESSES
+
+            def self.publish(op, gateway_request)
               catch(:block) do
                 # params have been parsed from the request body
-                op.publish('rails.request.body', Rails::Request.parsed_body(request))
-                op.publish('rails.request.route_params', Rails::Request.route_params(request))
+                op.publish('rails.request.body', gateway_request.parsed_body)
+                op.publish('rails.request.route_params', gateway_request.route_params)
 
                 nil
               end
             end
 
             def self.subscribe(op, waf_context)
-              addresses = [
-                'rails.request.body',
-                'rails.request.route_params',
-              ]
-
-              op.subscribe(*addresses) do |*values|
-                Datadog.logger.debug { "reacted to #{addresses.inspect}: #{values.inspect}" }
+              op.subscribe(*ADDRESSES) do |*values|
+                Datadog.logger.debug { "reacted to #{ADDRESSES.inspect}: #{values.inspect}" }
                 body = values[0]
                 path_params = values[1]
 
@@ -36,27 +37,27 @@ module Datadog
                 }
 
                 waf_timeout = Datadog::AppSec.settings.waf_timeout
-                action, result = waf_context.run(waf_args, waf_timeout)
+                result = waf_context.run(waf_args, waf_timeout)
 
                 Datadog.logger.debug { "WAF TIMEOUT: #{result.inspect}" } if result.timeout
 
-                # TODO: encapsulate return array in a type
-                case action
-                when :monitor
+                case result.status
+                when :match
                   Datadog.logger.debug { "WAF: #{result.inspect}" }
-                  yield [action, result, false]
-                when :block
-                  Datadog.logger.debug { "WAF: #{result.inspect}" }
-                  yield [action, result, true]
-                  throw(:block, [action, result, true])
-                when :good
+
+                  block = result.actions.include?('block')
+
+                  yield [result, block]
+
+                  throw(:block, [result, true]) if block
+                when :ok
                   Datadog.logger.debug { "WAF OK: #{result.inspect}" }
                 when :invalid_call
                   Datadog.logger.debug { "WAF CALL ERROR: #{result.inspect}" }
                 when :invalid_rule, :invalid_flow, :no_rule
                   Datadog.logger.debug { "WAF RULE ERROR: #{result.inspect}" }
                 else
-                  Datadog.logger.debug { "WAF UNKNOWN: #{action.inspect} #{result.inspect}" }
+                  Datadog.logger.debug { "WAF UNKNOWN: #{result.status.inspect} #{result.inspect}" }
                 end
               end
             end

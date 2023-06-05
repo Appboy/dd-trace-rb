@@ -1,12 +1,11 @@
-# typed: false
+# frozen_string_literal: true
 
 require 'uri'
 
-require 'datadog/tracing'
-require 'datadog/tracing/metadata/ext'
-require 'datadog/tracing/propagation/http'
-require 'datadog/tracing/contrib/analytics'
-require 'datadog/tracing/contrib/rest_client/ext'
+require_relative '../../metadata/ext'
+require_relative '../../propagation/http'
+require_relative '../analytics'
+require_relative 'ext'
 
 module Datadog
   module Tracing
@@ -35,11 +34,16 @@ module Datadog
             def datadog_tag_request(uri, span)
               span.resource = method.to_s.upcase
 
+              span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
+
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_REQUEST)
 
               # Tag as an external peer service
-              span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
+                span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
+              end
+
               span.set_tag(Tracing::Metadata::Ext::TAG_PEER_HOSTNAME, uri.host)
 
               # Set analytics sample rate
@@ -54,7 +58,7 @@ module Datadog
             def datadog_trace_request(uri)
               span = Tracing.trace(
                 Ext::SPAN_REQUEST,
-                service: datadog_configuration[:service_name],
+                service: datadog_configuration[:split_by_domain] ? uri.host : datadog_configuration[:service_name],
                 span_type: Tracing::Metadata::Ext::HTTP::TYPE_OUTBOUND
               )
 

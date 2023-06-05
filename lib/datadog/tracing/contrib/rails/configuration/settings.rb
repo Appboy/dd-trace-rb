@@ -1,6 +1,6 @@
-# typed: false
+require_relative '../../configuration/settings'
 
-require 'datadog/tracing/contrib/configuration/settings'
+require_relative '../../../../core'
 
 module Datadog
   module Tracing
@@ -47,10 +47,18 @@ module Datadog
             end
 
             option :distributed_tracing, default: true
+
+            option :request_queuing, default: false
+
+            # DEV-2.0: Breaking changes for removal.
             option :exception_controller do |o|
               o.on_set do |value|
-                # Update ActionPack exception controller too
-                Datadog.configuration.tracing[:action_pack][:exception_controller] = value
+                if value
+                  Datadog::Core.log_deprecation do
+                    'The error controller is now automatically detected. '\
+                    "Option `#{o.instance_variable_get(:@name)}` is no longer required and will be removed."
+                  end
+                end
               end
             end
 

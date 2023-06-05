@@ -1,5 +1,3 @@
-# typed: false
-
 # Used to quickly run benchmark under RSpec as part of the usual test suite, to validate it didn't bitrot
 VALIDATE_BENCHMARK_MODE = ENV['VALIDATE_BENCHMARK'] == 'true'
 
@@ -13,10 +11,17 @@ require_relative 'dogstatsd_reporter'
 # This benchmark measures the performance of the main stack sampling loop of the profiler
 
 class ProfilerSampleLoopBenchmark
+  class MockProfilerTransport
+    def export(_flush)
+    end
+  end
+
   def create_profiler
     Datadog.configure do |c|
       c.profiling.enabled = true
+      c.profiling.exporter.transport = MockProfilerTransport.new
       c.tracing.transport_options = proc { |t| t.adapter :test }
+      c.profiling.advanced.force_enable_legacy_profiler = true
     end
 
     # Stop background threads
@@ -52,13 +57,13 @@ class ProfilerSampleLoopBenchmark
       x.compare!
     end
 
-    @recorder.flush
+    @recorder.serialize
   end
 
   def run_forever
     while true
       1000.times { @stack_collector.collect_and_wait }
-      @recorder.flush
+      @recorder.serialize
       print '.'
     end
   end

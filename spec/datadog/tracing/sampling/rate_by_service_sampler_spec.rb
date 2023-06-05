@@ -1,5 +1,3 @@
-# typed: false
-
 require 'spec_helper'
 require 'datadog/tracing/sampling/shared_examples'
 
@@ -84,7 +82,7 @@ RSpec.describe Datadog::Tracing::Sampling::RateByServiceSampler do
         let(:rate_by_service) { { existing_key => new_rate } }
 
         before do
-          sampler.update(existing_key => 1.0)
+          sampler.update({ existing_key => 1.0 })
           update
         end
 
@@ -106,7 +104,7 @@ RSpec.describe Datadog::Tracing::Sampling::RateByServiceSampler do
         let(:rate_by_service) { {} }
 
         before do
-          sampler.update(old_key => 1.0)
+          sampler.update({ old_key => 1.0 })
           update
         end
 
