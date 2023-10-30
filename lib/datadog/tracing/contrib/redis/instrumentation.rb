@@ -25,6 +25,20 @@ module Datadog
                 span.resource = get_command(args, show_command_args)
                 ### BRAZE MODIFICATION
                 span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
+
+                if Thread.current[:redis_operation_filepath].present?
+                  span.set_tag(
+                    Contrib::Redis::Ext::METRIC_FILEPATH
+                    Thread.current[:redis_operation_filepath]
+                  )
+                end
+
+                if Thread.current[:redis_operation_codeowner].present?
+                  span.set_tag(
+                    Contrib::Redis::Ext::METRIC_CODEOWNER,
+                    Thread.current[:redis_operation_codeowner]
+                  )
+                end
                 ### END BRAZE MODIFICATION
                 Contrib::Redis::Tags.set_common_tags(self, span, show_command_args)
 
@@ -49,6 +63,20 @@ module Datadog
                 span.set_metric Contrib::Redis::Ext::METRIC_PIPELINE_LEN, commands.length
                 ### BRAZE MODIFICATION
                 span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
+
+                if Thread.current[:redis_operation_filepath].present?
+                  span.set_tag(
+                    Contrib::Redis::Ext::METRIC_FILEPATH
+                    Thread.current[:redis_operation_filepath]
+                  )
+                end
+
+                if Thread.current[:redis_operation_codeowner].present?
+                  span.set_tag(
+                    Contrib::Redis::Ext::METRIC_CODEOWNER,
+                    Thread.current[:redis_operation_codeowner]
+                  )
+                end
                 ### END BRAZE MODIFICATION
                 Contrib::Redis::Tags.set_common_tags(self, span, show_command_args)
 
