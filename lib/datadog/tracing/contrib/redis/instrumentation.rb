@@ -28,7 +28,7 @@ module Datadog
 
                 if Thread.current[:redis_operation_filepath].present?
                   span.set_tag(
-                    Contrib::Redis::Ext::METRIC_FILEPATH
+                    Contrib::Redis::Ext::METRIC_FILEPATH,
                     Thread.current[:redis_operation_filepath]
                   )
                 end
@@ -66,7 +66,7 @@ module Datadog
 
                 if Thread.current[:redis_operation_filepath].present?
                   span.set_tag(
-                    Contrib::Redis::Ext::METRIC_FILEPATH
+                    Contrib::Redis::Ext::METRIC_FILEPATH,
                     Thread.current[:redis_operation_filepath]
                   )
                 end
