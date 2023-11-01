@@ -33,7 +33,7 @@ module Datadog
                   )
                 end
 
-                if Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].present?
+                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].nil?
                   span.set_tag(
                     Contrib::Redis::Ext::METRIC_CODEOWNER,
                     Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
@@ -64,14 +64,14 @@ module Datadog
                 ### BRAZE MODIFICATION
                 span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
 
-                if Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH].present?
+                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH].nil?
                   span.set_tag(
                     Contrib::Redis::Ext::METRIC_FILEPATH,
                     Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH]
                   )
                 end
 
-                if Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].present?
+                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].nil?
                   span.set_tag(
                     Contrib::Redis::Ext::METRIC_CODEOWNER,
                     Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
