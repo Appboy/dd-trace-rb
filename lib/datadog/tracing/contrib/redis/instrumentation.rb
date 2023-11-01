@@ -26,17 +26,17 @@ module Datadog
                 ### BRAZE MODIFICATION
                 span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
 
-                if Thread.current[:redis_operation_filepath].present?
+                if Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH].present?
                   span.set_tag(
                     Contrib::Redis::Ext::METRIC_FILEPATH,
-                    Thread.current[:redis_operation_filepath]
+                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH]
                   )
                 end
 
-                if Thread.current[:redis_operation_codeowner].present?
+                if Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].present?
                   span.set_tag(
                     Contrib::Redis::Ext::METRIC_CODEOWNER,
-                    Thread.current[:redis_operation_codeowner]
+                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
                   )
                 end
                 ### END BRAZE MODIFICATION
@@ -64,17 +64,17 @@ module Datadog
                 ### BRAZE MODIFICATION
                 span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
 
-                if Thread.current[:redis_operation_filepath].present?
+                if Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH].present?
                   span.set_tag(
                     Contrib::Redis::Ext::METRIC_FILEPATH,
-                    Thread.current[:redis_operation_filepath]
+                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH]
                   )
                 end
 
-                if Thread.current[:redis_operation_codeowner].present?
+                if Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].present?
                   span.set_tag(
                     Contrib::Redis::Ext::METRIC_CODEOWNER,
-                    Thread.current[:redis_operation_codeowner]
+                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
                   )
                 end
                 ### END BRAZE MODIFICATION
