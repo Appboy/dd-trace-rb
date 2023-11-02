@@ -39,6 +39,13 @@ module Datadog
                     Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
                   )
                 end
+
+                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX].nil?
+                  span.set_tag(
+                    Contrib::Redis::Ext::METRIC_SHARD_INDEX,
+                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX]
+                  )
+                end
                 ### END BRAZE MODIFICATION
                 Contrib::Redis::Tags.set_common_tags(self, span, show_command_args)
 
@@ -75,6 +82,13 @@ module Datadog
                   span.set_tag(
                     Contrib::Redis::Ext::METRIC_CODEOWNER,
                     Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
+                  )
+                end
+
+                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX].nil?
+                  span.set_tag(
+                    Contrib::Redis::Ext::METRIC_SHARD_INDEX,
+                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX]
                   )
                 end
                 ### END BRAZE MODIFICATION

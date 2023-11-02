@@ -20,8 +20,10 @@ module Datadog
           METRIC_RESP_COMMAND_LEN = 'redis.raw_response_length'.freeze
           METRIC_FILEPATH = 'redis.filepath'.freeze
           METRIC_CODEOWNER = 'redis.codeowner'.freeze
+          METRIC_SHARD_INDEX = 'redis.shard_index'.freeze
           THREAD_GLOBAL_FILEPATH = :redis_operation_filepath
           THREAD_GLOBAL_CODEOWNER = :redis_operation_codeowner
+          THREAD_GLOBAL_SHARD_INDEX = :redis_operation_shard_index
           ### END BRAZE MODIFICATION
           TYPE = 'redis'.freeze
           TAG_COMPONENT = 'redis'.freeze
