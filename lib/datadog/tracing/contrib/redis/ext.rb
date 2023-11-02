@@ -18,6 +18,10 @@ module Datadog
           ### BRAZE MODIFICATION
           METRIC_RAW_COMMAND_LEN = 'redis.raw_command_length'.freeze
           METRIC_RESP_COMMAND_LEN = 'redis.raw_response_length'.freeze
+          METRIC_FILEPATH = 'redis.filepath'.freeze
+          METRIC_CODEOWNER = 'redis.codeowner'.freeze
+          THREAD_GLOBAL_FILEPATH = :redis_operation_filepath
+          THREAD_GLOBAL_CODEOWNER = :redis_operation_codeowner
           ### END BRAZE MODIFICATION
           TYPE = 'redis'.freeze
           TAG_COMPONENT = 'redis'.freeze
