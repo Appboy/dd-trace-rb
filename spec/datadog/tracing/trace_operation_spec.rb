@@ -1,4 +1,5 @@
 require 'spec_helper'
+require 'support/object_helpers'
 
 require 'time'
 
@@ -31,8 +32,11 @@ RSpec.describe Datadog::Tracing::TraceOperation do
         sampled: sampled,
         sampling_priority: sampling_priority,
         service: service,
+        profiling_enabled: profiling_enabled,
         tags: tags,
-        metrics: metrics
+        metrics: metrics,
+        trace_state: trace_state,
+        trace_state_unknown_fields: trace_state_unknown_fields,
       }
     end
 
@@ -48,8 +52,11 @@ RSpec.describe Datadog::Tracing::TraceOperation do
     let(:sampled) { true }
     let(:sampling_priority) { Datadog::Tracing::Sampling::Ext::Priority::USER_KEEP }
     let(:service) { 'billing-api' }
+    let(:profiling_enabled) { 'profiling_enabled' }
     let(:tags) { { 'foo' => 'bar' }.merge(distributed_tags) }
     let(:metrics) { { 'baz' => 42.0 } }
+    let(:trace_state) { 'my-trace-state' }
+    let(:trace_state_unknown_fields) { 'any;field;really' }
 
     let(:distributed_tags) { { '_dd.p.test' => 'value' } }
   end
@@ -76,7 +83,9 @@ RSpec.describe Datadog::Tracing::TraceOperation do
           rule_sample_rate: nil,
           sample_rate: nil,
           sampling_priority: nil,
-          service: nil
+          service: nil,
+          trace_state: nil,
+          trace_state_unknown_fields: nil,
         )
       end
 
@@ -1636,9 +1645,9 @@ RSpec.describe Datadog::Tracing::TraceOperation do
             rule_sample_rate: rule_sample_rate,
             runtime_id: Datadog::Core::Environment::Identity.id,
             sample_rate: sample_rate,
-
             sampling_priority: sampling_priority,
-            service: service
+            service: service,
+            profiling_enabled: profiling_enabled,
           )
         end
       end

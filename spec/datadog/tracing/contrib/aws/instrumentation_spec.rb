@@ -3,6 +3,7 @@ require 'datadog/tracing/contrib/analytics_examples'
 require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/environment_service_name_examples'
 require 'datadog/tracing/contrib/span_attribute_schema_examples'
+require 'datadog/tracing/contrib/peer_service_configuration_examples'
 
 require 'aws-sdk'
 
@@ -42,9 +43,13 @@ RSpec.describe 'AWS instrumentation' do
       end
 
       it_behaves_like 'measured span for integration'
-      it_behaves_like 'a peer service span'
-      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
       it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'sts.us-stubbed-1.amazonaws.com' }
+        let(:peer_service_source) { 'peer.hostname' }
+      end
 
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
@@ -65,10 +70,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-
-        # TODO: add testing for v0 and v1 `peer.service` when added
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('sts.us-stubbed-1.amazonaws.com')
       end
@@ -95,8 +96,13 @@ RSpec.describe 'AWS instrumentation' do
       end
 
       it_behaves_like 'measured span for integration'
-      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
       it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 's3.us-stubbed-1.amazonaws.com' }
+        let(:peer_service_source) { 'peer.hostname' }
+      end
 
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
@@ -118,15 +124,9 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-
-        # TODO: add testing for v0 and v1 `peer.service` when added
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('s3.us-stubbed-1.amazonaws.com')
       end
-
-      it_behaves_like 'a peer service span'
 
       it 'returns an unmodified response' do
         expect(list_buckets.buckets.map(&:name)).to eq(['bucket1'])
@@ -139,6 +139,15 @@ RSpec.describe 'AWS instrumentation' do
       let(:responses) do
         { list_objects: {} }
       end
+
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'bucketname' }
+        let(:peer_service_source) { 'bucketname' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -159,8 +168,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('bucketname.s3.us-stubbed-1.amazonaws.com')
       end
@@ -213,6 +220,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'MyQueueName' }
+        let(:peer_service_source) { 'queuename' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -234,8 +249,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('sqs.us-stubbed-1.amazonaws.com')
       end
@@ -284,6 +297,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'MyQueueName' }
+        let(:peer_service_source) { 'queuename' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -305,8 +326,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('sqs.us-stubbed-1.amazonaws.com')
       end
@@ -326,6 +345,14 @@ RSpec.describe 'AWS instrumentation' do
         { get_queue_url: {
           queue_url: 'myQueueURL'
         } }
+      end
+
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'MyQueueName' }
+        let(:peer_service_source) { 'queuename' }
       end
 
       it 'generates a span' do
@@ -348,8 +375,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('sqs.us-stubbed-1.amazonaws.com')
       end
@@ -376,6 +401,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-topic-name' }
+        let(:peer_service_source) { 'topicname' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -397,8 +430,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('sns.us-stubbed-1.amazonaws.com')
       end
@@ -423,9 +454,15 @@ RSpec.describe 'AWS instrumentation' do
       end
 
       let(:responses) do
-        { create_topic: {
+        { create_topic: {} }
+      end
 
-        } }
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'topicName' }
+        let(:peer_service_source) { 'topicname' }
       end
 
       it 'generates a span' do
@@ -448,8 +485,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('sns.us-stubbed-1.amazonaws.com')
       end
@@ -472,6 +507,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-table-name' }
+        let(:peer_service_source) { 'tablename' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -492,8 +535,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('dynamodb.us-stubbed-1.amazonaws.com')
       end
@@ -520,6 +561,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-stream-name' }
+        let(:peer_service_source) { 'streamname' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -540,8 +589,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('kinesis.us-stubbed-1.amazonaws.com')
       end
@@ -567,6 +614,15 @@ RSpec.describe 'AWS instrumentation' do
           }
         } }
       end
+
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-stream' }
+        let(:peer_service_source) { 'streamname' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -585,8 +641,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('123456789012.control-kinesis.us-stubbed-1.amazonaws.com')
       end
@@ -612,6 +666,15 @@ RSpec.describe 'AWS instrumentation' do
           }
         } }
       end
+
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-stream' }
+        let(:peer_service_source) { 'streamname' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -630,8 +693,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('kinesis.us-stubbed-1.amazonaws.com')
       end
@@ -662,6 +723,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'RuleName' }
+        let(:peer_service_source) { 'rulename' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -682,8 +751,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('events.us-stubbed-1.amazonaws.com')
       end
@@ -702,6 +769,14 @@ RSpec.describe 'AWS instrumentation' do
         { list_targets_by_rule: {
           targets: []
         } }
+      end
+
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'RuleName' }
+        let(:peer_service_source) { 'rulename' }
       end
 
       it 'generates a span' do
@@ -724,8 +799,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('events.us-stubbed-1.amazonaws.com')
       end
@@ -751,6 +824,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'MyStateMachine' }
+        let(:peer_service_source) { 'statemachinename' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -772,8 +853,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('states.us-stubbed-1.amazonaws.com')
       end
@@ -797,6 +876,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-state-machine-name' }
+        let(:peer_service_source) { 'statemachinename' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -817,8 +904,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('states.us-stubbed-1.amazonaws.com')
       end
@@ -849,6 +934,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-state-machine-name' }
+        let(:peer_service_source) { 'statemachinename' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -869,8 +962,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('states.us-stubbed-1.amazonaws.com')
       end
@@ -889,6 +980,14 @@ RSpec.describe 'AWS instrumentation' do
         { update_state_machine: {
           update_date: Time.new(2023, 3, 31, 12, 30, 0, '-04:00')
         } }
+      end
+
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-state-machine-name' }
+        let(:peer_service_source) { 'statemachinename' }
       end
 
       it 'generates a span' do
@@ -911,8 +1010,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('states.us-stubbed-1.amazonaws.com')
       end
@@ -929,6 +1026,14 @@ RSpec.describe 'AWS instrumentation' do
 
       let(:responses) do
         { delete_state_machine: {} }
+      end
+
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'my-state-machine-name' }
+        let(:peer_service_source) { 'statemachinename' }
       end
 
       it 'generates a span' do
@@ -951,8 +1056,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('states.us-stubbed-1.amazonaws.com')
       end
@@ -987,6 +1090,14 @@ RSpec.describe 'AWS instrumentation' do
         } }
       end
 
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'example-state-machine' }
+        let(:peer_service_source) { 'statemachinename' }
+      end
+
       it 'generates a span' do
         expect(span.name).to eq('aws.command')
         expect(span.service).to eq('aws')
@@ -1007,8 +1118,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('states.us-stubbed-1.amazonaws.com')
       end
@@ -1027,6 +1136,14 @@ RSpec.describe 'AWS instrumentation' do
         { stop_execution: {
           stop_date: Time.new(2023, 3, 31, 12, 30, 0, '-04:00'),
         } }
+      end
+
+      it_behaves_like 'schema version span'
+      it_behaves_like 'environment service name', 'DD_TRACE_AWS_SERVICE_NAME'
+      it_behaves_like 'configured peer service span', 'DD_TRACE_AWS_PEER_SERVICE'
+      it_behaves_like 'a peer service span' do
+        let(:peer_service_val) { 'example-state-machine' }
+        let(:peer_service_source) { 'statemachinename' }
       end
 
       it 'generates a span' do
@@ -1049,8 +1166,6 @@ RSpec.describe 'AWS instrumentation' do
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT)).to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('command')
-        expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('aws')
         expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_HOSTNAME))
           .to eq('states.us-stubbed-1.amazonaws.com')
       end

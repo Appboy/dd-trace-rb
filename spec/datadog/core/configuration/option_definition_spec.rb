@@ -24,51 +24,6 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition do
     end
   end
 
-  describe '#delegate_to' do
-    subject(:delegate_to) { definition.delegate_to }
-
-    context 'when given a value' do
-      let(:meta) { { delegate_to: delegate_to_value } }
-      let(:delegate_to_value) { double('delegate_to') }
-
-      it { is_expected.to be delegate_to_value }
-    end
-
-    context 'when not initialized' do
-      it { is_expected.to be nil }
-    end
-  end
-
-  describe '#depends_on' do
-    subject(:default) { definition.depends_on }
-
-    context 'when not initialized with a value' do
-      it { is_expected.to eq([]) }
-    end
-
-    context 'when initialized with a value' do
-      let(:meta) { { depends_on: depends_on_value } }
-      let(:depends_on_value) { double('depends_on') }
-
-      it { is_expected.to be depends_on_value }
-    end
-  end
-
-  describe '#lazy' do
-    subject(:lazy) { definition.lazy }
-
-    context 'when not initialized with a value' do
-      it { is_expected.to be false }
-    end
-
-    context 'when initialized with a value' do
-      let(:meta) { { lazy: lazy_value } }
-      let(:lazy_value) { double('lazy') }
-
-      it { is_expected.to be lazy_value }
-    end
-  end
-
   describe '#name' do
     subject(:result) { definition.name }
 
@@ -85,14 +40,14 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition do
     end
   end
 
-  describe '#on_set' do
-    subject(:on_set) { definition.on_set }
+  describe '#after_set' do
+    subject(:after_set) { definition.after_set }
 
     context 'when given a value' do
-      let(:meta) { { on_set: on_set_value } }
-      let(:on_set_value) { double('on_set') }
+      let(:meta) { { after_set: after_set_value } }
+      let(:after_set_value) { double('after_set') }
 
-      it { is_expected.to be on_set_value }
+      it { is_expected.to be after_set_value }
     end
 
     context 'when not initialized' do
@@ -191,14 +146,16 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition::Builder do
           it 'generates an OptionDefinition with defaults' do
             is_expected.to have_attributes(
               default: nil,
-              delegate_to: nil,
-              depends_on: [],
-              lazy: false,
+              default_proc: nil,
               name: name,
-              on_set: nil,
+              after_set: nil,
               resetter: nil,
               setter: Datadog::Core::Configuration::OptionDefinition::IDENTITY,
-              type: nil
+              type: nil,
+              type_options: {},
+              env: nil,
+              deprecated_env: nil,
+              env_parser: nil
             )
           end
         end
@@ -225,21 +182,22 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition::Builder do
         end
       end
     end
-  end
 
-  describe '#depends_on' do
-    subject(:depends_on) { builder.depends_on(*values) }
+    context 'validate_options!' do
+      context 'when default and default_proc is provided' do
+        let(:initialize_block) do
+          proc do |o|
+            o.default false
+            o.default_proc { true }
+          end
+        end
 
-    context 'given a list of arguments' do
-      let(:values) { [:foo, :bar] }
-
-      it { is_expected.to eq(values) }
-    end
-
-    context 'given an nested Array' do
-      let(:values) { [[:foo], [:bar]] }
-
-      it { is_expected.to eq([:foo, :bar]) }
+        it do
+          expect do
+            is_expected
+          end.to raise_error(described_class::InvalidOptionError)
+        end
+      end
     end
   end
 
@@ -269,12 +227,14 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition::Builder do
     end
   end
 
-  describe '#delegate_to' do
-    subject(:delegate_to) { builder.delegate_to(&block) }
+  describe '#default_proc' do
+    subject(:default_proc) { builder.default_proc(&block) }
 
-    let(:block) { proc {} }
+    context 'given a block' do
+      let(:block) { proc { false } }
 
-    it { is_expected.to be block }
+      it { is_expected.to be block }
+    end
   end
 
   describe '#helper' do
@@ -304,23 +264,14 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition::Builder do
   end
 
   describe '#lazy' do
-    context 'given no arguments' do
-      subject(:lazy) { builder.lazy }
-
-      it { is_expected.to be true }
-    end
-
-    context 'given a value' do
-      subject(:lazy) { builder.lazy(value) }
-
-      let(:value) { double('value') }
-
-      it { is_expected.to be value }
+    it 'logs deprecation warning' do
+      expect(Datadog::Core).to receive(:log_deprecation)
+      builder.lazy
     end
   end
 
-  describe '#on_set' do
-    subject(:on_set) { builder.on_set(&block) }
+  describe '#after_set' do
+    subject(:after_set) { builder.after_set(&block) }
 
     let(:block) { proc {} }
 
@@ -344,15 +295,54 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition::Builder do
   end
 
   describe '#type' do
-    subject(:type) { builder.type(value) }
-
+    subject(:type) { builder.type(value, **opts) }
     let(:value) { nil }
+    let(:opts) { {} }
 
     context 'given a value' do
-      let(:value) { String }
+      let(:value) { :string }
 
       it { is_expected.to be value }
       it { expect { type }.to change { builder.meta[:type] }.from(nil).to(value) }
+    end
+
+    context 'given options' do
+      let(:value) { :string }
+      let(:opts) { { nilable: true } }
+
+      it { is_expected.to be value }
+      it { expect { type }.to change { builder.meta[:type] }.from(nil).to(value) }
+      it { expect { type }.to change { builder.meta[:type_options] }.from({}).to(opts) }
+    end
+  end
+
+  describe '#env' do
+    subject(:env) { builder.env(value) }
+
+    context 'given a value' do
+      let(:value) { 'TEST' }
+
+      it { is_expected.to be value }
+    end
+  end
+
+  describe '#deprecated_env' do
+    subject(:deprecated_env) { builder.deprecated_env(value) }
+
+    context 'given a value' do
+      let(:value) { 'TEST' }
+
+      it { is_expected.to be value }
+    end
+  end
+
+  describe '#env_parser' do
+    subject(:env_parser) { builder.env_parser(&block) }
+
+    context 'given a block' do
+      let(:block) { proc { false } }
+
+      it { is_expected.to be block }
     end
   end
 
@@ -371,45 +361,12 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition::Builder do
       end
     end
 
-    context 'given :delegate_to' do
-      let(:options) { { delegate_to: value } }
+    context 'given :after_set' do
+      let(:options) { { after_set: value } }
       let(:value) { proc {} }
 
       it do
-        expect(builder).to receive(:delegate_to) do |&block|
-          expect(block).to be value
-        end
-
-        apply_options!
-      end
-    end
-
-    context 'given :depends_on' do
-      let(:options) { { depends_on: value } }
-      let(:value) { [double('value'), double('value')] }
-
-      it do
-        expect(builder).to receive(:depends_on).with(*value)
-        apply_options!
-      end
-    end
-
-    context 'given :lazy' do
-      let(:options) { { lazy: value } }
-      let(:value) { double('value') }
-
-      it do
-        expect(builder).to receive(:lazy).with(value)
-        apply_options!
-      end
-    end
-
-    context 'given :on_set' do
-      let(:options) { { on_set: value } }
-      let(:value) { proc {} }
-
-      it do
-        expect(builder).to receive(:on_set) do |&block|
+        expect(builder).to receive(:after_set) do |&block|
           expect(block).to be value
         end
 
@@ -466,13 +423,15 @@ RSpec.describe Datadog::Core::Configuration::OptionDefinition::Builder do
     it 'contains the arguments for OptionDefinition' do
       expect(meta.keys).to include(
         :default,
-        :delegate_to,
-        :depends_on,
-        :lazy,
-        :on_set,
+        :default_proc,
+        :after_set,
         :resetter,
         :setter,
-        :type
+        :type,
+        :type_options,
+        :env,
+        :deprecated_env,
+        :env_parser,
       )
     end
   end

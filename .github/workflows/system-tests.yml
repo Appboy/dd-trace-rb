@@ -22,7 +22,7 @@ jobs:
     name: Build (${{ matrix.image }})
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: 'DataDog/system-tests'
       - name: Pull released image
@@ -79,11 +79,11 @@ jobs:
     name: Build (${{ matrix.app }})
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: 'DataDog/system-tests'
       - name: Checkout dd-trace-rb
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           path: 'binaries/dd-trace-rb'
       - name: Pull released image
@@ -134,7 +134,7 @@ jobs:
         scenario:
           - DEFAULT
           - APPSEC_DISABLED
-          - APPSEC_IP_BLOCKING
+          - APPSEC_BLOCKING_FULL_DENYLIST
           - APPSEC_REQUEST_BLOCKING
         include:
           - library: ruby
@@ -168,6 +168,15 @@ jobs:
             app: rack
             scenario: APPSEC_RATE_LIMITER
           - library: ruby
+            app: rails70
+            scenario: APPSEC_AUTO_EVENTS_EXTENDED
+          - library: ruby
+            app: rails70
+            scenario: APPSEC_API_SECURITY
+          - library: ruby
+            app: rack
+            scenario: APPSEC_RULES_MONITORING_WITH_ERRORS
+          - library: ruby
             app: rack
             scenario: SAMPLING
           - library: ruby
@@ -196,7 +205,7 @@ jobs:
         with:
           python-version: '3.9'
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: 'DataDog/system-tests'
       - name: Pull agent image
@@ -226,6 +235,15 @@ jobs:
         with:
           name: system-tests-${{ matrix.library }}-${{ matrix.app }}-logs-gha${{ github.run_id }}-g${{ github.sha }}
           path: logs*
+
+  all_test_successful:
+    name: System tests successful
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    steps:
+      - name: System tests successful
+        run: echo "Done"
 
   aggregate:
     strategy:
@@ -259,7 +277,7 @@ jobs:
         with:
           python-version: '3.9'
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: 'DataDog/system-tests'
       - name: Retrieve logs

@@ -21,18 +21,24 @@ module Datadog
           # PG::Connection patch methods
           module InstanceMethods
             def exec(sql, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_EXEC, sql: sql, block: block) do |sql_statement, wrapped_block|
                 super(sql_statement, *args, &wrapped_block)
               end
             end
 
             def exec_params(sql, params, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_EXEC_PARAMS, sql: sql, block: block) do |sql_statement, wrapped_block|
                 super(sql_statement, params, *args, &wrapped_block)
               end
             end
 
             def exec_prepared(statement_name, params, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_EXEC_PREPARED, statement_name: statement_name, block: block) do |_, wrapped_block|
                 super(statement_name, params, *args, &wrapped_block)
               end
@@ -40,6 +46,8 @@ module Datadog
 
             # async_exec is an alias to exec
             def async_exec(sql, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_ASYNC_EXEC, sql: sql, block: block) do |sql_statement, wrapped_block|
                 super(sql_statement, *args, &wrapped_block)
               end
@@ -47,6 +55,8 @@ module Datadog
 
             # async_exec_params is an alias to exec_params
             def async_exec_params(sql, params, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_ASYNC_EXEC_PARAMS, sql: sql, block: block) do |sql_statement, wrapped_block|
                 super(sql_statement, params, *args, &wrapped_block)
               end
@@ -54,24 +64,32 @@ module Datadog
 
             # async_exec_prepared is an alias to exec_prepared
             def async_exec_prepared(statement_name, params, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_ASYNC_EXEC_PREPARED, statement_name: statement_name, block: block) do |_, wrapped_block|
                 super(statement_name, params, *args, &wrapped_block)
               end
             end
 
             def sync_exec(sql, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_SYNC_EXEC, sql: sql, block: block) do |sql_statement, wrapped_block|
                 super(sql_statement, *args, &wrapped_block)
               end
             end
 
             def sync_exec_params(sql, params, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_SYNC_EXEC_PARAMS, sql: sql, block: block) do |sql_statement, wrapped_block|
                 super(sql_statement, params, *args, &wrapped_block)
               end
             end
 
             def sync_exec_prepared(statement_name, params, *args, &block)
+              return super unless enabled?
+
               trace(Ext::SPAN_SYNC_EXEC_PREPARED, statement_name: statement_name, block: block) do |_, wrapped_block|
                 super(statement_name, params, *args, &wrapped_block)
               end
@@ -81,10 +99,12 @@ module Datadog
 
             def trace(name, sql: nil, statement_name: nil, block: nil)
               service = Datadog.configuration_for(self, :service_name) || datadog_configuration[:service_name]
+              error_handler = datadog_configuration[:error_handler]
               resource = statement_name || sql
 
               Tracing.trace(
                 name,
+                on_error: error_handler,
                 service: service,
                 resource: resource,
                 type: Tracing::Metadata::Ext::SQL::TYPE
@@ -122,14 +142,21 @@ module Datadog
             def annotate_span_with_query!(span, service)
               span.set_tag(Ext::TAG_DB_NAME, db)
 
+              if datadog_configuration[:peer_service]
+                span.set_tag(
+                  Tracing::Metadata::Ext::TAG_PEER_SERVICE,
+                  datadog_configuration[:peer_service]
+                )
+              end
+
+              # Tag original global service name if not used
+              if span.service != Datadog.configuration.service
+                span.set_tag(Tracing::Contrib::Ext::Metadata::TAG_BASE_SERVICE, Datadog.configuration.service)
+              end
+
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_QUERY)
               span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
-
-              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
-                # Tag as an external peer service
-                span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, span.service)
-              end
 
               span.set_tag(Tracing::Metadata::Ext::TAG_PEER_HOSTNAME, host)
 
@@ -141,6 +168,8 @@ module Datadog
               span.set_tag(Tracing::Metadata::Ext::NET::TAG_TARGET_PORT, port)
               span.set_tag(Tracing::Metadata::Ext::NET::TAG_DESTINATION_NAME, host)
               span.set_tag(Tracing::Metadata::Ext::NET::TAG_DESTINATION_PORT, port)
+
+              Contrib::SpanAttributeSchema.set_peer_service!(span, Ext::PEER_SERVICE_SOURCES)
             end
 
             # @param [PG::Result] result
@@ -162,6 +191,10 @@ module Datadog
 
             def comment_propagation
               datadog_configuration[:comment_propagation]
+            end
+
+            def enabled?
+              datadog_configuration[:enabled]
             end
           end
         end

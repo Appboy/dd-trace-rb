@@ -1,9 +1,6 @@
 module CoreHelpers
-  # Asserts that a deprecated action is recorded by the `subject` execution.
-  RSpec.shared_examples 'records deprecated action' do |matcher = nil|
-    it 'records deprecated action in the deprecation log' do
-      expect { subject }.to log_deprecation(matcher)
-    end
+  RSpec.shared_context 'non-development execution environment' do
+    before { allow(Datadog::Core::Environment::Execution).to receive(:development?).and_return(false) }
   end
 
   # Test matcher for this library's deprecated operation recorder.

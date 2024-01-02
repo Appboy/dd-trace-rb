@@ -36,7 +36,7 @@ module Datadog
                   'server.response.headers.no_cookies' => response_headers_no_cookies,
                 }
 
-                waf_timeout = Datadog::AppSec.settings.waf_timeout
+                waf_timeout = Datadog.configuration.appsec.waf_timeout
                 result = waf_context.run(waf_args, waf_timeout)
 
                 Datadog.logger.debug { "WAF TIMEOUT: #{result.inspect}" } if result.timeout
@@ -45,11 +45,8 @@ module Datadog
                 when :match
                   Datadog.logger.debug { "WAF: #{result.inspect}" }
 
-                  block = result.actions.include?('block')
-
-                  yield [result, block]
-
-                  throw(:block, [result, true]) if block
+                  yield result
+                  throw(:block, true) unless result.actions.empty?
                 when :ok
                   Datadog.logger.debug { "WAF OK: #{result.inspect}" }
                 when :invalid_call

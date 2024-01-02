@@ -38,6 +38,8 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
   let(:invalid_time) { -1 }
   let(:tracer) { nil }
   let(:endpoint_collection_enabled) { true }
+  let(:timeline_enabled) { false }
+  let(:allocation_type_enabled) { true }
 
   subject(:cpu_and_wall_time_collector) do
     described_class.new(
@@ -45,6 +47,8 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
       max_frames: max_frames,
       tracer: tracer,
       endpoint_collection_enabled: endpoint_collection_enabled,
+      timeline_enabled: timeline_enabled,
+      allocation_type_enabled: allocation_type_enabled,
     )
   end
 
@@ -71,8 +75,8 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
     described_class::Testing._native_sample_after_gc(cpu_and_wall_time_collector)
   end
 
-  def sample_allocation(weight:)
-    described_class::Testing._native_sample_allocation(cpu_and_wall_time_collector, weight)
+  def sample_allocation(weight:, new_object: Object.new)
+    described_class::Testing._native_sample_allocation(cpu_and_wall_time_collector, weight, new_object)
   end
 
   def thread_list
@@ -104,7 +108,10 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
       sample
 
       expect(Thread.list).to eq(all_threads), 'Threads finished during this spec, causing flakiness!'
-      expect(samples.size).to be all_threads.size
+
+      seen_threads = samples.map(&:labels).map { |it| it.fetch(:'thread id') }.uniq
+
+      expect(seen_threads.size).to be all_threads.size
     end
 
     it 'tags the samples with the object ids of the Threads they belong to' do
@@ -114,20 +121,43 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         .to include(*[Thread.main, t1, t2, t3].map(&:object_id))
     end
 
-    it 'includes the thread names, if available' do
+    it 'includes the thread names' do
       t1.name = 'thread t1'
-      t2.name = nil
-      t3.name = 'thread t3'
+      t2.name = 'thread t2'
 
       sample
 
       t1_sample = samples_for_thread(samples, t1).first
       t2_sample = samples_for_thread(samples, t2).first
-      t3_sample = samples_for_thread(samples, t3).first
 
       expect(t1_sample.labels).to include(:'thread name' => 'thread t1')
-      expect(t2_sample.labels.keys).to_not include(:'thread name')
-      expect(t3_sample.labels).to include(:'thread name' => 'thread t3')
+      expect(t2_sample.labels).to include(:'thread name' => 'thread t2')
+    end
+
+    context 'when no thread names are available' do
+      # NOTE: As of this writing, the dd-trace-rb spec_helper.rb includes a monkey patch to Thread creation that we use
+      # to track specs that leak threads. This means that the invoke_location of every thread will point at the
+      # spec_helper in our test suite. Just in case you're looking at the output and being a bit confused :)
+      it 'uses the thread_invoke_location as a thread name' do
+        t1.name = nil
+        sample
+        t1_sample = samples_for_thread(samples, t1).first
+
+        expect(t1_sample.labels).to include(:'thread name' => per_thread_context.fetch(t1).fetch(:thread_invoke_location))
+        expect(t1_sample.labels).to include(:'thread name' => match(/.+\.rb:\d+/))
+      end
+    end
+
+    it 'includes a fallback name for the main thread, when not set' do
+      expect(Thread.main.name).to eq('Thread.main') # We set this in the spec_helper.rb
+
+      Thread.main.name = nil
+
+      sample
+
+      expect(samples_for_thread(samples, Thread.main).first.labels).to include(:'thread name' => 'main')
+
+      Thread.main.name = 'Thread.main'
     end
 
     it 'includes the wall-time elapsed between samples' do
@@ -140,20 +170,17 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         per_thread_context.fetch(t1).fetch(:wall_time_at_previous_sample_ns)
 
       t1_samples = samples_for_thread(samples, t1)
-      wall_time = t1_samples.first.values.fetch(:'wall-time')
 
-      expect(t1_samples.size)
-        .to be(1), "Expected thread t1 to always have same stack trace (because it's sleeping), got #{t1_samples.inspect}"
-
+      wall_time = t1_samples.map(&:values).map { |it| it.fetch(:'wall-time') }.reduce(:+)
       expect(wall_time).to be(wall_time_at_second_sample - wall_time_at_first_sample)
     end
 
     it 'tags samples with how many times they were seen' do
       5.times { sample }
 
-      t1_sample = samples_for_thread(samples, t1).first
+      t1_samples = samples_for_thread(samples, t1)
 
-      expect(t1_sample.values).to include(:'cpu-samples' => 5)
+      expect(t1_samples.map(&:values).map { |it| it.fetch(:'cpu-samples') }.reduce(:+)).to eq 5
     end
 
     [:before, :after].each do |on_gc_finish_order|
@@ -212,7 +239,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         it 'sets the cpu-time on every sample to zero' do
           5.times { sample }
 
-          expect(samples).to all include(values: include(:'cpu-time' => 0))
+          expect(samples).to all have_attributes(values: include(:'cpu-time' => 0))
         end
       end
 
@@ -384,9 +411,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
             expect(t1_sample.labels).to_not include(:'trace endpoint' => anything)
           end
 
-          context 'when local root span type is web' do
-            let(:root_span_type) { 'web' }
-
+          shared_examples_for 'samples with code hotspots information' do
             it 'includes the "trace endpoint" label in the samples' do
               sample
 
@@ -474,9 +499,9 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
                 t1_samples = samples_for_thread(samples, t1)
 
-                expect(t1_samples).to have(1).item
-                expect(t1_samples.first.labels).to include(:'trace endpoint' => 'changed_after_first_sample')
-                expect(t1_samples.first.values).to include(:'cpu-samples' => 2)
+                expect(t1_samples)
+                  .to all have_attributes(labels: include(:'trace endpoint' => 'changed_after_first_sample'))
+                expect(t1_samples.map(&:values).map { |it| it.fetch(:'cpu-samples') }.reduce(:+)).to eq 2
               end
 
               context 'when the resource is changed multiple times' do
@@ -489,12 +514,25 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
                   t1_samples = samples_for_thread(samples, t1)
 
-                  expect(t1_samples).to have(1).item
-                  expect(t1_samples.first.labels).to include(:'trace endpoint' => 'changed_after_second_sample')
-                  expect(t1_samples.first.values).to include(:'cpu-samples' => 3)
+                  expect(t1_samples)
+                    .to all have_attributes(labels: include(:'trace endpoint' => 'changed_after_second_sample'))
+                  expect(t1_samples.map(&:values).map { |it| it.fetch(:'cpu-samples') }.reduce(:+)).to eq 3
                 end
               end
             end
+          end
+
+          context 'when local root span type is web' do
+            let(:root_span_type) { 'web' }
+
+            it_behaves_like 'samples with code hotspots information'
+          end
+
+          # Used by the rack integration with request_queuing: true
+          context 'when local root span type is proxy' do
+            let(:root_span_type) { 'proxy' }
+
+            it_behaves_like 'samples with code hotspots information'
           end
         end
       end
@@ -540,6 +578,30 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
       expect(second_sample_stack.first.labels).to_not include(:'profiler overhead' => anything)
       expect(profiler_overhead_stack.first.labels).to include(:'profiler overhead' => 1)
+    end
+
+    describe 'timeline support' do
+      context 'when timeline is disabled' do
+        let(:timeline_enabled) { false }
+
+        it 'does not include end_timestamp_ns labels in samples' do
+          sample
+
+          expect(samples.map(&:labels).flat_map(&:keys).uniq).to_not include(:end_timestamp_ns)
+        end
+      end
+
+      context 'when timeline is enabled' do
+        let(:timeline_enabled) { true }
+
+        it 'includes a end_timestamp_ns containing epoch time in every sample' do
+          time_before = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+          sample
+          time_after = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+
+          expect(samples.first.labels).to include(end_timestamp_ns: be_between(time_before, time_after))
+        end
+      end
     end
   end
 
@@ -844,6 +906,16 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
           end
         end
       end
+
+      context 'when timeline is enabled' do
+        let(:timeline_enabled) { true }
+
+        it 'does not include end_timestamp_ns labels in GC samples' do
+          sample_after_gc
+
+          expect(gc_samples.first.labels.keys).to_not include(:end_timestamp_ns)
+        end
+      end
     end
   end
 
@@ -870,13 +942,10 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         Thread.current.name = 'thread_with_name'
         sample_allocation(weight: 123)
       end.join
-      thread_without_name = Thread.new { sample_allocation(weight: 123) }.join
 
       sample_with_name = samples_for_thread(samples, thread_with_name).first
-      sample_without_name = samples_for_thread(samples, thread_without_name).first
 
       expect(sample_with_name.labels).to include(:'thread name' => 'thread_with_name')
-      expect(sample_without_name.labels).to_not include(:'thread name')
     end
 
     describe 'code hotspots' do
@@ -911,6 +980,124 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
             :'span id' => @t1_span_id.to_i,
             :'trace endpoint' => 'trace_resource',
           )
+        end
+      end
+    end
+
+    context 'when timeline is enabled' do
+      let(:timeline_enabled) { true }
+
+      it 'does not include end_timestamp_ns labels in GC samples' do
+        sample_allocation(weight: 123)
+
+        expect(single_sample.labels.keys).to_not include(:end_timestamp_ns)
+      end
+    end
+
+    [
+      { expected_type: :T_OBJECT, object: Object.new, klass: 'Object' },
+      { expected_type: :T_CLASS, object: Object, klass: 'Class' },
+      { expected_type: :T_MODULE, object: Kernel, klass: 'Module' },
+      { expected_type: :T_FLOAT, object: 1.0, klass: 'Float' },
+      { expected_type: :T_STRING, object: 'Hello!', klass: 'String' },
+      { expected_type: :T_REGEXP, object: /Hello/, klass: 'Regexp' },
+      { expected_type: :T_ARRAY, object: [], klass: 'Array' },
+      { expected_type: :T_HASH, object: {}, klass: 'Hash' },
+      { expected_type: :T_BIGNUM, object: 2**256, klass: RUBY_VERSION < '2.4' ? 'Bignum' : 'Integer' },
+      # ThreadContext is a T_DATA; we create here a dummy instance just as an example
+      { expected_type: :T_DATA, object: described_class.allocate, klass: 'Datadog::Profiling::Collectors::ThreadContext' },
+      { expected_type: :T_MATCH, object: 'a'.match(Regexp.new('a')), klass: 'MatchData' },
+      { expected_type: :T_COMPLEX, object: Complex(1), klass: 'Complex' },
+      { expected_type: :T_RATIONAL, object: 1/2r, klass: 'Rational' },
+      { expected_type: :T_NIL, object: nil, klass: 'NilClass' },
+      { expected_type: :T_TRUE, object: true, klass: 'TrueClass' },
+      { expected_type: :T_FALSE, object: false, klass: 'FalseClass' },
+      { expected_type: :T_SYMBOL, object: :hello, klass: 'Symbol' },
+      { expected_type: :T_FIXNUM, object: 1, klass: RUBY_VERSION < '2.4' ? 'Fixnum' : 'Integer' },
+    ].each do |type|
+      expected_type = type.fetch(:expected_type)
+      object = type.fetch(:object)
+      klass = type.fetch(:klass)
+
+      context "when sampling a #{expected_type}" do
+        it 'includes the correct ruby vm type for the passed object' do
+          sample_allocation(weight: 123, new_object: object)
+
+          expect(single_sample.labels.fetch(:'ruby vm type')).to eq expected_type.to_s
+        end
+
+        it 'includes the correct class for the passed object' do
+          sample_allocation(weight: 123, new_object: object)
+
+          expect(single_sample.labels.fetch(:'allocation class')).to eq klass
+        end
+
+        context 'when allocation_type_enabled is false' do
+          let(:allocation_type_enabled) { false }
+
+          it 'does not record the correct class for the passed object' do
+            sample_allocation(weight: 123, new_object: object)
+
+            expect(single_sample.labels).to_not include(:'allocation class' => anything)
+          end
+        end
+      end
+    end
+
+    context 'when sampling a T_FILE' do
+      it 'includes the correct ruby vm type for the passed object' do
+        File.open(__FILE__) do |file|
+          sample_allocation(weight: 123, new_object: file)
+        end
+
+        expect(single_sample.labels.fetch(:'ruby vm type')).to eq 'T_FILE'
+      end
+
+      it 'includes the correct class for the passed object' do
+        File.open(__FILE__) do |file|
+          sample_allocation(weight: 123, new_object: file)
+        end
+
+        expect(single_sample.labels.fetch(:'allocation class')).to eq 'File'
+      end
+
+      context 'when allocation_type_enabled is false' do
+        let(:allocation_type_enabled) { false }
+
+        it 'does not record the correct class for the passed object' do
+          File.open(__FILE__) do |file|
+            sample_allocation(weight: 123, new_object: file)
+          end
+
+          expect(single_sample.labels).to_not include(:'allocation class' => anything)
+        end
+      end
+    end
+
+    context 'when sampling a Struct' do
+      before do
+        stub_const('ThreadContextSpec::TestStruct', Struct.new(:a))
+      end
+
+      it 'includes the correct ruby vm type for the passed object' do
+        sample_allocation(weight: 123, new_object: ThreadContextSpec::TestStruct.new)
+
+        expect(single_sample.labels.fetch(:'ruby vm type')).to eq 'T_STRUCT'
+      end
+
+      it 'includes the correct class for the passed object' do
+        sample_allocation(weight: 123, new_object: ThreadContextSpec::TestStruct.new)
+
+        expect(single_sample.labels.fetch(:'allocation class')).to eq 'ThreadContextSpec::TestStruct'
+      end
+
+      context 'when allocation_type_enabled is false' do
+        let(:allocation_type_enabled) { false }
+
+        it 'does not record the correct class for the passed object' do
+          sample_allocation(weight: 123, new_object: ThreadContextSpec::TestStruct.new)
+
+          expect(single_sample.labels).to_not include(:'allocation class' => anything)
         end
       end
     end
@@ -1026,6 +1213,66 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
               include(thread_cpu_time_id_valid?: true)
             )
           end
+        end
+      end
+
+      describe ':thread_invoke_location' do
+        it 'is empty for the main thread' do
+          expect(per_thread_context.fetch(Thread.main).fetch(:thread_invoke_location)).to be_empty
+        end
+
+        # NOTE: As of this writing, the dd-trace-rb spec_helper.rb includes a monkey patch to Thread creation that we use
+        # to track specs that leak threads. This means that the invoke_location of every thread will point at the
+        # spec_helper in our test suite. Just in case you're looking at the output and being a bit confused :)
+        it 'contains the file and line for the started threads' do
+          [t1, t2, t3].each do |thread|
+            invoke_location = per_thread_context.fetch(thread).fetch(:thread_invoke_location)
+
+            expect(thread.inspect).to include(invoke_location)
+            expect(invoke_location).to match(/.+\.rb:\d+/)
+          end
+        end
+
+        it 'contains a fallback for threads started in native code' do
+          native_thread = described_class::Testing._native_new_empty_thread
+
+          sample
+
+          native_thread.kill
+          native_thread.join
+
+          invoke_location = per_thread_context.fetch(native_thread).fetch(:thread_invoke_location)
+          expect(invoke_location).to eq '(Unnamed thread from native code)'
+        end
+
+        context 'when the `logging` gem has monkey patched thread creation' do
+          # rubocop:disable Style/GlobalVars
+          before do
+            load("#{__dir__}/helper/lib/logging/diagnostic_context.rb")
+            $simulated_logging_gem_monkey_patched_thread_ready_queue.pop
+          end
+
+          after do
+            $simulated_logging_gem_monkey_patched_thread.kill
+            $simulated_logging_gem_monkey_patched_thread.join
+            $simulated_logging_gem_monkey_patched_thread = nil
+            $simulated_logging_gem_monkey_patched_thread_ready_queue = nil
+          end
+
+          # We detect logging gem monkey patching by checking the invoke location of a thread and not using it when
+          # it belongs to the logging gem. This matching is done by matching the partial path
+          # `lib/logging/diagnostic_context.rb`, which is where the monkey patching is implemented.
+          #
+          # To simulate this on our test suite without having to bring in the `logging` gem (and monkey patch our
+          # threads), a helper was created that has a matching partial path.
+          it 'contains a placeholder only' do
+            sample
+
+            invoke_location =
+              per_thread_context.fetch($simulated_logging_gem_monkey_patched_thread).fetch(:thread_invoke_location)
+            expect(invoke_location).to eq '(Unnamed thread)'
+          end
+          # rubocop:enable Style/GlobalVars
         end
       end
     end

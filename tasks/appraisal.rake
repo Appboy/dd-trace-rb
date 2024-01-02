@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'pry'
+
 namespace :appraisal do # rubocop:disable Metrics/BlockLength
   def ruby_versions(versions)
     return TRACER_VERSIONS if versions.empty?
@@ -42,24 +44,6 @@ namespace :appraisal do # rubocop:disable Metrics/BlockLength
   end
 
   def lockfile_prefix(ruby_version)
-    ruby_version = {
-      '2.1' => '2.1.10',
-      '2.2' => '2.2.10',
-      '2.3' => '2.3.8',
-      '2.4' => '2.4.10',
-      '2.5' => '2.5.9',
-      '2.6' => '2.6.10',
-      '2.7' => '2.7.6',
-      '3.0' => '3.0.4',
-      '3.1' => '3.1.2',
-      '3.2' => '3.2.0',
-      '3.3' => '3.3.0',
-      # ADD NEW RUBIES HERE
-      'jruby-9.2' => 'jruby-9.2.21.0',
-      'jruby-9.3' => 'jruby-9.3.9.0',
-      'jruby-9.4' => 'jruby-9.4.0.0',
-    }[ruby_version]
-
     return "ruby_#{ruby_version}" if ruby_version =~ /^\d/
 
     ruby_version.tr('-', '_')
@@ -73,6 +57,24 @@ namespace :appraisal do # rubocop:disable Metrics/BlockLength
       cmd << [*bundle(ruby_version), 'config', 'without', 'check']
       cmd << [*bundle(ruby_version), 'install']
       cmd << [*bundle(ruby_version), 'exec', 'appraisal', 'generate']
+
+      cmd = cmd.map { |c| c << '&&' }.flatten.tap(&:pop)
+
+      p cmd
+      p docker(ruby_version, cmd)
+      sh docker(ruby_version, cmd).join(' ')
+    end
+  end
+
+  desc 'Generate Appraisal gemfile.lock. Takes a version list as argument, defaults to all'
+  task :lock do |_task, args|
+    ruby_versions(args.to_a).each do |ruby_version|
+      cmd = []
+      cmd << ['gem', 'install', 'bundler', '-v', bundler_version(ruby_version)] if bundler_version(ruby_version)
+      cmd << [*bundle(ruby_version), 'config', 'without', 'check']
+      cmd << [*bundle(ruby_version), 'install']
+      cmd << [*bundle(ruby_version), 'exec', 'appraisal', 'generate']
+      cmd << [*bundle(ruby_version), 'exec', 'appraisal', 'bundle lock']
 
       cmd = cmd.map { |c| c << '&&' }.flatten.tap(&:pop)
 

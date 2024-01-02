@@ -134,18 +134,18 @@ module Datadog
                  (?:"|%22)?
               )
               (?: # common keys
-                 (?:old_?|new_?)?p(?:ass)?w(?:or)?d(?:1|2)? # pw, password variants
-                |pass(?:_?phrase)?  # pass, passphrase variants
+                 (?:old[-_]?|new_?)?p(?:ass)?w(?:or)?d(?:1|2)? # pw, password variants
+                |pass(?:[-_]?phrase)?  # pass, passphrase variants
                 |secret
                 |(?: # key, key_id variants
-                     api_?
-                    |private_?
-                    |public_?
-                    |access_?
-                    |secret_?
-                 )key(?:_?id)?
+                     api[-_]?
+                    |private[-_]?
+                    |public[-_]?
+                    |access[-_]?
+                    |secret[-_]?
+                 )key(?:[-_]?id)?
                 |token
-                |consumer_?(?:id|key|secret)
+                |consumer[-_]?(?:id|key|secret)
                 |sign(?:ed|ature)?
                 |auth(?:entication|orization)?
               )
@@ -160,11 +160,11 @@ module Datadog
                  (?:"|%22)                                     # closing '"' at end of value
               )
              |(?: # other common secret values
-                 bearer(?:\s|%20)+[a-z0-9._\-]+
+                 bearer(?:\s|%20)+[a-z0-9._-]+
                 |token(?::|%3A)[a-z0-9]{13}
                 |gh[opsu]_[0-9a-zA-Z]{36}
                 |ey[I-L](?:[\w=-]|%3D)+\.ey[I-L](?:[\w=-]|%3D)+(?:\.(?:[\w.+/=-]|%3D|%2F|%2B)+)?
-                |-{5}BEGIN(?:[a-z\s]|%20)+PRIVATE(?:\s|%20)KEY-{5}[^\-]+-{5}END(?:[a-z\s]|%20)+PRIVATE(?:\s|%20)KEY(?:-{5})?(?:\n|%0A)?
+                |-{5}BEGIN(?:[a-z\s]|%20)+PRIVATE(?:\s|%20)KEY-{5}[^-]+-{5}END(?:[a-z\s]|%20)+PRIVATE(?:\s|%20)KEY(?:-{5})?(?:\n|%0A)?
                 |(?:ssh-(?:rsa|dss)|ecdsa-[a-z0-9]+-[a-z0-9]+)(?:\s|%20)*(?:[a-z0-9/.+]|%2F|%5C|%2B){100,}(?:=|%3D)*(?:(?:\s+)[a-z0-9._-]+)?
               )
             }ix.freeze

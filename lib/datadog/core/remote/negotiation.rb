@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative '../transport/http'
+require_relative 'transport/http'
 
 module Datadog
   module Core
@@ -11,32 +11,45 @@ module Datadog
           transport_options = {}
           transport_options[:agent_settings] = agent_settings if agent_settings
 
-          @transport_root = Datadog::Core::Transport::HTTP.root(**transport_options.dup)
+          @transport_root = Datadog::Core::Remote::Transport::HTTP.root(**transport_options.dup)
+          @logged = {}
         end
 
         def endpoint?(path)
           res = @transport_root.send_info
 
           if res.internal_error? && network_error?(res.error)
-            Datadog.logger.error { "agent unreachable: cannot negotiate #{path}" }
+            unless @logged[:agent_unreachable]
+              Datadog.logger.error { "agent unreachable: cannot negotiate #{path}" }
+              @logged[:agent_unreachable] = true
+            end
 
             return false
           end
 
           if res.not_found?
-            Datadog.logger.error { "agent reachable but has no /info endpoint: cannot negotiate #{path}" }
+            unless @logged[:no_info_endpoint]
+              Datadog.logger.error { "agent reachable but has no /info endpoint: cannot negotiate #{path}" }
+              @logged[:no_info_endpoint] = true
+            end
 
             return false
           end
 
           unless res.ok?
-            Datadog.logger.error { "agent reachable but unexpected response: cannot negotiate #{path}" }
+            unless @logged[:unexpected_response]
+              Datadog.logger.error { "agent reachable but unexpected response: cannot negotiate #{path}" }
+              @logged[:unexpected_response] = true
+            end
 
             return false
           end
 
           unless res.endpoints.include?(path)
-            Datadog.logger.error { "agent reachable but does not report #{path}" }
+            unless @logged[:no_config_endpoint]
+              Datadog.logger.error { "agent reachable but does not report #{path}" }
+              @logged[:no_config_endpoint] = true
+            end
 
             return false
           end

@@ -1,4 +1,3 @@
-require_relative '../environment/variable_helpers'
 require_relative 'options'
 
 module Datadog
@@ -8,8 +7,6 @@ module Datadog
       # @public_api
       module Base
         def self.included(base)
-          base.extend(Core::Environment::VariableHelpers)
-          base.include(Core::Environment::VariableHelpers)
           base.include(Options)
 
           base.extend(ClassMethods)
@@ -25,25 +22,25 @@ module Datadog
           # e.g. `settings :foo { option :bar }` --> `config.foo.bar`
           # @param [Symbol] name option name. Methods will be created based on this name.
           def settings(name, &block)
-            settings_class = new_settings_class(&block)
+            settings_class = new_settings_class(name, &block)
 
             option(name) do |o|
               o.default { settings_class.new }
-              o.lazy
 
               o.resetter do |value|
                 value.reset! if value.respond_to?(:reset!)
                 value
               end
-
-              o.type settings_class
             end
+
+            settings_class
           end
 
           private
 
-          def new_settings_class(&block)
+          def new_settings_class(name, &block)
             Class.new { include Configuration::Base }.tap do |klass|
+              klass.instance_variable_set(:@settings_name, name)
               klass.instance_eval(&block) if block
             end
           end
@@ -57,14 +54,7 @@ module Datadog
           end
 
           def configure(opts = {})
-            # Sort the options in preference of dependency order first
-            ordering = self.class.options.dependency_order
-            sorted_opts = opts.sort_by do |name, _value|
-              ordering.index(name) || (ordering.length + 1)
-            end.to_h
-
-            # Apply options in sort order
-            sorted_opts.each do |name, value|
+            opts.each do |name, value|
               if respond_to?("#{name}=")
                 send("#{name}=", value)
               elsif option_defined?(name)

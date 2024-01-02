@@ -1,11 +1,15 @@
 require 'datadog/profiling/exporter'
-require 'datadog/profiling/old_recorder'
 require 'datadog/profiling/collectors/code_provenance'
 require 'datadog/core/logger'
 
 RSpec.describe Datadog::Profiling::Exporter do
   subject(:exporter) do
-    described_class.new(pprof_recorder: pprof_recorder, code_provenance_collector: code_provenance_collector, **options)
+    described_class.new(
+      pprof_recorder: pprof_recorder,
+      code_provenance_collector: code_provenance_collector,
+      internal_metadata: internal_metadata,
+      **options
+    )
   end
 
   let(:start) { Time.now }
@@ -13,12 +17,14 @@ RSpec.describe Datadog::Profiling::Exporter do
   let(:pprof_data) { 'dummy pprof data' }
   let(:code_provenance_data) { 'dummy code provenance data' }
   let(:pprof_recorder_serialize) { [start, finish, pprof_data] }
-  let(:pprof_recorder) { instance_double(Datadog::Profiling::OldRecorder, serialize: pprof_recorder_serialize) }
+  let(:pprof_recorder) { instance_double(Datadog::Profiling::StackRecorder, serialize: pprof_recorder_serialize) }
   let(:code_provenance_collector) do
     collector = instance_double(Datadog::Profiling::Collectors::CodeProvenance, generate_json: code_provenance_data)
     allow(collector).to receive(:refresh).and_return(collector)
     collector
   end
+  let(:internal_metadata) { { no_signals_workaround_enabled: no_signals_workaround_enabled } }
+  let(:no_signals_workaround_enabled) { false }
   let(:logger) { Datadog.logger }
   let(:options) { {} }
 
@@ -69,6 +75,16 @@ RSpec.describe Datadog::Profiling::Exporter do
       let(:finish) { start + 1 }
 
       it { is_expected.to_not be nil }
+    end
+
+    context 'when no_signals_workaround_enabled is true' do
+      let(:no_signals_workaround_enabled) { true }
+      it { is_expected.to have_attributes(internal_metadata_json: '{"no_signals_workaround_enabled":"true"}') }
+    end
+
+    context 'when no_signals_workaround_enabled is false' do
+      let(:no_signals_workaround_enabled) { false }
+      it { is_expected.to have_attributes(internal_metadata_json: '{"no_signals_workaround_enabled":"false"}') }
     end
   end
 

@@ -3,6 +3,9 @@ require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/analytics_examples'
 require 'datadog/tracing/contrib/environment_service_name_examples'
 require 'datadog/tracing/contrib/span_attribute_schema_examples'
+require 'datadog/tracing/contrib/peer_service_configuration_examples'
+
+require_relative 'shared_examples'
 
 require 'grpc'
 require 'ddtrace'
@@ -33,7 +36,7 @@ RSpec.describe 'tracing on the client connection' do
     let(:keywords) do
       { request: instance_double(Object),
         call: instance_double('GRPC::ActiveCall', peer: peer, deadline: deadline),
-        method: 'MyService.Endpoint',
+        method: '/ruby.test.Testing/Basic',
         metadata: { some: 'datum' } }
     end
 
@@ -51,14 +54,12 @@ RSpec.describe 'tracing on the client connection' do
       default_client_interceptor.request_response(**keywords) {}
       span = fetch_spans.first
       expect(span.service).to eq 'rspec'
-      expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE)).to eq('rspec')
 
       clear_traces!
 
       configured_client_interceptor.request_response(**keywords) {}
       span = fetch_spans.last
       expect(span.service).to eq 'cepsr'
-      expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE)).to eq('cepsr')
       expect(
         span.get_tag(Datadog::Tracing::Contrib::GRPC::Ext::TAG_CLIENT_DEADLINE)
       ).to eq '2022-01-02T03:04:05.678Z'
@@ -69,7 +70,7 @@ RSpec.describe 'tracing on the client connection' do
     it { expect(span.name).to eq 'grpc.client' }
     it { expect(span.span_type).to eq 'http' }
     it { expect(span.service).to eq 'rspec' }
-    it { expect(span.resource).to eq 'myservice.endpoint' }
+    it { expect(span.resource).to eq 'ruby.test.testing.basic' }
     it { expect(span.get_tag('grpc.client.deadline')).to be_nil }
     it { expect(span.get_tag('error.stack')).to be_nil }
     it { expect(span.get_tag('some')).to eq 'datum' }
@@ -87,11 +88,15 @@ RSpec.describe 'tracing on the client connection' do
     end
 
     it_behaves_like 'a peer service span' do
-      let(:peer_hostname) { host }
+      let(:peer_service_val) { 'ruby.test.Testing' }
+      let(:peer_service_source) { 'rpc.service' }
     end
 
     it_behaves_like 'measured span for integration', false
     it_behaves_like 'environment service name', 'DD_TRACE_GRPC_SERVICE_NAME' do
+      let(:configuration_options) { {} }
+    end
+    it_behaves_like 'configured peer service span', 'DD_TRACE_GRPC_PEER_SERVICE' do
       let(:configuration_options) { {} }
     end
     it_behaves_like 'schema version span'
@@ -119,25 +124,77 @@ RSpec.describe 'tracing on the client connection' do
     let(:keywords) do
       { request: instance_double(Object),
         call: instance_double('GRPC::ActiveCall', peer: peer),
-        method: 'MyService.Endpoint',
+        method: '/ruby.test.Testing/Basic',
         metadata: original_metadata.clone }
     end
 
     let(:original_metadata) { { some: 'datum' } }
 
-    before do
-      subject.request_response(**keywords) {}
+    context 'without an error' do
+      let(:request_response) do
+        subject.request_response(**keywords) { :returned_object }
+      end
+
+      before { request_response }
+
+      it_behaves_like 'span data contents'
+
+      it_behaves_like 'inject distributed tracing metadata'
+
+      it 'actually returns the client response' do
+        expect(request_response).to be(:returned_object)
+      end
     end
 
-    it_behaves_like 'span data contents'
+    context 'with an error' do
+      let(:request_response) do
+        subject.request_response(**keywords) { raise error_class, 'test error' }
+      end
 
-    it_behaves_like 'inject distributed tracing metadata'
+      let(:error_class) { stub_const('TestError', Class.new(StandardError)) }
+      let(:span_kind) { 'client' }
+
+      context 'without an error handler' do
+        it do
+          expect { request_response }.to raise_error('test error')
+
+          expect(span).to have_error
+          expect(span).to have_error_message('test error')
+          expect(span).to have_error_type('TestError')
+          expect(span).to have_error_stack(include('client_spec.rb'))
+          expect(span.get_tag('rpc.system')).to eq('grpc')
+          expect(span.get_tag('span.kind')).to eq('client')
+        end
+      end
+
+      context 'with an error handler' do
+        subject(:server) do
+          Datadog::Tracing::Contrib::GRPC::DatadogInterceptor::Client.new { |c| c.error_handler = error_handler }
+        end
+
+        let(:error_handler) do
+          ->(span, error) { span.set_tag('custom.handler', "Got error #{error}, but ignored it from interceptor") }
+        end
+
+        it_behaves_like 'it handles the error', 'Got error test error, but ignored it from interceptor'
+      end
+
+      context 'with an error handler defined in the configuration options' do
+        let(:configuration_options) { { service_name: 'rspec', client_error_handler: error_handler } }
+
+        let(:error_handler) do
+          ->(span, error) { span.set_tag('custom.handler', "Got error #{error}, but ignored it from configuration") }
+        end
+
+        it_behaves_like 'it handles the error', 'Got error test error, but ignored it from configuration'
+      end
+    end
   end
 
   describe '#client_streamer' do
     let(:keywords) do
       { call: instance_double('GRPC::ActiveCall', peer: peer),
-        method: 'MyService.Endpoint',
+        method: '/ruby.test.Testing/Basic',
         metadata: original_metadata.clone }
     end
     let(:original_metadata) { { some: 'datum' } }
@@ -155,7 +212,7 @@ RSpec.describe 'tracing on the client connection' do
     let(:keywords) do
       { request: instance_double(Object),
         call: instance_double('GRPC::ActiveCall', peer: peer),
-        method: 'MyService.Endpoint',
+        method: '/ruby.test.Testing/Basic',
         metadata: original_metadata.clone }
     end
 
@@ -174,7 +231,7 @@ RSpec.describe 'tracing on the client connection' do
     let(:keywords) do
       { requests: instance_double(Array),
         call: instance_double('GRPC::ActiveCall', peer: peer),
-        method: 'MyService.Endpoint',
+        method: '/ruby.test.Testing/Basic',
         metadata: original_metadata.clone }
     end
 

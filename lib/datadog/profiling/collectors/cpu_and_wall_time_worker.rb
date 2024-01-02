@@ -14,27 +14,26 @@ module Datadog
         public
 
         def initialize(
-          recorder:,
-          max_frames:,
-          tracer:,
-          endpoint_collection_enabled:,
           gc_profiling_enabled:,
           allocation_counting_enabled:,
           no_signals_workaround_enabled:,
-          thread_context_collector: ThreadContext.new(
-            recorder: recorder,
-            max_frames: max_frames,
-            tracer: tracer,
-            endpoint_collection_enabled: endpoint_collection_enabled,
-          ),
+          thread_context_collector:,
           idle_sampling_helper: IdleSamplingHelper.new,
           # **NOTE**: This should only be used for testing; disabling the dynamic sampling rate will increase the
           # profiler overhead!
-          dynamic_sampling_rate_enabled: true
+          dynamic_sampling_rate_enabled: true,
+          allocation_sample_every: 0 # Currently only for testing; Setting this to > 0 can add a lot of overhead!
         )
           unless dynamic_sampling_rate_enabled
             Datadog.logger.warn(
               'Profiling dynamic sampling rate disabled. This should only be used for testing, and will increase overhead!'
+            )
+          end
+
+          if allocation_counting_enabled && allocation_sample_every > 0
+            Datadog.logger.warn(
+              "Enabled experimental allocation profiling: allocation_sample_every=#{allocation_sample_every}. This is " \
+              'experimental, not recommended, and will increase overhead!'
             )
           end
 
@@ -46,6 +45,7 @@ module Datadog
             allocation_counting_enabled,
             no_signals_workaround_enabled,
             dynamic_sampling_rate_enabled,
+            allocation_sample_every,
           )
           @worker_thread = nil
           @failure_exception = nil
@@ -53,7 +53,7 @@ module Datadog
           @idle_sampling_helper = idle_sampling_helper
         end
 
-        def start
+        def start(on_failure_proc: nil)
           @start_stop_mutex.synchronize do
             return if @worker_thread && @worker_thread.alive?
 
@@ -74,18 +74,17 @@ module Datadog
                   'CpuAndWallTimeWorker thread error. ' \
                   "Cause: #{e.class.name} #{e.message} Location: #{Array(e.backtrace).first}"
                 )
+                on_failure_proc&.call
               end
             end
+            @worker_thread.name = self.class.name # Repeated from above to make sure thread gets named asap
+            @worker_thread.thread_variable_set(:fork_safe, true)
           end
 
           true
         end
 
-        # TODO: Provided only for compatibility with the API for Collectors::OldStack used in the Profiler class.
-        # Can be removed once we remove OldStack.
-        def enabled=(_); end
-
-        def stop(*_)
+        def stop
           @start_stop_mutex.synchronize do
             Datadog.logger.debug('Requesting CpuAndWallTimeWorker thread shut down')
 

@@ -9,7 +9,8 @@ require 'datadog/core/telemetry/v1/dependency'
 require 'datadog/core/telemetry/v1/host'
 require 'datadog/core/telemetry/v1/integration'
 require 'datadog/core/telemetry/v1/product'
-require 'ddtrace/transport/ext'
+require 'datadog/core/transport/ext'
+require 'datadog/profiling/profiler'
 
 require 'ddtrace'
 require 'ddtrace/version'
@@ -86,8 +87,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
         end
 
         after do
-          Datadog.configuration.profiling.send(:reset!)
-          Datadog.configuration.appsec.send(:reset!)
+          Datadog.configuration.reset!
         end
 
         it { expect(products.appsec).to eq({ version: '4.2' }) }
@@ -106,8 +106,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
         end
 
         after do
-          Datadog.configuration.profiling.send(:reset!)
-          Datadog.configuration.appsec.send(:reset!)
+          Datadog.configuration.reset!
         end
 
         it { is_expected.to be_a_kind_of(Datadog::Core::Telemetry::V1::Product) }
@@ -149,7 +148,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
       end
 
       context 'when adapter is type :unix' do
-        let(:adapter_type) { Datadog::Transport::Ext::UnixSocket::ADAPTER }
+        let(:adapter_type) { Datadog::Core::Transport::Ext::UnixSocket::ADAPTER }
 
         before do
           allow(Datadog::Core::Configuration::AgentSettingsResolver)
@@ -175,6 +174,46 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
       context 'when nil' do
         let(:dd_trace_sample_rate) { nil }
         it { is_expected.to_not include(:DD_TRACE_SAMPLE_RATE) }
+      end
+    end
+
+    context 'DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED' do
+      around do |example|
+        ClimateControl.modify(
+          DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED: dd_trace_remove_integration_service_names_enabled
+        ) do
+          example.run
+        end
+      end
+
+      context 'when set to true' do
+        let(:dd_trace_remove_integration_service_names_enabled) { 'true' }
+        it { is_expected.to include(:DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED => true) }
+      end
+
+      context 'when nil defaults to false' do
+        let(:dd_trace_remove_integration_service_names_enabled) { nil }
+        it { is_expected.to include(:DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED => false) }
+      end
+    end
+
+    context 'DD_TRACE_PEER_SERVICE_MAPPING' do
+      around do |example|
+        ClimateControl.modify(
+          DD_TRACE_PEER_SERVICE_MAPPING: dd_trace_peer_service_mapping
+        ) do
+          example.run
+        end
+      end
+
+      context 'when set' do
+        let(:dd_trace_peer_service_mapping) { 'key:value' }
+        it { is_expected.to include(:DD_TRACE_PEER_SERVICE_MAPPING => 'key:value') }
+      end
+
+      context 'when nil is blank' do
+        let(:dd_trace_peer_service_mapping) { nil }
+        it { is_expected.to include(:DD_TRACE_PEER_SERVICE_MAPPING => '') }
       end
     end
   end
@@ -215,8 +254,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
         Datadog.configuration.appsec.enabled = false
       end
       after do
-        Datadog.configuration.profiling.send(:reset!)
-        Datadog.configuration.appsec.send(:reset!)
+        Datadog.configuration.reset!
       end
       it { is_expected.to include('profiling.enabled' => false) }
     end
@@ -243,7 +281,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
           c.appsec.enabled = true
         end
       end
-      after { Datadog.configuration.appsec.send(:reset!) }
+      after { Datadog.configuration.reset! }
 
       it { is_expected.to include('appsec.enabled' => true) }
     end
@@ -254,6 +292,14 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
       end
 
       it { is_expected.to include('tracing.opentelemetry.enabled' => true) }
+    end
+
+    context 'when OpenTracing is enabled' do
+      before do
+        stub_const('Datadog::OpenTracer::LOADED', true)
+      end
+
+      it { is_expected.to include('tracing.opentracing.enabled' => true) }
     end
   end
 

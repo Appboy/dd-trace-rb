@@ -7,6 +7,8 @@ module Datadog
           max_frames: ::Integer,
           tracer: Datadog::Tracing::Tracer?,
           endpoint_collection_enabled: bool,
+          timeline_enabled: bool,
+          ?allocation_type_enabled: bool,
         ) -> void
 
         def self._native_initialize: (
@@ -15,6 +17,8 @@ module Datadog
           ::Integer max_frames,
           ::Symbol? tracer_context_key,
           bool endpoint_collection_enabled,
+          bool timeline_enabled,
+          bool allocation_type_enabled,
         ) -> void
 
         def inspect: () -> ::String

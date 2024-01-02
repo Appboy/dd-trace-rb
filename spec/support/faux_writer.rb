@@ -1,3 +1,5 @@
+require 'net/http'
+
 require 'datadog/tracing/writer'
 
 require 'support/faux_transport'

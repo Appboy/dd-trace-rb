@@ -1,12 +1,10 @@
 module Datadog
   module AppSec
-    extend Configuration::ClassMethods
-
     def self.enabled?: () -> bool
 
     def self.processor: () -> Datadog::AppSec::Processor?
 
-    def self.reconfigure: (ruleset: ::Hash[untyped, untyped]) -> void
+    def self.reconfigure: (ruleset: ::Hash[untyped, untyped], actions: Array[Hash[String, untyped]]) -> void
 
     def self.reconfigure_lock: () { () -> void } -> void
 

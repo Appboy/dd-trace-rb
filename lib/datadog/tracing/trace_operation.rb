@@ -40,7 +40,9 @@ module Datadog
         :active_span,
         :id,
         :max_length,
-        :parent_span_id
+        :parent_span_id,
+        :trace_state,
+        :trace_state_unknown_fields
 
       attr_writer \
         :name,
@@ -64,8 +66,11 @@ module Datadog
         sampled: nil,
         sampling_priority: nil,
         service: nil,
+        profiling_enabled: nil,
         tags: nil,
-        metrics: nil
+        metrics: nil,
+        trace_state: nil,
+        trace_state_unknown_fields: nil
       )
         # Attributes
         @id = id || Tracing::Utils::TraceId.next_id
@@ -84,6 +89,9 @@ module Datadog
         @sample_rate = sample_rate
         @sampling_priority = sampling_priority
         @service = service
+        @profiling_enabled = profiling_enabled
+        @trace_state = trace_state
+        @trace_state_unknown_fields = trace_state_unknown_fields
 
         # Generic tags
         set_tags(tags) if tags
@@ -288,6 +296,8 @@ module Datadog
           trace_runtime_id: Core::Environment::Identity.id,
           trace_sampling_priority: @sampling_priority,
           trace_service: service,
+          trace_state: @trace_state,
+          trace_state_unknown_fields: @trace_state_unknown_fields,
         ).freeze
       end
 
@@ -310,6 +320,8 @@ module Datadog
           sampled: @sampled,
           sampling_priority: @sampling_priority,
           service: (service && service.dup),
+          trace_state: (@trace_state && @trace_state.dup),
+          trace_state_unknown_fields: (@trace_state_unknown_fields && @trace_state_unknown_fields.dup),
           tags: meta.dup,
           metrics: metrics.dup
         )
@@ -450,7 +462,8 @@ module Datadog
           service: service,
           tags: meta,
           metrics: metrics,
-          root_span_id: !partial ? root_span && root_span.id : nil
+          root_span_id: !partial ? root_span && root_span.id : nil,
+          profiling_enabled: @profiling_enabled,
         )
       end
 

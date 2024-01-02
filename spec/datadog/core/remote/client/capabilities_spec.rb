@@ -17,21 +17,19 @@ RSpec.describe Datadog::Core::Remote::Client::Capabilities do
   context 'AppSec component' do
     context 'when disabled' do
       let(:settings) do
-        appsec_settings = Datadog::AppSec::Configuration::Settings.new
-        dsl = Datadog::AppSec::Configuration::DSL.new
-        dsl.enabled = false
-        appsec_settings.merge(dsl)
-
         settings = Datadog::Core::Configuration::Settings.new
-        expect(settings).to receive(:appsec).at_least(:once).and_return(appsec_settings)
-
+        settings.appsec.enabled = false
         settings
       end
 
       it 'does not register any capabilities, products, and receivers' do
-        expect(capabilities.capabilities).to be_empty
-        expect(capabilities.products).to be_empty
-        expect(capabilities.receivers).to be_empty
+        expect(capabilities.capabilities).to_not include(4)
+        expect(capabilities.products).to_not include('ASM')
+        expect(capabilities.receivers).to_not include(
+          lambda { |r|
+            r.match? Datadog::Core::Remote::Configuration::Path.parse('datadog/1/ASM/_/_')
+          }
+        )
       end
 
       describe '#base64_capabilities' do
@@ -43,9 +41,13 @@ RSpec.describe Datadog::Core::Remote::Client::Capabilities do
 
     context 'when not present' do
       it 'does not register any capabilities, products, and receivers' do
-        expect(capabilities.capabilities).to be_empty
-        expect(capabilities.products).to be_empty
-        expect(capabilities.receivers).to be_empty
+        expect(capabilities.capabilities).to_not include(4)
+        expect(capabilities.products).to_not include('ASM')
+        expect(capabilities.receivers).to_not include(
+          lambda { |r|
+            r.match? Datadog::Core::Remote::Configuration::Path.parse('datadog/1/ASM/_/_')
+          }
+        )
       end
 
       describe '#base64_capabilities' do
@@ -57,21 +59,19 @@ RSpec.describe Datadog::Core::Remote::Client::Capabilities do
 
     context 'when enabled' do
       let(:settings) do
-        appsec_settings = Datadog::AppSec::Configuration::Settings.new
-        dsl = Datadog::AppSec::Configuration::DSL.new
-        dsl.enabled = true
-        appsec_settings.merge(dsl)
-
         settings = Datadog::Core::Configuration::Settings.new
-        expect(settings).to receive(:appsec).and_return(appsec_settings)
-
+        settings.appsec.enabled = true
         settings
       end
 
       it 'register capabilities, products, and receivers' do
-        expect(capabilities.capabilities).to_not be_empty
-        expect(capabilities.products).to_not be_empty
-        expect(capabilities.receivers).to_not be_empty
+        expect(capabilities.capabilities).to include(4)
+        expect(capabilities.products).to include('ASM')
+        expect(capabilities.receivers).to include(
+          lambda { |r|
+            r.match? Datadog::Core::Remote::Configuration::Path.parse('datadog/1/ASM/_/_')
+          }
+        )
       end
 
       describe '#base64_capabilities' do
@@ -79,6 +79,18 @@ RSpec.describe Datadog::Core::Remote::Client::Capabilities do
           expect(capabilities.base64_capabilities).to_not be_empty
         end
       end
+    end
+  end
+
+  context 'Tracing component' do
+    it 'register capabilities, products, and receivers' do
+      expect(capabilities.capabilities).to be_empty # Tracing does advertise capabilities today
+      expect(capabilities.products).to include('APM_TRACING')
+      expect(capabilities.receivers).to include(
+        lambda { |r|
+          r.match? Datadog::Core::Remote::Configuration::Path.parse('datadog/1/APM_TRACING/_/lib_config')
+        }
+      )
     end
   end
 

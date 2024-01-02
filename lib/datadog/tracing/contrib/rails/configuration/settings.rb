@@ -24,35 +24,38 @@ module Datadog
             end
 
             option :enabled do |o|
-              o.default { env_to_bool(Ext::ENV_ENABLED, true) }
-              o.lazy
+              o.type :bool
+              o.env Ext::ENV_ENABLED
+              o.default true
             end
 
             option :analytics_enabled do |o|
-              o.default { env_to_bool(Ext::ENV_ANALYTICS_ENABLED, nil) }
-              o.lazy
-              o.on_set do |value|
+              o.type :bool, nilable: true
+              o.env Ext::ENV_ANALYTICS_ENABLED
+              o.after_set do |value|
                 # Update ActionPack analytics too
                 Datadog.configuration.tracing[:action_pack][:analytics_enabled] = value
               end
             end
 
             option :analytics_sample_rate do |o|
-              o.default { env_to_float(Ext::ENV_ANALYTICS_SAMPLE_RATE, 1.0) }
-              o.lazy
-              o.on_set do |value|
+              o.type :float
+              o.env Ext::ENV_ANALYTICS_SAMPLE_RATE
+              o.default 1.0
+              o.after_set do |value|
                 # Update ActionPack analytics too
                 Datadog.configuration.tracing[:action_pack][:analytics_sample_rate] = value
               end
             end
 
-            option :distributed_tracing, default: true
+            option :distributed_tracing, default: true, type: :bool
 
-            option :request_queuing, default: false
-
+            option :request_queuing do |o|
+              o.default false
+            end
             # DEV-2.0: Breaking changes for removal.
             option :exception_controller do |o|
-              o.on_set do |value|
+              o.after_set do |value|
                 if value
                   Datadog::Core.log_deprecation do
                     'The error controller is now automatically detected. '\
@@ -62,11 +65,12 @@ module Datadog
               end
             end
 
-            option :middleware, default: true
-            option :middleware_names, default: false
+            option :middleware, default: true, type: :bool
+            option :middleware_names, default: false, type: :bool
             option :template_base_path do |o|
+              o.type :string
               o.default 'views/'
-              o.on_set do |value|
+              o.after_set do |value|
                 # Update ActionView template base path too
                 Datadog.configuration.tracing[:action_view][:template_base_path] = value
               end

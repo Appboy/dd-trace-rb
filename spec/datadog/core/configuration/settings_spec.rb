@@ -14,6 +14,10 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
   let(:options) { {} }
 
+  around do |example|
+    ClimateControl.modify('DD_REMOTE_CONFIGURATION_ENABLED' => nil) { example.run }
+  end
+
   describe '#api_key' do
     subject(:api_key) { settings.api_key }
 
@@ -339,36 +343,11 @@ RSpec.describe Datadog::Core::Configuration::Settings do
     end
 
     describe '#advanced' do
-      describe '#max_events' do
-        before { allow(Datadog.logger).to receive(:warn) }
-
-        subject(:max_events) { settings.profiling.advanced.max_events }
-
-        it { is_expected.to eq(32768) }
-      end
-
       describe '#max_events=' do
-        before { allow(Datadog.logger).to receive(:warn) }
-
-        it 'updates the #max_events setting' do
-          expect { settings.profiling.advanced.max_events = 1234 }
-            .to change { settings.profiling.advanced.max_events }
-            .from(32768)
-            .to(1234)
-        end
-
-        it 'logs a warning informing customers this has been deprecated for removal' do
-          expect(Datadog.logger).to receive(:warn).with(/deprecated for removal/)
+        it 'logs a warning informing customers this no longer does anything' do
+          expect(Datadog.logger).to receive(:warn).with(/no longer does anything/)
 
           settings.profiling.advanced.max_events = 1234
-        end
-
-        context 'when value is set to default' do
-          it 'does not log a warning' do
-            expect(Datadog.logger).to_not receive(:warn)
-
-            settings.profiling.advanced.max_events = 32768
-          end
         end
       end
 
@@ -475,56 +454,11 @@ RSpec.describe Datadog::Core::Configuration::Settings do
         end
       end
 
-      describe '#force_enable_legacy_profiler' do
-        before { allow(Datadog.logger).to receive(:warn) }
-
-        subject(:force_enable_legacy_profiler) { settings.profiling.advanced.force_enable_legacy_profiler }
-
-        context 'when DD_PROFILING_FORCE_ENABLE_LEGACY' do
-          around do |example|
-            ClimateControl.modify('DD_PROFILING_FORCE_ENABLE_LEGACY' => environment) do
-              example.run
-            end
-          end
-
-          context 'is not defined' do
-            let(:environment) { nil }
-
-            it { is_expected.to be false }
-          end
-
-          [true, false].each do |value|
-            context "is defined as #{value}" do
-              let(:environment) { value.to_s }
-
-              it { is_expected.to be value }
-            end
-          end
-        end
-      end
-
       describe '#force_enable_legacy_profiler=' do
-        before { allow(Datadog.logger).to receive(:warn) }
+        it 'logs a warning informing customers this no longer does anything' do
+          expect(Datadog.logger).to receive(:warn).with(/no longer does anything/)
 
-        it 'updates the #force_enable_legacy_profiler setting' do
-          expect { settings.profiling.advanced.force_enable_legacy_profiler = true }
-            .to change { settings.profiling.advanced.force_enable_legacy_profiler }
-            .from(false)
-            .to(true)
-        end
-
-        it 'logs a warning informing customers this has been deprecated for removal' do
-          expect(Datadog.logger).to receive(:warn).with(/deprecated for removal/)
-
-          settings.profiling.advanced.force_enable_legacy_profiler = 1234
-        end
-
-        context 'when value is set to false' do
-          it 'does not log a warning' do
-            expect(Datadog.logger).to_not receive(:warn)
-
-            settings.profiling.advanced.force_enable_legacy_profiler = false
-          end
+          settings.profiling.advanced.force_enable_legacy_profiler = true
         end
       end
 
@@ -566,16 +500,25 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       describe '#allocation_counting_enabled' do
         subject(:allocation_counting_enabled) { settings.profiling.advanced.allocation_counting_enabled }
 
-        context 'on Ruby 2.x' do
-          before { skip("Spec doesn't run on Ruby 3.x") unless RUBY_VERSION.start_with?('2.') }
+        before { stub_const('RUBY_VERSION', testing_version) }
 
+        context 'on Ruby 2.x' do
+          let(:testing_version) { '2.3.0 ' }
           it { is_expected.to be true }
         end
 
-        context 'on Ruby 3.x' do
-          before { skip("Spec doesn't run on Ruby 2.x") if RUBY_VERSION.start_with?('2.') }
+        ['3.0.0', '3.1.0', '3.1.3', '3.2.0', '3.2.2'].each do |broken_ruby|
+          context "on a Ruby 3 version affected by https://bugs.ruby-lang.org/issues/18464 (#{broken_ruby})" do
+            let(:testing_version) { broken_ruby }
+            it { is_expected.to be false }
+          end
+        end
 
-          it { is_expected.to be false }
+        ['3.1.4', '3.2.3', '3.3.0'].each do |fixed_ruby|
+          context "on a Ruby 3 version where https://bugs.ruby-lang.org/issues/18464 is fixed (#{fixed_ruby})" do
+            let(:testing_version) { fixed_ruby }
+            it { is_expected.to be true }
+          end
         end
       end
 
@@ -659,6 +602,41 @@ RSpec.describe Datadog::Core::Configuration::Settings do
             .to(false)
         end
       end
+
+      describe '#experimental_timeline_enabled' do
+        subject(:experimental_timeline_enabled) { settings.profiling.advanced.experimental_timeline_enabled }
+
+        context 'when DD_PROFILING_EXPERIMENTAL_TIMELINE_ENABLED' do
+          around do |example|
+            ClimateControl.modify('DD_PROFILING_EXPERIMENTAL_TIMELINE_ENABLED' => environment) do
+              example.run
+            end
+          end
+
+          context 'is not defined' do
+            let(:environment) { nil }
+
+            it { is_expected.to be false }
+          end
+
+          [true, false].each do |value|
+            context "is defined as #{value}" do
+              let(:environment) { value.to_s }
+
+              it { is_expected.to be value }
+            end
+          end
+        end
+      end
+
+      describe '#experimental_timeline_enabled=' do
+        it 'updates the #experimental_timeline_enabled setting' do
+          expect { settings.profiling.advanced.experimental_timeline_enabled = true }
+            .to change { settings.profiling.advanced.experimental_timeline_enabled }
+            .from(false)
+            .to(true)
+        end
+      end
     end
 
     describe '#upload' do
@@ -688,18 +666,10 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
       describe '#timeout_seconds=' do
         it 'updates the #timeout_seconds setting' do
-          expect { settings.profiling.upload.timeout_seconds = 10 }
+          expect { settings.profiling.upload.timeout_seconds = 10.0 }
             .to change { settings.profiling.upload.timeout_seconds }
             .from(30.0)
             .to(10.0)
-        end
-
-        context 'given nil' do
-          it 'uses the default setting' do
-            expect { settings.profiling.upload.timeout_seconds = nil }
-              .to_not change { settings.profiling.upload.timeout_seconds }
-              .from(30.0)
-          end
         end
       end
     end
@@ -748,7 +718,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
     end
 
     describe '#opts=' do
-      let(:opts) { double('opts') }
+      let(:opts) { { a: :b } }
 
       it 'changes the #opts setting' do
         expect { settings.runtime_metrics.opts = opts }
@@ -1192,25 +1162,33 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
   describe '#telemetry' do
     around do |example|
-      ClimateControl.modify(Datadog::Core::Telemetry::Ext::ENV_ENABLED => environment) do
+      ClimateControl.modify(env_var_name => env_var_value) do
         example.run
       end
     end
-    let(:environment) { 'true' }
 
     describe '#enabled' do
       subject(:enabled) { settings.telemetry.enabled }
+      let(:env_var_name) { 'DD_INSTRUMENTATION_TELEMETRY_ENABLED' }
 
-      context "when #{Datadog::Core::Telemetry::Ext::ENV_ENABLED}" do
+      context 'when DD_INSTRUMENTATION_TELEMETRY_ENABLED' do
         context 'is not defined' do
-          let(:environment) { nil }
+          let(:env_var_value) { nil }
 
-          it { is_expected.to be true }
+          context 'in a development environment' do
+            it { is_expected.to be false }
+          end
+
+          context 'not in a development environment' do
+            include_context 'non-development execution environment'
+
+            it { is_expected.to be true }
+          end
         end
 
         [true, false].each do |value|
           context "is defined as #{value}" do
-            let(:environment) { value.to_s }
+            let(:env_var_value) { value.to_s }
 
             it { is_expected.to be value }
           end
@@ -1219,12 +1197,43 @@ RSpec.describe Datadog::Core::Configuration::Settings do
     end
 
     describe '#enabled=' do
-      let(:environment) { 'true' }
+      let(:env_var_name) { 'DD_INSTRUMENTATION_TELEMETRY_ENABLED' }
+      let(:env_var_value) { 'true' }
+
       it 'updates the #enabled setting' do
         expect { settings.telemetry.enabled = false }
           .to change { settings.telemetry.enabled }
           .from(true)
           .to(false)
+      end
+    end
+
+    describe '#heartbeat_interval' do
+      subject(:heartbeat_interval_seconds) { settings.telemetry.heartbeat_interval_seconds }
+      let(:env_var_name) { 'DD_TELEMETRY_HEARTBEAT_INTERVAL' }
+
+      context 'when DD_TELEMETRY_HEARTBEAT_INTERVAL' do
+        context 'is not defined' do
+          let(:env_var_value) { nil }
+
+          it { is_expected.to eq 60.0 }
+        end
+
+        context 'is defined' do
+          let(:env_var_value) { '1.1' }
+
+          it { is_expected.to eq 1.1 }
+        end
+      end
+    end
+
+    describe '#heartbeat_interval=' do
+      let(:env_var_name) { 'DD_TELEMETRY_HEARTBEAT_INTERVAL' }
+      let(:env_var_value) { '1.1' }
+
+      it 'updates the #heartbeat_interval setting' do
+        expect { settings.telemetry.heartbeat_interval_seconds = 2.2 }
+          .to change { settings.telemetry.heartbeat_interval_seconds }.from(1.1).to(2.2)
       end
     end
   end
@@ -1243,7 +1252,15 @@ RSpec.describe Datadog::Core::Configuration::Settings do
         context 'is not defined' do
           let(:environment) { nil }
 
-          it { is_expected.to be true }
+          context 'in a development environment' do
+            it { is_expected.to be false }
+          end
+
+          context 'not in a development environment' do
+            include_context 'non-development execution environment'
+
+            it { is_expected.to be true }
+          end
         end
 
         context 'is defined' do
@@ -1255,6 +1272,8 @@ RSpec.describe Datadog::Core::Configuration::Settings do
     end
 
     describe '#enabled=' do
+      include_context 'non-development execution environment'
+
       it 'updates the #enabled setting' do
         expect { settings.remote.enabled = false }
           .to change { settings.remote.enabled }
@@ -1289,10 +1308,27 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
     describe '#poll_interval_seconds=' do
       it 'updates the #poll_interval_seconds setting' do
-        expect { settings.remote.poll_interval_seconds = 1 }
+        expect { settings.remote.poll_interval_seconds = 1.0 }
           .to change { settings.remote.poll_interval_seconds }
           .from(5.0)
           .to(1.0)
+      end
+    end
+
+    describe '#service' do
+      subject(:service) { settings.remote.service }
+
+      context 'defaults to nil' do
+        it { is_expected.to be nil }
+      end
+    end
+
+    describe '#service=' do
+      it 'updates the #service setting' do
+        expect { settings.remote.service = 'foo' }
+          .to change { settings.remote.service }
+          .from(nil)
+          .to('foo')
       end
     end
   end

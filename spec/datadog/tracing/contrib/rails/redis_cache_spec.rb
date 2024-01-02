@@ -83,7 +83,7 @@ MESSAGE
 
       expect(redis.name).to eq('redis.command')
       expect(redis.span_type).to eq('redis')
-      expect(redis.resource).to eq('GET custom-key')
+      expect(redis.resource).to eq('GET')
       expect(redis.get_tag('redis.raw_command')).to eq('GET custom-key')
       expect(redis.service).to eq('redis')
       # the following ensures span will be correctly displayed (parent/child of the same trace)
@@ -94,8 +94,6 @@ MESSAGE
         .to eq('active_support')
       expect(cache.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
         .to eq('cache')
-      expect(cache.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-        .to eq('active_support-cache')
     end
 
     it_behaves_like 'a peer service span' do
@@ -131,15 +129,11 @@ MESSAGE
           .to eq('active_support')
         expect(cache_get.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('cache')
-        expect(cache_get.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('active_support-cache')
 
         expect(cache_set.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT))
           .to eq('active_support')
         expect(cache_set.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('cache')
-        expect(cache_set.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('active_support-cache')
 
         # check that the value is really updated, and persistent
         expect(cache.read(key)).to eq(51)
@@ -158,8 +152,6 @@ MESSAGE
           .to eq('active_support')
         expect(cache.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
           .to eq('cache')
-        expect(cache.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-          .to eq('active_support-cache')
       end
     end
   end
@@ -175,7 +167,7 @@ MESSAGE
 
       expect(redis.name).to eq('redis.command')
       expect(redis.span_type).to eq('redis')
-      expect(redis.resource).to match(/SET custom-key .*ActiveSupport.*/)
+      expect(redis.resource).to eq('SET')
       expect(redis.get_tag('redis.raw_command')).to match(/SET custom-key .*ActiveSupport.*/)
       expect(redis.service).to eq('redis')
       # the following ensures span will be correctly displayed (parent/child of the same trace)
@@ -186,8 +178,6 @@ MESSAGE
         .to eq('active_support')
       expect(cache.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
         .to eq('cache')
-      expect(cache.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-        .to eq('active_support-cache')
     end
 
     it_behaves_like 'a peer service span' do
@@ -206,7 +196,7 @@ MESSAGE
 
       expect(del.name).to eq('redis.command')
       expect(del.span_type).to eq('redis')
-      expect(del.resource).to eq('DEL custom-key')
+      expect(del.resource).to eq('DEL')
       expect(del.get_tag('redis.raw_command')).to eq('DEL custom-key')
       expect(del.service).to eq('redis')
       # the following ensures span will be correctly displayed (parent/child of the same trace)
@@ -217,8 +207,6 @@ MESSAGE
         .to eq('active_support')
       expect(cache.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
         .to eq('cache')
-      expect(cache.get_tag(Datadog::Tracing::Metadata::Ext::TAG_PEER_SERVICE))
-        .to eq('active_support-cache')
     end
 
     it_behaves_like 'a peer service span' do

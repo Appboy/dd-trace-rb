@@ -11,12 +11,12 @@ require 'datadog/tracing/sampling/rule_sampler'
 require 'datadog/tracing/sampling/rule'
 require 'datadog/tracing/tracer'
 require 'datadog/tracing/writer'
-require 'ddtrace/transport/http'
-require 'ddtrace/transport/http/api'
-require 'ddtrace/transport/http/builder'
-require 'ddtrace/transport/io'
-require 'ddtrace/transport/io/client'
-require 'ddtrace/transport/traces'
+require 'datadog/tracing/transport/http'
+require 'datadog/tracing/transport/http/api'
+require 'datadog/tracing/transport/http/builder'
+require 'datadog/tracing/transport/io'
+require 'datadog/tracing/transport/io/client'
+require 'datadog/tracing/transport/traces'
 
 RSpec.describe 'Tracer integration tests' do
   shared_context 'agent-based test' do
@@ -28,7 +28,7 @@ RSpec.describe 'Tracer integration tests' do
 
       # Capture trace segments as they are about to be serialized
       segments = trace_segments
-      allow_any_instance_of(Datadog::Transport::TraceFormatter)
+      allow_any_instance_of(Datadog::Tracing::Transport::TraceFormatter)
         .to receive(:format!).and_wrap_original do |original|
           segments << original.call
         end
@@ -285,6 +285,17 @@ RSpec.describe 'Tracer integration tests' do
       it_behaves_like 'sampling decision', nil
     end
 
+    shared_context 'DD_TRACE_SAMPLING_RULES configuration' do
+      let(:sampler) { nil }
+      let(:rules_json) { [rule].to_json }
+
+      around do |example|
+        ClimateControl.modify('DD_TRACE_SAMPLING_RULES' => rules_json) do
+          example.run
+        end
+      end
+    end
+
     context 'with rule' do
       let(:rule_sampler) { Datadog::Tracing::Sampling::RuleSampler.new([rule], **rule_sampler_opt) }
       let(:rule_sampler_opt) { {} }
@@ -298,6 +309,18 @@ RSpec.describe 'Tracer integration tests' do
         it_behaves_like 'rate limit metric', 1.0
         it_behaves_like 'sampling decision', '-3'
 
+        context 'set through DD_TRACE_SAMPLING_RULES environment variable' do
+          include_context 'DD_TRACE_SAMPLING_RULES configuration' do
+            let(:rule) { { name: 'my.op', sample_rate: 1.0 } }
+          end
+
+          it_behaves_like 'flushed trace'
+          it_behaves_like 'priority sampled', Datadog::Tracing::Sampling::Ext::Priority::USER_KEEP
+          it_behaves_like 'rule sampling rate metric', 1.0
+          it_behaves_like 'rate limit metric', 1.0
+          it_behaves_like 'sampling decision', '-3'
+        end
+
         context 'with low sample rate' do
           let(:rule) { Datadog::Tracing::Sampling::SimpleRule.new(sample_rate: Float::MIN) }
 
@@ -306,6 +329,18 @@ RSpec.describe 'Tracer integration tests' do
           it_behaves_like 'rule sampling rate metric', Float::MIN
           it_behaves_like 'rate limit metric', nil # Rate limiter is never reached, thus has no value to provide
           it_behaves_like 'sampling decision', nil
+
+          context 'set through DD_TRACE_SAMPLING_RULES environment variable' do
+            include_context 'DD_TRACE_SAMPLING_RULES configuration' do
+              let(:rule) { { sample_rate: Float::MIN } }
+            end
+
+            it_behaves_like 'flushed trace'
+            it_behaves_like 'priority sampled', Datadog::Tracing::Sampling::Ext::Priority::USER_REJECT
+            it_behaves_like 'rule sampling rate metric', Float::MIN
+            it_behaves_like 'rate limit metric', nil # Rate limiter is never reached, thus has no value to provide
+            it_behaves_like 'sampling decision', nil
+          end
         end
 
         context 'rate limited' do
@@ -328,6 +363,19 @@ RSpec.describe 'Tracer integration tests' do
         it_behaves_like 'rule sampling rate metric', nil
         it_behaves_like 'rate limit metric', nil
         it_behaves_like 'sampling decision', '-0'
+
+        context 'set through DD_TRACE_SAMPLING_RULES environment variable' do
+          include_context 'DD_TRACE_SAMPLING_RULES configuration' do
+            let(:rule) { { name: 'not.my.op' } }
+
+            it_behaves_like 'flushed trace'
+            # The PrioritySampler was responsible for the sampling decision, not the Rule Sampler.
+            it_behaves_like 'priority sampled', Datadog::Tracing::Sampling::Ext::Priority::AUTO_KEEP
+            it_behaves_like 'rule sampling rate metric', nil
+            it_behaves_like 'rate limit metric', nil
+            it_behaves_like 'sampling decision', '-0'
+          end
+        end
       end
     end
   end
@@ -561,7 +609,7 @@ RSpec.describe 'Tracer integration tests' do
 
         # Read and return any output
         read.read.tap do
-          Process.waitpid(fork_id)
+          try_wait_until { Process.wait(fork_id, Process::WNOHANG) }
         end
       end
 
@@ -607,7 +655,7 @@ RSpec.describe 'Tracer integration tests' do
   describe 'sampling priority integration' do
     include_context 'agent-based test'
 
-    it { expect(tracer.sampler).to be_a_kind_of(Datadog::Tracing::Sampling::PrioritySampler) }
+    it { expect(tracer.sampler).to respond_to(:update) }
 
     it do
       3.times do |i|
@@ -791,7 +839,7 @@ RSpec.describe 'Tracer integration tests' do
       )
     end
 
-    let(:transport) { Datadog::Transport::IO.default(out: out) }
+    let(:transport) { Datadog::Tracing::Transport::IO.default(out: out) }
     let(:out) { instance_double(IO) } # Dummy output so we don't pollute STDOUT
 
     before do
@@ -800,11 +848,11 @@ RSpec.describe 'Tracer integration tests' do
       end
 
       # Verify Transport::IO is configured
-      expect(tracer.writer.transport).to be_a_kind_of(Datadog::Transport::IO::Client)
+      expect(tracer.writer.transport).to be_a_kind_of(Datadog::Tracing::Transport::IO::Client)
       expect(tracer.writer.transport.encoder).to be(Datadog::Core::Encoding::JSONEncoder)
 
-      # Verify sampling is configured properly
-      expect(tracer.sampler).to be_a_kind_of(Datadog::Tracing::Sampling::PrioritySampler)
+      # Verify sampler can receive agent rate updates
+      expect(tracer.sampler).to respond_to(:update)
 
       # Verify IO is written to
       allow(out).to receive(:puts)
@@ -841,7 +889,7 @@ RSpec.describe 'Tracer integration tests' do
     include_context 'agent-based test'
 
     let(:writer) { Datadog::Tracing::Writer.new(transport: transport) }
-    let(:transport) { Datadog::Transport::HTTP.default }
+    let(:transport) { Datadog::Tracing::Transport::HTTP.default }
 
     before do
       Datadog.configure do |c|
@@ -850,10 +898,10 @@ RSpec.describe 'Tracer integration tests' do
       end
 
       # Verify Transport::HTTP is configured
-      expect(tracer.writer.transport).to be_a_kind_of(Datadog::Transport::Traces::Transport)
+      expect(tracer.writer.transport).to be_a_kind_of(Datadog::Tracing::Transport::Traces::Transport)
 
-      # Verify sampling is configured properly
-      expect(tracer.sampler).to be_a_kind_of(Datadog::Tracing::Sampling::PrioritySampler)
+      # Verify sampler can receive agent rate updates
+      expect(tracer.sampler).to respond_to(:update)
 
       # Verify priority sampler is configured and rates are updated
       expect(tracer.sampler).to receive(:update)
@@ -909,14 +957,19 @@ RSpec.describe 'Tracer integration tests' do
         end
       end
 
+      after do
+        Datadog.configuration.reset!
+      end
+
       context 'is provided' do
         let(:on_build) do
           double('on_build').tap do |double|
+            allow(double).to receive(:call).with(any_args) # e.g. Telemetry transport, RC transport
             expect(double).to receive(:call)
-              .with(kind_of(Datadog::Transport::HTTP::Builder))
+              .with(kind_of(Datadog::Tracing::Transport::HTTP::Builder))
               .at_least(1).time
             expect(double).to receive(:call)
-              .with(kind_of(Datadog::Core::Configuration::AgentSettingsResolver::TransportOptionsResolver))
+              .with(kind_of(Datadog::Tracing::Configuration::AgentSettingsResolver::TransportOptionsResolver))
               .at_least(1).time
           end
         end
@@ -925,7 +978,7 @@ RSpec.describe 'Tracer integration tests' do
           configure
 
           tracer.writer.transport.tap do |transport|
-            expect(transport).to be_a_kind_of(Datadog::Transport::Traces::Transport)
+            expect(transport).to be_a_kind_of(Datadog::Tracing::Transport::Traces::Transport)
             expect(transport.current_api.adapter.hostname).to be hostname
             expect(transport.current_api.adapter.port).to be port
           end
@@ -936,11 +989,12 @@ RSpec.describe 'Tracer integration tests' do
         let(:remote_enabled) { true }
         let(:on_build) do
           double('on_build').tap do |double|
+            allow(double).to receive(:call).with(any_args) # e.g. Telemetry transport, RC transport
             expect(double).to receive(:call)
-              .with(kind_of(Datadog::Transport::HTTP::Builder))
+              .with(kind_of(Datadog::Tracing::Transport::HTTP::Builder))
               .at_least(1).time
             expect(double).to receive(:call)
-              .with(kind_of(Datadog::Core::Configuration::AgentSettingsResolver::TransportOptionsResolver))
+              .with(kind_of(Datadog::Tracing::Configuration::AgentSettingsResolver::TransportOptionsResolver))
               .at_least(1).time
           end
         end
@@ -949,7 +1003,7 @@ RSpec.describe 'Tracer integration tests' do
           configure
 
           tracer.writer.transport.tap do |transport|
-            expect(transport).to be_a_kind_of(Datadog::Transport::Traces::Transport)
+            expect(transport).to be_a_kind_of(Datadog::Tracing::Transport::Traces::Transport)
             expect(transport.current_api.adapter.hostname).to be hostname
             expect(transport.current_api.adapter.port).to be port
           end
@@ -962,14 +1016,14 @@ RSpec.describe 'Tracer integration tests' do
         let(:on_build) do
           double('on_build').tap do |double|
             expect(double).to receive(:call)
-              .with(kind_of(Datadog::Transport::HTTP::Builder))
+              .with(kind_of(Datadog::Tracing::Transport::HTTP::Builder))
               .at_least(1).time
             # For the remote component.
             expect(double).to receive(:call)
-              .with(kind_of(Datadog::Core::Transport::HTTP::Builder))
+              .with(kind_of(Datadog::Core::Remote::Transport::HTTP::Builder))
               .at_least(1).time
             expect(double).to receive(:call)
-              .with(kind_of(Datadog::Core::Configuration::AgentSettingsResolver::TransportOptionsResolver))
+              .with(kind_of(Datadog::Tracing::Configuration::AgentSettingsResolver::TransportOptionsResolver))
               .at_least(1).time
           end
         end
@@ -978,7 +1032,7 @@ RSpec.describe 'Tracer integration tests' do
           configure
 
           tracer.writer.transport.tap do |transport|
-            expect(transport).to be_a_kind_of(Datadog::Transport::Traces::Transport)
+            expect(transport).to be_a_kind_of(Datadog::Tracing::Transport::Traces::Transport)
             expect(transport.current_api.adapter.hostname).to be hostname
             expect(transport.current_api.adapter.port).to be port
           end

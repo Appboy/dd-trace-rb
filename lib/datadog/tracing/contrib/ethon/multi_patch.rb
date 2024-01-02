@@ -69,9 +69,12 @@ module Datadog
 
               @datadog_multi_span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_CLIENT)
 
-              if Contrib::SpanAttributeSchema.default_span_attribute_schema?
-                # Tag as an external peer service
-                @datadog_multi_span.set_tag(Tracing::Metadata::Ext::TAG_PEER_SERVICE, @datadog_multi_span.service)
+              # Tag original global service name if not used
+              if @datadog_multi_span.service != Datadog.configuration.service
+                @datadog_multi_span.set_tag(
+                  Tracing::Contrib::Ext::Metadata::TAG_BASE_SERVICE,
+                  Datadog.configuration.service
+                )
               end
 
               # Set analytics sample rate

@@ -6,6 +6,7 @@
 #include "stack_recorder.h"
 #include "libdatadog_helpers.h"
 #include "ruby_helpers.h"
+#include "time_helpers.h"
 
 // Used to wrap a ddog_prof_Profile in a Ruby object and expose Ruby-level serialization APIs
 // This file implements the native bits of the Datadog::Profiling::StackRecorder class
@@ -128,8 +129,6 @@
 static VALUE ok_symbol = Qnil; // :ok in Ruby
 static VALUE error_symbol = Qnil; // :error in Ruby
 
-static VALUE stack_recorder_class = Qnil;
-
 // Note: Please DO NOT use `VALUE_STRING` anywhere else, instead use `DDOG_CHARSLICE_C`.
 // `VALUE_STRING` is only needed because older versions of gcc (4.9.2, used in our Ruby 2.2 CI test images)
 // tripped when compiling `enabled_value_types` using `-std=gnu99` due to the extra cast that is included in
@@ -164,10 +163,10 @@ static const uint8_t all_value_types_positions[] = {CPU_TIME_VALUE_ID, CPU_SAMPL
 // Contains native state for each instance
 struct stack_recorder_state {
   pthread_mutex_t slot_one_mutex;
-  ddog_prof_Profile *slot_one_profile;
+  ddog_prof_Profile slot_one_profile;
 
   pthread_mutex_t slot_two_mutex;
-  ddog_prof_Profile *slot_two_profile;
+  ddog_prof_Profile slot_two_profile;
 
   short active_slot; // MUST NEVER BE ACCESSED FROM record_sample; this is NOT for the sampler thread to use.
 
@@ -196,6 +195,7 @@ struct call_serialize_without_gvl_arguments {
 
 static VALUE _native_new(VALUE klass);
 static void initialize_slot_concurrency_control(struct stack_recorder_state *state);
+static void initialize_profiles(struct stack_recorder_state *state, ddog_prof_Slice_ValueType sample_types);
 static void stack_recorder_typed_data_free(void *data);
 static VALUE _native_initialize(DDTRACE_UNUSED VALUE _self, VALUE recorder_instance, VALUE cpu_time_enabled, VALUE alloc_samples_enabled);
 static VALUE _native_serialize(VALUE self, VALUE recorder_instance);
@@ -208,13 +208,14 @@ static VALUE _native_active_slot(DDTRACE_UNUSED VALUE _self, VALUE recorder_inst
 static VALUE _native_is_slot_one_mutex_locked(DDTRACE_UNUSED VALUE _self, VALUE recorder_instance);
 static VALUE _native_is_slot_two_mutex_locked(DDTRACE_UNUSED VALUE _self, VALUE recorder_instance);
 static VALUE test_slot_mutex_state(VALUE recorder_instance, int slot);
-static ddog_Timespec time_now(void);
+static ddog_Timespec system_epoch_now_timespec(void);
 static VALUE _native_reset_after_fork(DDTRACE_UNUSED VALUE self, VALUE recorder_instance);
-static void serializer_set_start_timestamp_for_next_profile(struct stack_recorder_state *state, ddog_Timespec timestamp);
+static void serializer_set_start_timestamp_for_next_profile(struct stack_recorder_state *state, ddog_Timespec start_time);
 static VALUE _native_record_endpoint(DDTRACE_UNUSED VALUE _self, VALUE recorder_instance, VALUE local_root_span_id, VALUE endpoint);
+static void reset_profile(ddog_prof_Profile *profile, ddog_Timespec *start_time /* Can be null */);
 
 void stack_recorder_init(VALUE profiling_module) {
-  stack_recorder_class = rb_define_class_under(profiling_module, "StackRecorder", rb_cObject);
+  VALUE stack_recorder_class = rb_define_class_under(profiling_module, "StackRecorder", rb_cObject);
   // Hosts methods used for testing the native code using RSpec
   VALUE testing_module = rb_define_module_under(stack_recorder_class, "Testing");
 
@@ -255,18 +256,25 @@ static const rb_data_type_t stack_recorder_typed_data = {
 static VALUE _native_new(VALUE klass) {
   struct stack_recorder_state *state = ruby_xcalloc(1, sizeof(struct stack_recorder_state));
 
+  // Note: Any exceptions raised from this note until the TypedData_Wrap_Struct call will lead to the state memory
+  // being leaked.
+
   ddog_prof_Slice_ValueType sample_types = {.ptr = all_value_types, .len = ALL_VALUE_TYPES_COUNT};
 
   initialize_slot_concurrency_control(state);
   for (uint8_t i = 0; i < ALL_VALUE_TYPES_COUNT; i++) { state->position_for[i] = all_value_types_positions[i]; }
   state->enabled_values_count = ALL_VALUE_TYPES_COUNT;
 
+  // Note: At this point, slot_one_profile and slot_two_profile contain null pointers. Libdatadog validates pointers
+  // before using them so it's ok for us to go ahead and create the StackRecorder object.
+
+  VALUE stack_recorder = TypedData_Wrap_Struct(klass, &stack_recorder_typed_data, state);
+
   // Note: Don't raise exceptions after this point, since it'll lead to libdatadog memory leaking!
 
-  state->slot_one_profile = ddog_prof_Profile_new(sample_types, NULL /* period is optional */, NULL /* start_time is optional */);
-  state->slot_two_profile = ddog_prof_Profile_new(sample_types, NULL /* period is optional */, NULL /* start_time is optional */);
+  initialize_profiles(state, sample_types);
 
-  return TypedData_Wrap_Struct(klass, &stack_recorder_typed_data, state);
+  return stack_recorder;
 }
 
 static void initialize_slot_concurrency_control(struct stack_recorder_state *state) {
@@ -279,14 +287,36 @@ static void initialize_slot_concurrency_control(struct stack_recorder_state *sta
   state->active_slot = 1;
 }
 
+static void initialize_profiles(struct stack_recorder_state *state, ddog_prof_Slice_ValueType sample_types) {
+  ddog_prof_Profile_NewResult slot_one_profile_result =
+    ddog_prof_Profile_new(sample_types, NULL /* period is optional */, NULL /* start_time is optional */);
+
+  if (slot_one_profile_result.tag == DDOG_PROF_PROFILE_NEW_RESULT_ERR) {
+    rb_raise(rb_eRuntimeError, "Failed to initialize slot one profile: %"PRIsVALUE, get_error_details_and_drop(&slot_one_profile_result.err));
+  }
+
+  ddog_prof_Profile_NewResult slot_two_profile_result =
+    ddog_prof_Profile_new(sample_types, NULL /* period is optional */, NULL /* start_time is optional */);
+
+  if (slot_two_profile_result.tag == DDOG_PROF_PROFILE_NEW_RESULT_ERR) {
+    // Uff! Though spot. We need to make sure to properly clean up the other profile as well first
+    ddog_prof_Profile_drop(&slot_one_profile_result.ok);
+    // And now we can raise...
+    rb_raise(rb_eRuntimeError, "Failed to initialize slot two profile: %"PRIsVALUE, get_error_details_and_drop(&slot_two_profile_result.err));
+  }
+
+  state->slot_one_profile = slot_one_profile_result.ok;
+  state->slot_two_profile = slot_two_profile_result.ok;
+}
+
 static void stack_recorder_typed_data_free(void *state_ptr) {
   struct stack_recorder_state *state = (struct stack_recorder_state *) state_ptr;
 
   pthread_mutex_destroy(&state->slot_one_mutex);
-  ddog_prof_Profile_drop(state->slot_one_profile);
+  ddog_prof_Profile_drop(&state->slot_one_profile);
 
   pthread_mutex_destroy(&state->slot_two_mutex);
-  ddog_prof_Profile_drop(state->slot_two_profile);
+  ddog_prof_Profile_drop(&state->slot_two_profile);
 
   ruby_xfree(state);
 }
@@ -332,13 +362,11 @@ static VALUE _native_initialize(DDTRACE_UNUSED VALUE _self, VALUE recorder_insta
     state->position_for[ALLOC_SAMPLES_VALUE_ID] = next_disabled_pos++;
   }
 
+  ddog_prof_Profile_drop(&state->slot_one_profile);
+  ddog_prof_Profile_drop(&state->slot_two_profile);
+
   ddog_prof_Slice_ValueType sample_types = {.ptr = enabled_value_types, .len = state->enabled_values_count};
-
-  ddog_prof_Profile_drop(state->slot_one_profile);
-  ddog_prof_Profile_drop(state->slot_two_profile);
-
-  state->slot_one_profile = ddog_prof_Profile_new(sample_types, NULL /* period is optional */, NULL /* start_time is optional */);
-  state->slot_two_profile = ddog_prof_Profile_new(sample_types, NULL /* period is optional */, NULL /* start_time is optional */);
+  initialize_profiles(state, sample_types);
 
   return Qtrue;
 }
@@ -347,7 +375,7 @@ static VALUE _native_serialize(DDTRACE_UNUSED VALUE _self, VALUE recorder_instan
   struct stack_recorder_state *state;
   TypedData_Get_Struct(recorder_instance, struct stack_recorder_state, &stack_recorder_typed_data, state);
 
-  ddog_Timespec finish_timestamp = time_now();
+  ddog_Timespec finish_timestamp = system_epoch_now_timespec();
   // Need to do this while still holding on to the Global VM Lock; see comments on method for why
   serializer_set_start_timestamp_for_next_profile(state, finish_timestamp);
 
@@ -385,10 +413,6 @@ static VALUE _native_serialize(DDTRACE_UNUSED VALUE _self, VALUE recorder_instan
   VALUE start = ruby_time_from(ddprof_start);
   VALUE finish = ruby_time_from(ddprof_finish);
 
-  if (!ddog_prof_Profile_reset(args.profile, NULL /* start_time is optional */ )) {
-    return rb_ary_new_from_args(2, error_symbol, rb_str_new_cstr("Failed to reset profile"));
-  }
-
   return rb_ary_new_from_args(2, ok_symbol, rb_ary_new_from_args(3, start, finish, encoded_pprof));
 }
 
@@ -398,7 +422,7 @@ static VALUE ruby_time_from(ddog_Timespec ddprof_time) {
   return rb_time_timespec_new(&time, utc);
 }
 
-void record_sample(VALUE recorder_instance, ddog_prof_Slice_Location locations, sample_values values, ddog_prof_Slice_Label labels) {
+void record_sample(VALUE recorder_instance, ddog_prof_Slice_Location locations, sample_values values, sample_labels labels) {
   struct stack_recorder_state *state;
   TypedData_Get_Struct(recorder_instance, struct stack_recorder_state, &stack_recorder_typed_data, state);
 
@@ -412,22 +436,23 @@ void record_sample(VALUE recorder_instance, ddog_prof_Slice_Location locations, 
   uint8_t *position_for = state->position_for;
 
   metric_values[position_for[CPU_TIME_VALUE_ID]]      = values.cpu_time_ns;
-  metric_values[position_for[CPU_SAMPLES_VALUE_ID]]   = values.cpu_samples;
+  metric_values[position_for[CPU_SAMPLES_VALUE_ID]]   = values.cpu_or_wall_samples;
   metric_values[position_for[WALL_TIME_VALUE_ID]]     = values.wall_time_ns;
   metric_values[position_for[ALLOC_SAMPLES_VALUE_ID]] = values.alloc_samples;
 
-  ddog_prof_Profile_AddResult result = ddog_prof_Profile_add(
+  ddog_prof_Profile_Result result = ddog_prof_Profile_add(
     active_slot.profile,
     (ddog_prof_Sample) {
       .locations = locations,
       .values = (ddog_Slice_I64) {.ptr = metric_values, .len = state->enabled_values_count},
-      .labels = labels
-    }
+      .labels = labels.labels
+    },
+    labels.end_timestamp_ns
   );
 
   sampler_unlock_active_profile(active_slot);
 
-  if (result.tag == DDOG_PROF_PROFILE_ADD_RESULT_ERR) {
+  if (result.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
     rb_raise(rb_eArgError, "Failed to record sample: %"PRIsVALUE, get_error_details_and_drop(&result.err));
   }
 }
@@ -438,16 +463,21 @@ void record_endpoint(VALUE recorder_instance, uint64_t local_root_span_id, ddog_
 
   struct active_slot_pair active_slot = sampler_lock_active_profile(state);
 
-  ddog_prof_Profile_set_endpoint(active_slot.profile, local_root_span_id, endpoint);
+  ddog_prof_Profile_Result result = ddog_prof_Profile_set_endpoint(active_slot.profile, local_root_span_id, endpoint);
 
   sampler_unlock_active_profile(active_slot);
+
+  if (result.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
+    rb_raise(rb_eArgError, "Failed to record endpoint: %"PRIsVALUE, get_error_details_and_drop(&result.err));
+  }
 }
 
 static void *call_serialize_without_gvl(void *call_args) {
   struct call_serialize_without_gvl_arguments *args = (struct call_serialize_without_gvl_arguments *) call_args;
 
   args->profile = serializer_flip_active_and_inactive_slots(args->state);
-  args->result = ddog_prof_Profile_serialize(args->profile, &args->finish_timestamp, NULL /* duration_nanos is optional */);
+  // Note: The profile gets reset by the serialize call
+  args->result = ddog_prof_Profile_serialize(args->profile, &args->finish_timestamp, NULL /* duration_nanos is optional */, NULL /* start_time is optional */);
   args->serialize_ran = true;
 
   return NULL; // Unused
@@ -466,7 +496,7 @@ static struct active_slot_pair sampler_lock_active_profile(struct stack_recorder
     if (error && error != EBUSY) ENFORCE_SUCCESS_GVL(error);
 
     // Slot one is active
-    if (!error) return (struct active_slot_pair) {.mutex = &state->slot_one_mutex, .profile = state->slot_one_profile};
+    if (!error) return (struct active_slot_pair) {.mutex = &state->slot_one_mutex, .profile = &state->slot_one_profile};
 
     // If we got here, slot one was not active, let's try slot two
 
@@ -474,7 +504,7 @@ static struct active_slot_pair sampler_lock_active_profile(struct stack_recorder
     if (error && error != EBUSY) ENFORCE_SUCCESS_GVL(error);
 
     // Slot two is active
-    if (!error) return (struct active_slot_pair) {.mutex = &state->slot_two_mutex, .profile = state->slot_two_profile};
+    if (!error) return (struct active_slot_pair) {.mutex = &state->slot_two_mutex, .profile = &state->slot_two_profile};
   }
 
   // We already tried both multiple times, and we did not succeed. This is not expected to happen. Let's stop sampling.
@@ -505,7 +535,7 @@ static ddog_prof_Profile *serializer_flip_active_and_inactive_slots(struct stack
   state->active_slot = (previously_active_slot == 1) ? 2 : 1;
 
   // Return profile for previously active slot (now inactive)
-  return (previously_active_slot == 1) ? state->slot_one_profile : state->slot_two_profile;
+  return (previously_active_slot == 1) ? &state->slot_one_profile : &state->slot_two_profile;
 }
 
 // This method exists only to enable testing Datadog::Profiling::StackRecorder behavior using RSpec.
@@ -547,14 +577,9 @@ static VALUE test_slot_mutex_state(VALUE recorder_instance, int slot) {
   }
 }
 
-// Note that this is using CLOCK_REALTIME (e.g. actual time since unix epoch) and not the CLOCK_MONOTONIC as we use in
-// monotonic_wall_time_now_ns (used in other parts of the codebase)
-static ddog_Timespec time_now(void) {
-  struct timespec current_time;
-
-  if (clock_gettime(CLOCK_REALTIME, &current_time) != 0) ENFORCE_SUCCESS_GVL(errno);
-
-  return (ddog_Timespec) {.seconds = current_time.tv_sec, .nanoseconds = (uint32_t) current_time.tv_nsec};
+static ddog_Timespec system_epoch_now_timespec(void) {
+  long now_ns = system_epoch_time_now_ns(RAISE_ON_FAILURE);
+  return (ddog_Timespec) {.seconds = now_ns / SECONDS_AS_NS(1), .nanoseconds = now_ns % SECONDS_AS_NS(1)};
 }
 
 // After the Ruby VM forks, this method gets called in the child process to clean up any leftover state from the parent.
@@ -569,23 +594,29 @@ static VALUE _native_reset_after_fork(DDTRACE_UNUSED VALUE self, VALUE recorder_
   // resulting state is inconsistent, we make sure to reset it back to the initial state.
   initialize_slot_concurrency_control(state);
 
-  ddog_prof_Profile_reset(state->slot_one_profile, /* start_time: */ NULL);
-  ddog_prof_Profile_reset(state->slot_two_profile, /* start_time: */ NULL);
+  reset_profile(&state->slot_one_profile, /* start_time: */ NULL);
+  reset_profile(&state->slot_two_profile, /* start_time: */ NULL);
 
   return Qtrue;
 }
 
-// Assumption 1: This method is called with the GVL being held, because `ddog_prof_Profile_reset` mutates the profile and should
+// Assumption 1: This method is called with the GVL being held, because `ddog_prof_Profile_reset` mutates the profile and must
 // not be interrupted part-way through by a VM fork.
-static void serializer_set_start_timestamp_for_next_profile(struct stack_recorder_state *state, ddog_Timespec timestamp) {
-  // Before making this profile active, we reset it so that it uses the correct timestamp for its start
-  ddog_prof_Profile *next_profile = (state->active_slot == 1) ? state->slot_two_profile : state->slot_one_profile;
-
-  if (!ddog_prof_Profile_reset(next_profile, &timestamp)) rb_raise(rb_eRuntimeError, "Failed to reset profile");
+static void serializer_set_start_timestamp_for_next_profile(struct stack_recorder_state *state, ddog_Timespec start_time) {
+  // Before making this profile active, we reset it so that it uses the correct start_time for its start
+  ddog_prof_Profile *next_profile = (state->active_slot == 1) ? &state->slot_two_profile : &state->slot_one_profile;
+  reset_profile(next_profile, &start_time);
 }
 
 static VALUE _native_record_endpoint(DDTRACE_UNUSED VALUE _self, VALUE recorder_instance, VALUE local_root_span_id, VALUE endpoint) {
   ENFORCE_TYPE(local_root_span_id, T_FIXNUM);
   record_endpoint(recorder_instance, NUM2ULL(local_root_span_id), char_slice_from_ruby_string(endpoint));
   return Qtrue;
+}
+
+static void reset_profile(ddog_prof_Profile *profile, ddog_Timespec *start_time /* Can be null */) {
+  ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(profile, start_time);
+  if (reset_result.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
+    rb_raise(rb_eRuntimeError, "Failed to reset profile: %"PRIsVALUE, get_error_details_and_drop(&reset_result.err));
+  }
 }

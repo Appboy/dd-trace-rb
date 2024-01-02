@@ -3,6 +3,7 @@ require_relative 'configuration/resolver'
 require_relative 'ext'
 require_relative 'quantize'
 require_relative 'tags'
+require_relative 'trace_middleware'
 
 module Datadog
   module Tracing
@@ -17,91 +18,11 @@ module Datadog
           # InstanceMethods - implementing instrumentation
           module InstanceMethods
             def call(*args, &block)
-              show_command_args = command_args?
-
-              Tracing.trace(Contrib::Redis::Ext::SPAN_COMMAND) do |span|
-                span.service = service_name
-                span.span_type = Contrib::Redis::Ext::TYPE
-                span.resource = get_command(args, show_command_args)
-                ### BRAZE MODIFICATION
-                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_FILEPATH,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH]
-                  )
-                end
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_CODEOWNER,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
-                  )
-                end
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_SHARD_INDEX,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX]
-                  )
-                end
-                ### END BRAZE MODIFICATION
-                Contrib::Redis::Tags.set_common_tags(self, span, show_command_args)
-
-                result = super
-
-                ### BRAZE MODIFICATION
-                span.set_metric Contrib::Redis::Ext::METRIC_RESP_COMMAND_LEN, result.to_s.bytesize
-                ### END BRAZE MODIFICATION
-
-                result
-              end
+              TraceMiddleware.call(self, args[0], service_name, command_args?) { super }
             end
 
             def call_pipeline(*args, &block)
-              show_command_args = command_args?
-
-              Tracing.trace(Contrib::Redis::Ext::SPAN_COMMAND) do |span|
-                span.service = service_name
-                span.span_type = Contrib::Redis::Ext::TYPE
-                commands = get_pipeline_commands(args, show_command_args)
-                span.resource = commands.any? ? commands.join("\n") : '(none)'
-                span.set_metric Contrib::Redis::Ext::METRIC_PIPELINE_LEN, commands.length
-                ### BRAZE MODIFICATION
-                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_FILEPATH,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH]
-                  )
-                end
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_CODEOWNER,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
-                  )
-                end
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_SHARD_INDEX,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX]
-                  )
-                end
-                ### END BRAZE MODIFICATION
-                Contrib::Redis::Tags.set_common_tags(self, span, show_command_args)
-
-                result = super
-
-                ### BRAZE MODIFICATION
-                span.set_metric Contrib::Redis::Ext::METRIC_RESP_COMMAND_LEN, result.to_s.bytesize
-                ### END BRAZE MODIFICATION
-
-                result
-              end
+              TraceMiddleware.call_pipelined(self, args[0].commands, service_name, command_args?) { super }
             end
 
             private
@@ -117,22 +38,6 @@ module Datadog
             def service_name
               Datadog.configuration_for(redis_instance, :service_name) ||
                 datadog_configuration[:service_name]
-            end
-
-            def get_command(args, show_command_args)
-              if show_command_args
-                Contrib::Redis::Quantize.format_command_args(*args)
-              else
-                Contrib::Redis::Quantize.get_verb(*args)
-              end
-            end
-
-            def get_pipeline_commands(args, show_command_args)
-              if show_command_args
-                args[0].commands.map { |c| Contrib::Redis::Quantize.format_command_args(c) }
-              else
-                args[0].commands.map { |c| Contrib::Redis::Quantize.get_verb(c) }
-              end
             end
 
             def datadog_configuration

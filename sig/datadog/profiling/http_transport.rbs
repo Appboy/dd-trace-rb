@@ -41,6 +41,7 @@ module Datadog
         code_provenance_file_name: ::String,
         code_provenance_data: ::String?,
         tags_as_array: Array[[::String, ::String]],
+        internal_metadata_json: ::String,
       ) -> [:ok | :error, ::Integer | ::String]
 
       def self._native_do_export: (
@@ -55,7 +56,10 @@ module Datadog
         ::String code_provenance_file_name,
         ::String? code_provenance_data,
         Array[[::String, ::String]] tags_as_array,
+        ::String internal_metadata_json,
       ) -> [:ok | :error, ::Integer | ::String]
+
+      def config_without_api_key: () -> ::Hash[:agent | :agentless, ::String]
     end
   end
 end

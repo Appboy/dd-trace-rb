@@ -1,4 +1,5 @@
 require_relative 'agent_settings_resolver'
+require_relative 'ext'
 require_relative '../diagnostics/environment_logger'
 require_relative '../diagnostics/health'
 require_relative '../logger'
@@ -54,14 +55,19 @@ module Datadog
 
           def build_telemetry(settings, agent_settings, logger)
             enabled = settings.telemetry.enabled
-            if agent_settings.adapter != Datadog::Transport::Ext::HTTP::ADAPTER
+            if agent_settings.adapter != Datadog::Core::Configuration::Ext::Agent::HTTP::ADAPTER
               enabled = false
               logger.debug { "Telemetry disabled. Agent network adapter not supported: #{agent_settings.adapter}" }
             end
 
-            Telemetry::Client.new(enabled: enabled)
+            Telemetry::Client.new(
+              enabled: enabled,
+              heartbeat_interval_seconds: settings.telemetry.heartbeat_interval_seconds
+            )
           end
         end
+
+        include Datadog::Tracing::Component::InstanceMethods
 
         attr_reader \
           :health_metrics,
@@ -76,10 +82,14 @@ module Datadog
         def initialize(settings)
           @logger = self.class.build_logger(settings)
 
+          # This agent_settings is intended for use within Core. If you require
+          # agent_settings within a product outside of core you should extend
+          # the Core resolver from within your product/component's namespace.
           agent_settings = AgentSettingsResolver.call(settings, logger: @logger)
 
           @remote = Remote::Component.build(settings, agent_settings)
-          @tracer = self.class.build_tracer(settings, agent_settings)
+          @tracer = self.class.build_tracer(settings, logger: @logger)
+
           @profiler = Datadog::Profiling::Component.build_profiler_component(
             settings: settings,
             agent_settings: agent_settings,
@@ -105,6 +115,8 @@ module Datadog
           else
             @logger.debug('Profiling is disabled')
           end
+
+          Core::Diagnostics::EnvironmentLogger.collect_and_log!
         end
 
         # Shuts down all the components in use.

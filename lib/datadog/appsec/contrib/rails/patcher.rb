@@ -33,19 +33,19 @@ module Datadog
 
           def patch
             Gateway::Watcher.watch
-            patch_before_intialize
-            patch_after_intialize
+            patch_before_initialize
+            patch_after_initialize
 
             Patcher.instance_variable_set(:@patched, true)
           end
 
-          def patch_before_intialize
+          def patch_before_initialize
             ::ActiveSupport.on_load(:before_initialize) do
-              Datadog::AppSec::Contrib::Rails::Patcher.before_intialize(self)
+              Datadog::AppSec::Contrib::Rails::Patcher.before_initialize(self)
             end
           end
 
-          def before_intialize(app)
+          def before_initialize(app)
             BEFORE_INITIALIZE_ONLY_ONCE_PER_APP[app].run do
               # Middleware must be added before the application is initialized.
               # Otherwise the middleware stack will be frozen.
@@ -83,9 +83,15 @@ module Datadog
                 super
               end
 
-              if request_response && request_response.any? { |action, _event| action == :block }
-                @_response = AppSec::Response.negotiate(env).to_action_dispatch_response
-                request_return = @_response.body
+              if request_response
+                blocked_event = request_response.find { |action, _options| action == :block }
+                if blocked_event
+                  @_response = AppSec::Response.negotiate(
+                    env,
+                    blocked_event.last[:actions]
+                  ).to_action_dispatch_response
+                  request_return = @_response.body
+                end
               end
 
               request_return
@@ -134,13 +140,13 @@ module Datadog
             Datadog.logger.debug { 'Rails middlewares: ' << app.middleware.map(&:inspect).inspect }
           end
 
-          def patch_after_intialize
+          def patch_after_initialize
             ::ActiveSupport.on_load(:after_initialize) do
-              Datadog::AppSec::Contrib::Rails::Patcher.after_intialize(self)
+              Datadog::AppSec::Contrib::Rails::Patcher.after_initialize(self)
             end
           end
 
-          def after_intialize(app)
+          def after_initialize(app)
             AFTER_INITIALIZE_ONLY_ONCE_PER_APP[app].run do
               # Finish configuring the tracer after the application is initialized.
               # We need to wait for some things, like application name, middleware stack, etc.

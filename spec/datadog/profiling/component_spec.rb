@@ -2,7 +2,8 @@ require 'datadog/profiling/spec_helper'
 
 RSpec.describe Datadog::Profiling::Component do
   let(:settings) { Datadog::Core::Configuration::Settings.new }
-  let(:agent_settings) { Datadog::Core::Configuration::AgentSettingsResolver.call(settings, logger: nil) }
+  let(:logger) { nil }
+  let(:agent_settings) { Datadog::Core::Configuration::AgentSettingsResolver.call(settings, logger: logger) }
   let(:profiler_setup_task) { instance_double(Datadog::Profiling::Tasks::Setup) if Datadog::Profiling.supported? }
 
   before do
@@ -49,83 +50,36 @@ RSpec.describe Datadog::Profiling::Component do
         allow(profiler_setup_task).to receive(:run)
       end
 
-      context 'when using the legacy profiler' do
-        before do
-          allow(Datadog.logger).to receive(:warn).with(/Legacy profiler has been force-enabled/)
-          allow(Datadog.logger).to receive(:warn).with(/force_enable_legacy_profiler setting has been deprecated/)
-          settings.profiling.advanced.force_enable_legacy_profiler = true
-        end
-
-        it 'sets up the Profiler with the OldStack collector' do
-          expect(Datadog::Profiling::Profiler).to receive(:new).with(
-            [instance_of(Datadog::Profiling::Collectors::OldStack)],
-            anything,
-          )
-
-          build_profiler_component
-        end
-
-        it 'initializes the OldStack collector with the max_frames setting' do
-          expect(Datadog::Profiling::Collectors::OldStack).to receive(:new).with(
-            instance_of(Datadog::Profiling::OldRecorder),
-            hash_including(max_frames: settings.profiling.advanced.max_frames),
-          )
-
-          build_profiler_component
-        end
-
-        it 'initializes the OldRecorder with the correct event classes and max_events setting' do
-          expect(Datadog::Profiling::OldRecorder)
-            .to receive(:new)
-            .with([Datadog::Profiling::Events::StackSample], settings.profiling.advanced.max_events)
-            .and_call_original
-
-          build_profiler_component
-        end
-
-        it 'sets up the Exporter with the OldRecorder' do
-          expect(Datadog::Profiling::Exporter)
-            .to receive(:new).with(hash_including(pprof_recorder: instance_of(Datadog::Profiling::OldRecorder)))
-
-          build_profiler_component
-        end
-
-        [true, false].each do |value|
-          context "when endpoint_collection_enabled is #{value}" do
-            before { settings.profiling.advanced.endpoint.collection.enabled = value }
-
-            it "initializes the TraceIdentifiers::Helper with endpoint_collection_enabled: #{value}" do
-              expect(Datadog::Profiling::TraceIdentifiers::Helper)
-                .to receive(:new).with(tracer: tracer, endpoint_collection_enabled: value)
-
-              build_profiler_component
-            end
-          end
-        end
-      end
-
       context 'when using the new CPU Profiling 2.0 profiler' do
-        it 'does not initialize the OldStack collector' do
-          expect(Datadog::Profiling::Collectors::OldStack).to_not receive(:new)
+        it 'initializes a ThreadContext collector' do
+          allow(Datadog::Profiling::Collectors::CpuAndWallTimeWorker).to receive(:new)
 
-          build_profiler_component
-        end
+          expect(settings.profiling.advanced).to receive(:max_frames).and_return(:max_frames_config)
+          expect(settings.profiling.advanced)
+            .to receive(:experimental_timeline_enabled).and_return(:experimental_timeline_enabled_config)
+          expect(settings.profiling.advanced.endpoint.collection)
+            .to receive(:enabled).and_return(:endpoint_collection_enabled_config)
 
-        it 'does not initialize the OldRecorder' do
-          expect(Datadog::Profiling::OldRecorder).to_not receive(:new)
+          expect(Datadog::Profiling::Collectors::ThreadContext).to receive(:new).with(
+            recorder: instance_of(Datadog::Profiling::StackRecorder),
+            max_frames: :max_frames_config,
+            tracer: tracer,
+            endpoint_collection_enabled: :endpoint_collection_enabled_config,
+            timeline_enabled: :experimental_timeline_enabled_config,
+          )
 
           build_profiler_component
         end
 
         it 'initializes a CpuAndWallTimeWorker collector' do
+          expect(described_class).to receive(:no_signals_workaround_enabled?).and_return(:no_signals_result)
+
           expect(Datadog::Profiling::Collectors::CpuAndWallTimeWorker).to receive(:new).with(
-            recorder: instance_of(Datadog::Profiling::StackRecorder),
-            max_frames: settings.profiling.advanced.max_frames,
-            tracer: tracer,
-            endpoint_collection_enabled: anything,
             gc_profiling_enabled: anything,
             allocation_counting_enabled: anything,
-            no_signals_workaround_enabled: eq(true).or(eq(false)),
+            no_signals_workaround_enabled: :no_signals_result,
+            thread_context_collector: instance_of(Datadog::Profiling::Collectors::ThreadContext),
+            allocation_sample_every: 0,
           )
 
           build_profiler_component
@@ -193,32 +147,10 @@ RSpec.describe Datadog::Profiling::Component do
           end
         end
 
-        it 'initializes a CpuAndWallTimeWorker collector with endpoint_collection_enabled set to true' do
-          expect(Datadog::Profiling::Collectors::CpuAndWallTimeWorker).to receive(:new).with hash_including(
-            endpoint_collection_enabled: true,
-          )
-
-          build_profiler_component
-        end
-
-        context 'when endpoint_collection_enabled is disabled' do
-          before do
-            settings.profiling.advanced.endpoint.collection.enabled = false
-          end
-
-          it 'initializes a CpuAndWallTimeWorker collector with endpoint_collection_enabled set to false' do
-            expect(Datadog::Profiling::Collectors::CpuAndWallTimeWorker).to receive(:new).with hash_including(
-              endpoint_collection_enabled: false,
-            )
-
-            build_profiler_component
-          end
-        end
-
         it 'sets up the Profiler with the CpuAndWallTimeWorker collector' do
           expect(Datadog::Profiling::Profiler).to receive(:new).with(
-            [instance_of(Datadog::Profiling::Collectors::CpuAndWallTimeWorker)],
-            anything,
+            worker: instance_of(Datadog::Profiling::Collectors::CpuAndWallTimeWorker),
+            scheduler: anything,
           )
 
           build_profiler_component
@@ -227,6 +159,24 @@ RSpec.describe Datadog::Profiling::Component do
         it 'sets up the Exporter with the StackRecorder' do
           expect(Datadog::Profiling::Exporter)
             .to receive(:new).with(hash_including(pprof_recorder: instance_of(Datadog::Profiling::StackRecorder)))
+
+          build_profiler_component
+        end
+
+        it 'sets up the Exporter internal_metadata with no_signals_workaround_enabled and timeline_enabled settings' do
+          allow(Datadog::Profiling::Collectors::ThreadContext).to receive(:new)
+          allow(Datadog::Profiling::Collectors::CpuAndWallTimeWorker).to receive(:new)
+
+          expect(described_class).to receive(:no_signals_workaround_enabled?).and_return(:no_signals_result)
+          expect(settings.profiling.advanced).to receive(:experimental_timeline_enabled).and_return(:timeline_result)
+          expect(Datadog::Profiling::Exporter).to receive(:new).with(
+            hash_including(
+              internal_metadata: {
+                no_signals_workaround_enabled: :no_signals_result,
+                timeline_enabled: :timeline_result,
+              }
+            )
+          )
 
           build_profiler_component
         end
@@ -327,33 +277,6 @@ RSpec.describe Datadog::Profiling::Component do
           build_profiler_component
         end
       end
-    end
-  end
-
-  describe '.enable_new_profiler?' do
-    subject(:enable_new_profiler?) { described_class.send(:enable_new_profiler?, settings) }
-
-    before { skip_if_profiling_not_supported(self) }
-
-    context 'when force_enable_legacy_profiler is enabled' do
-      before do
-        allow(Datadog.logger).to receive(:warn)
-        settings.profiling.advanced.force_enable_legacy_profiler = true
-      end
-
-      it { is_expected.to be false }
-
-      it 'logs a warning message mentioning that the legacy profiler was enabled' do
-        expect(Datadog.logger).to receive(:warn).with(/Legacy profiler has been force-enabled/)
-
-        enable_new_profiler?
-      end
-    end
-
-    context 'when force_enable_legacy_profiler is not enabled' do
-      before { settings.profiling.advanced.force_enable_legacy_profiler = false }
-
-      it { is_expected.to be true }
     end
   end
 
@@ -514,6 +437,32 @@ RSpec.describe Datadog::Profiling::Component do
                 no_signals_workaround_enabled?
               end
             end
+
+            context 'when mysql2-aurora gem is loaded and libmysqlclient < 8.0.0' do
+              before do
+                fake_original_client = double('Fake original Mysql2::Client')
+                stub_const('Mysql2::Aurora::ORIGINAL_CLIENT_CLASS', fake_original_client)
+                expect(fake_original_client).to receive(:info).and_return({ version: '7.9.9' })
+
+                client_replaced_by_aurora = double('Fake Aurora Mysql2::Client')
+                stub_const('Mysql2::Client', client_replaced_by_aurora)
+              end
+
+              it { is_expected.to be true }
+            end
+
+            context 'when mysql2-aurora gem is loaded and libmysqlclient >= 8.0.0' do
+              before do
+                fake_original_client = double('Fake original Mysql2::Client')
+                stub_const('Mysql2::Aurora::ORIGINAL_CLIENT_CLASS', fake_original_client)
+                expect(fake_original_client).to receive(:info).and_return({ version: '8.0.0' })
+
+                client_replaced_by_aurora = double('Fake Aurora Mysql2::Client')
+                stub_const('Mysql2::Client', client_replaced_by_aurora)
+              end
+
+              it { is_expected.to be false }
+            end
           end
         end
 
@@ -531,8 +480,47 @@ RSpec.describe Datadog::Profiling::Component do
           end
         end
 
-        context 'when mysql2 / rugged gem are not available' do
-          include_context('loaded gems', mysql2: nil, rugged: nil)
+        context 'when running inside the passenger web server, even when gem is not available' do
+          include_context('loaded gems', passenger: nil, rugged: nil, mysql2: nil)
+
+          before do
+            stub_const('::PhusionPassenger', Module.new)
+            allow(Datadog.logger).to receive(:warn)
+          end
+
+          it { is_expected.to be true }
+
+          it 'logs a warning message mentioning that the no signals workaround is going to be used' do
+            expect(Datadog.logger).to receive(:warn).with(/Enabling the profiling "no signals" workaround/)
+
+            no_signals_workaround_enabled?
+          end
+        end
+
+        context 'when passenger gem is available' do
+          context 'on passenger >= 6.0.19' do
+            include_context('loaded gems', passenger: Gem::Version.new('6.0.19'), rugged: nil, mysql2: nil)
+
+            it { is_expected.to be false }
+          end
+
+          context 'on passenger < 6.0.19' do
+            include_context('loaded gems', passenger: Gem::Version.new('6.0.18'), rugged: nil, mysql2: nil)
+
+            before { allow(Datadog.logger).to receive(:warn) }
+
+            it { is_expected.to be true }
+
+            it 'logs a warning message mentioning that the no signals workaround is going to be used' do
+              expect(Datadog.logger).to receive(:warn).with(/Enabling the profiling "no signals" workaround/)
+
+              no_signals_workaround_enabled?
+            end
+          end
+        end
+
+        context 'when mysql2 / rugged gems + passenger are not available' do
+          include_context('loaded gems', passenger: nil, mysql2: nil, rugged: nil)
 
           it { is_expected.to be false }
         end

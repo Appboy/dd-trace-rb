@@ -90,7 +90,7 @@ module Datadog
             :result
 
           def mutex
-            @mutex || MUTEX_INIT.synchronize { @mutex ||= Mutex.new }
+            (defined?(@mutex) && @mutex) || MUTEX_INIT.synchronize { @mutex ||= Mutex.new }
           end
 
           def after_fork
@@ -103,7 +103,7 @@ module Datadog
             :pid
 
           def mutex_after_fork
-            @mutex_after_fork || MUTEX_INIT.synchronize { @mutex_after_fork ||= Mutex.new }
+            (defined?(@mutex_after_fork) && @mutex_after_fork) || MUTEX_INIT.synchronize { @mutex_after_fork ||= Mutex.new }
           end
 
           def worker
@@ -147,6 +147,7 @@ module Datadog
               # rubocop:enable Lint/RescueException
             end
             @worker.name = self.class.name unless Gem::Version.new(RUBY_VERSION) < Gem::Version.new('2.3')
+            @worker.thread_variable_set(:fork_safe, true)
 
             nil
           end
