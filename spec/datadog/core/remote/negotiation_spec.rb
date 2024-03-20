@@ -34,7 +34,9 @@ RSpec.describe Datadog::Core::Remote::Negotiation do
   describe '#endpoint?' do
     include_context 'HTTP connection stub'
 
-    subject(:negotiation) { described_class.new(settings, agent_settings) }
+    subject(:endpoint?) { negotiation.endpoint?('/foo') }
+    let(:suppress_logging) { {} }
+    let(:negotiation) { described_class.new(settings, agent_settings, suppress_logging: suppress_logging) }
 
     context 'when /info exists' do
       let(:response_code) { 200 }
@@ -50,13 +52,23 @@ RSpec.describe Datadog::Core::Remote::Negotiation do
       it do
         expect(Datadog.logger).to_not receive(:error)
 
-        expect(negotiation.endpoint?('/foo')).to be true
+        expect(endpoint?).to be true
       end
 
       it do
         expect(Datadog.logger).to receive(:error).and_return(nil)
 
         expect(negotiation.endpoint?('/bar')).to be false
+      end
+
+      context 'when logging for :no_config_endpoint is suppressed' do
+        let(:suppress_logging) { { no_config_endpoint: true } }
+
+        it 'does not log an error' do
+          expect(Datadog.logger).to_not receive(:error)
+
+          expect(negotiation.endpoint?('/bar')).to be false
+        end
       end
     end
 
@@ -68,7 +80,14 @@ RSpec.describe Datadog::Core::Remote::Negotiation do
         expect(Datadog.logger).to receive(:error).and_return(nil)
       end
 
-      it { expect(negotiation.endpoint?('/foo')).to be false }
+      it { expect(endpoint?).to be false }
+
+      context 'on repeated errors' do
+        it 'only logs once' do
+          negotiation.endpoint?('/foo')
+          negotiation.endpoint?('/foo')
+        end
+      end
     end
 
     context 'when agent rejects request' do
@@ -79,7 +98,14 @@ RSpec.describe Datadog::Core::Remote::Negotiation do
         expect(Datadog.logger).to receive(:error).and_return(nil)
       end
 
-      it { expect(negotiation.endpoint?('/foo')).to be false }
+      it { expect(endpoint?).to be false }
+
+      context 'on repeated errors' do
+        it 'only logs once' do
+          negotiation.endpoint?('/foo')
+          negotiation.endpoint?('/foo')
+        end
+      end
     end
 
     context 'when agent is in error' do
@@ -90,7 +116,14 @@ RSpec.describe Datadog::Core::Remote::Negotiation do
         expect(Datadog.logger).to receive(:error).and_return(nil)
       end
 
-      it { expect(negotiation.endpoint?('/foo')).to be false }
+      it { expect(endpoint?).to be false }
+
+      context 'on repeated errors' do
+        it 'only logs once' do
+          negotiation.endpoint?('/foo')
+          negotiation.endpoint?('/foo')
+        end
+      end
     end
 
     context 'when agent causes an error' do
@@ -100,20 +133,34 @@ RSpec.describe Datadog::Core::Remote::Negotiation do
       end
 
       before do
-        expect(Datadog.logger).to receive(:error).twice.and_return(nil)
+        expect(Datadog.logger).to receive(:error).and_return(nil)
       end
 
-      it { expect(negotiation.endpoint?('/foo')).to be false }
+      it { expect(endpoint?).to be false }
+
+      context 'on repeated errors' do
+        it 'only logs once' do
+          negotiation.endpoint?('/foo')
+          negotiation.endpoint?('/foo')
+        end
+      end
     end
 
     context 'when agent is unreachable' do
       let(:request_exception) { Errno::ECONNREFUSED.new }
 
       before do
-        expect(Datadog.logger).to receive(:error).twice.and_return(nil)
+        expect(Datadog.logger).to receive(:error).and_return(nil)
       end
 
-      it { expect(negotiation.endpoint?('/foo')).to be false }
+      it { expect(endpoint?).to be false }
+
+      context 'on repeated errors' do
+        it 'only logs once' do
+          negotiation.endpoint?('/foo')
+          negotiation.endpoint?('/foo')
+        end
+      end
     end
   end
 end

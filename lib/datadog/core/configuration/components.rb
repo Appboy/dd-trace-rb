@@ -1,4 +1,5 @@
 require_relative 'agent_settings_resolver'
+require_relative 'ext'
 require_relative '../diagnostics/environment_logger'
 require_relative '../diagnostics/health'
 require_relative '../logger'
@@ -54,14 +55,19 @@ module Datadog
 
           def build_telemetry(settings, agent_settings, logger)
             enabled = settings.telemetry.enabled
-            if agent_settings.adapter != Datadog::Transport::Ext::HTTP::ADAPTER
+            if agent_settings.adapter != Datadog::Core::Configuration::Ext::Agent::HTTP::ADAPTER
               enabled = false
               logger.debug { "Telemetry disabled. Agent network adapter not supported: #{agent_settings.adapter}" }
             end
 
-            Telemetry::Client.new(enabled: enabled)
+            Telemetry::Client.new(
+              enabled: enabled,
+              heartbeat_interval_seconds: settings.telemetry.heartbeat_interval_seconds
+            )
           end
         end
+
+        include Datadog::Tracing::Component::InstanceMethods
 
         attr_reader \
           :health_metrics,
@@ -75,16 +81,23 @@ module Datadog
 
         def initialize(settings)
           @logger = self.class.build_logger(settings)
+          @environment_logger_extra = {}
 
+          # This agent_settings is intended for use within Core. If you require
+          # agent_settings within a product outside of core you should extend
+          # the Core resolver from within your product/component's namespace.
           agent_settings = AgentSettingsResolver.call(settings, logger: @logger)
 
           @remote = Remote::Component.build(settings, agent_settings)
-          @tracer = self.class.build_tracer(settings, agent_settings)
-          @profiler = Datadog::Profiling::Component.build_profiler_component(
+          @tracer = self.class.build_tracer(settings, logger: @logger)
+
+          @profiler, profiler_logger_extra = Datadog::Profiling::Component.build_profiler_component(
             settings: settings,
             agent_settings: agent_settings,
             optional_tracer: @tracer,
           )
+          @environment_logger_extra.merge!(profiler_logger_extra) if profiler_logger_extra
+
           @runtime_metrics = self.class.build_runtime_metrics_worker(settings)
           @health_metrics = self.class.build_health_metrics(settings)
           @telemetry = self.class.build_telemetry(settings, agent_settings, logger)
@@ -95,16 +108,15 @@ module Datadog
         def startup!(settings)
           if settings.profiling.enabled
             if profiler
-              @logger.debug('Profiling started')
               profiler.start
             else
               # Display a warning for users who expected profiling to be enabled
               unsupported_reason = Profiling.unsupported_reason
               logger.warn("Profiling was requested but is not supported, profiling disabled: #{unsupported_reason}")
             end
-          else
-            @logger.debug('Profiling is disabled')
           end
+
+          Core::Diagnostics::EnvironmentLogger.collect_and_log!(@environment_logger_extra)
         end
 
         # Shuts down all the components in use.

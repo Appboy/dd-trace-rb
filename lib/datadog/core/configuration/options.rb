@@ -1,6 +1,6 @@
-require_relative 'option_set'
+# frozen_string_literal: true
+
 require_relative 'option_definition'
-require_relative 'option_definition_set'
 
 module Datadog
   module Core
@@ -18,13 +18,15 @@ module Datadog
         module ClassMethods
           def options
             # Allows for class inheritance of option definitions
-            @options ||= superclass <= Options ? superclass.options.dup : OptionDefinitionSet.new
+            @options ||= superclass <= Options ? superclass.options.dup : {}
           end
 
           protected
 
           def option(name, meta = {}, &block)
-            builder = OptionDefinition::Builder.new(name, meta, &block)
+            settings_name = defined?(@settings_name) && @settings_name
+            option_name = settings_name ? "#{settings_name}.#{name}" : name
+            builder = OptionDefinition::Builder.new(option_name, meta, &block)
             options[name] = builder.to_definition.tap do
               # Resolve and define helper functions
               helpers = default_helpers(name)
@@ -62,17 +64,19 @@ module Datadog
         # @public_api
         module InstanceMethods
           def options
-            @options ||= OptionSet.new
+            @options ||= {}
           end
 
-          def set_option(name, value)
-            add_option(name) unless options.key?(name)
-            options[name].set(value)
+          def set_option(name, value, precedence: Configuration::Option::Precedence::PROGRAMMATIC)
+            resolve_option(name).set(value, precedence: precedence)
+          end
+
+          def unset_option(name, precedence: Configuration::Option::Precedence::PROGRAMMATIC)
+            resolve_option(name).unset(precedence)
           end
 
           def get_option(name)
-            add_option(name) unless options.key?(name)
-            options[name].get
+            resolve_option(name).get
           end
 
           def reset_option(name)
@@ -84,6 +88,12 @@ module Datadog
             self.class.options.key?(name)
           end
 
+          # Is this option's value the default fallback value?
+          def using_default?(name)
+            get_option(name) # Resolve value check if environment variable overwrote the default
+            options[name].default_precedence?
+          end
+
           def options_hash
             self.class.options.merge(options).each_with_object({}) do |(key, _), hash|
               hash[key] = get_option(key)
@@ -91,17 +101,19 @@ module Datadog
           end
 
           def reset_options!
-            options.values.each(&:reset)
+            options.each_value(&:reset)
           end
 
           private
 
-          def add_option(name)
+          # Ensure option DSL is loaded
+          def resolve_option(name)
+            option = options[name]
+            return option if option
+
             assert_valid_option!(name)
             definition = self.class.options[name]
-            definition.build(self).tap do |option|
-              options[name] = option
-            end
+            options[name] = definition.build(self)
           end
 
           def assert_valid_option!(name)

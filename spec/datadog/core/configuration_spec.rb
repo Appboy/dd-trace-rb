@@ -15,6 +15,7 @@ RSpec.describe Datadog::Core::Configuration do
     allow(telemetry_client).to receive(:stop!)
     allow(telemetry_client).to receive(:emit_closing!)
     allow(Datadog::Core::Telemetry::Client).to receive(:new).and_return(telemetry_client)
+    allow(Datadog::Core::Remote::Component).to receive(:build)
   end
 
   context 'when extended by a class' do
@@ -315,30 +316,6 @@ RSpec.describe Datadog::Core::Configuration do
         end
       end
 
-      context 'when the profiler' do
-        context 'is not changed' do
-          before { skip_if_profiling_not_supported(self) }
-
-          context 'and profiling is enabled' do
-            before do
-              allow(test_class.configuration.profiling)
-                .to receive(:enabled)
-                .and_return(true)
-
-              allow_any_instance_of(Datadog::Profiling::Profiler)
-                .to receive(:start)
-              allow_any_instance_of(Datadog::Profiling::Tasks::Setup)
-                .to receive(:run)
-            end
-
-            it 'starts the profiler' do
-              configure
-              expect(test_class.send(:components).profiler).to have_received(:start)
-            end
-          end
-        end
-      end
-
       context 'when reconfigured multiple times' do
         context 'with runtime metrics active' do
           before do
@@ -598,7 +575,13 @@ RSpec.describe Datadog::Core::Configuration do
     describe '#handle_interrupt_shutdown!' do
       subject(:handle_interrupt_shutdown!) { test_class.send(:handle_interrupt_shutdown!) }
 
-      let(:fake_thread) { instance_double(Thread, 'fake thread') }
+      let(:fake_thread) do
+        instance_double(Thread, 'fake thread').tap do |it|
+          if Gem::Version.new(RUBY_VERSION) >= Gem::Version.new('2.3')
+            expect(it).to(receive(:name=).with('Datadog::Core::Configuration'))
+          end
+        end
+      end
 
       it 'calls #shutdown! in a background thread' do
         allow(fake_thread).to receive(:join).and_return(fake_thread)

@@ -8,6 +8,7 @@ module Datadog
         # @public_api Changing resource names, tag names, or environment variables creates breaking changes.
         module Ext
           ENV_ENABLED = 'DD_TRACE_SNEAKERS_ENABLED'
+          # @!visibility private
           ENV_ANALYTICS_ENABLED = 'DD_TRACE_SNEAKERS_ANALYTICS_ENABLED'
           ENV_ANALYTICS_SAMPLE_RATE = 'DD_TRACE_SNEAKERS_ANALYTICS_SAMPLE_RATE'
           SERVICE_NAME = 'sneakers'
@@ -18,6 +19,7 @@ module Datadog
           TAG_COMPONENT = 'sneakers'
           TAG_OPERATION_JOB = 'job'
           TAG_MESSAGING_SYSTEM = 'rabbitmq'
+          TAG_RABBITMQ_ROUTING_KEY = 'messaging.rabbitmq.routing_key'
         end
       end
     end

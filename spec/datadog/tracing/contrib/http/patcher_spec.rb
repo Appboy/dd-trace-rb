@@ -10,8 +10,8 @@ RSpec.describe 'net/http patcher' do
   end
 
   before do
-    WebMock.disable_net_connect!(allow_localhost: true)
-    WebMock.enable!
+    WebMock.disable_net_connect!(allow_localhost: true, allow: agent_url)
+    WebMock.enable!(allow: agent_url)
 
     stub_request(:any, host)
 
@@ -30,7 +30,8 @@ RSpec.describe 'net/http patcher' do
     end
 
     it_behaves_like 'a peer service span' do
-      let(:span) { request_span }
+      let(:peer_service_val) { 'example.com' }
+      let(:peer_service_source) { 'peer.hostname' }
     end
   end
 
@@ -57,7 +58,8 @@ RSpec.describe 'net/http patcher' do
     end
 
     it_behaves_like 'a peer service span' do
-      let(:service) { request_span }
+      let(:peer_service_val) { 'example.com' }
+      let(:peer_service_source) { 'peer.hostname' }
     end
   end
 end

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'datadog/core/transport/http'
+require 'datadog/core/remote/transport/http'
 require 'datadog/core/remote/client'
 
 RSpec.describe Datadog::Core::Remote::Client do
@@ -12,7 +12,6 @@ RSpec.describe Datadog::Core::Remote::Client do
       allow(http_request).to receive(:body=)
       allow(request_class).to receive(:new).and_return(http_request)
 
-      http_connection = instance_double(::Net::HTTP)
       allow(::Net::HTTP).to receive(:new).and_return(http_connection)
 
       allow(http_connection).to receive(:open_timeout=)
@@ -37,7 +36,8 @@ RSpec.describe Datadog::Core::Remote::Client do
     end
   end
 
-  let(:transport) { Datadog::Core::Transport::HTTP.v7(&proc { |_client| }) }
+  let(:http_connection) { instance_double(::Net::HTTP) }
+  let(:transport) { Datadog::Core::Remote::Transport::HTTP.v7(&proc { |_client| }) }
   let(:roots) do
     [
       {
@@ -305,22 +305,24 @@ RSpec.describe Datadog::Core::Remote::Client do
           # We have to modify the response to trick the client into think on the second sync
           # the content for datadog/603646/ASM_DATA/blocked_ips/config have change
           new_blocked_ips = '{"rules_data":[{"data":["fake new data"]}]}'
-          expect_any_instance_of(Datadog::Core::Transport::HTTP::Config::Response).to receive(:target_files).and_return(
-            [
-              {
-                :path => 'datadog/603646/ASM_DATA/blocked_ips/config',
-                :content => StringIO.new(new_blocked_ips)
-              },
-              {
-                :path => 'datadog/603646/ASM/exclusion_filters/config',
-                :content => StringIO.new(exclusions)
-              },
-              {
-                :path => 'datadog/603646/ASM_DD/latest/config',
-                :content => StringIO.new(rules_data)
-              }
-            ]
-          )
+          expect_any_instance_of(Datadog::Core::Remote::Transport::HTTP::Config::Response)
+            .to receive(:target_files)
+            .and_return(
+              [
+                {
+                  :path => 'datadog/603646/ASM_DATA/blocked_ips/config',
+                  :content => StringIO.new(new_blocked_ips)
+                },
+                {
+                  :path => 'datadog/603646/ASM/exclusion_filters/config',
+                  :content => StringIO.new(exclusions)
+                },
+                {
+                  :path => 'datadog/603646/ASM_DD/latest/config',
+                  :content => StringIO.new(rules_data)
+                }
+              ]
+            )
 
           updated_targets = {
             'signed' => {
@@ -363,7 +365,7 @@ RSpec.describe Datadog::Core::Remote::Client do
               'version' => 469154399387498379
             }
           }
-          expect_any_instance_of(Datadog::Core::Transport::HTTP::Config::Response).to receive(:targets).and_return(
+          expect_any_instance_of(Datadog::Core::Remote::Transport::HTTP::Config::Response).to receive(:targets).and_return(
             updated_targets
           )
 
@@ -456,6 +458,14 @@ RSpec.describe Datadog::Core::Remote::Client do
           it 'raises SyncError' do
             expect { client.sync }.to raise_error(described_class::SyncError, /could not parse: "invalid path"/)
           end
+        end
+      end
+
+      context 'with a network error' do
+        it 'raises a transport error' do
+          expect(http_connection).to receive(:request).and_raise(IOError)
+
+          expect { client.sync }.to raise_error(Datadog::Core::Remote::Client::TransportError)
         end
       end
     end
@@ -561,6 +571,22 @@ RSpec.describe Datadog::Core::Remote::Client do
                 ]
 
                 expect(client_payload[:client_tracer][:tags]).to eq(expected_client_tracer_tags)
+              end
+            end
+
+            context 'with remote service setting' do
+              it 'returns client_tracer' do
+                expect(Datadog.configuration.remote).to receive(:service).and_return('foo').at_least(:once)
+
+                expected_client_tracer = {
+                  :runtime_id => Datadog::Core::Environment::Identity.id,
+                  :language => Datadog::Core::Environment::Identity.lang,
+                  :tracer_version => Datadog::Core::Environment::Identity.tracer_version_semver2,
+                  :service => Datadog.configuration.remote.service,
+                  :env => Datadog.configuration.env,
+                }
+
+                expect(client_payload[:client_tracer].tap { |h| h.delete(:tags) }).to eq(expected_client_tracer)
               end
             end
 

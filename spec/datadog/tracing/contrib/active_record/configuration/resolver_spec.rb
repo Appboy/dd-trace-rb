@@ -4,9 +4,17 @@ require 'active_record'
 require 'datadog/tracing/contrib/active_record/configuration/resolver'
 
 RSpec.describe Datadog::Tracing::Contrib::ActiveRecord::Configuration::Resolver do
-  subject(:resolver) { described_class.new(configuration) }
+  subject(:resolver) do
+    if ::ActiveRecord.respond_to?(:version) && ::ActiveRecord.version >= Gem::Version.new('6')
+      # ::ActiveRecord::DatabaseConfigurations` was introduced from 6+
+      require 'active_record/database_configurations'
+      described_class.new(::ActiveRecord::DatabaseConfigurations.new(configuration))
+    else
+      described_class.new(configuration)
+    end
+  end
 
-  let(:configuration) { nil }
+  let(:configuration) { ::ActiveRecord::Base.configurations }
 
   describe '#add' do
     subject(:add) { resolver.add(matcher, config) }
@@ -86,6 +94,16 @@ RSpec.describe Datadog::Tracing::Contrib::ActiveRecord::Configuration::Resolver 
         add
 
         expect(resolver.configurations).to include(db_config => config)
+      end
+    end
+
+    context 'with an invalid string' do
+      let(:matcher) { 'bala boom!' }
+
+      it 'does not resolves' do
+        add
+
+        expect(resolver.configurations).to be_empty
       end
     end
   end
@@ -287,6 +305,25 @@ RSpec.describe Datadog::Tracing::Contrib::ActiveRecord::Configuration::Resolver 
             is_expected.to be(second_matcher)
           end
         end
+      end
+    end
+
+    context 'with an invalid string' do
+      let(:matchers) do
+        []
+      end
+
+      let(:actual) do
+        'activerecord database configuration may contain password'
+      end
+
+      it do
+        expect(Datadog.logger).to receive(:error) do |message|
+          expect(message).to match(/failed to resolve/i)
+          expect(message).not_to match(/password/i)
+        end
+
+        is_expected.to be_nil
       end
     end
   end

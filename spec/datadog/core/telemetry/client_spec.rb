@@ -3,8 +3,9 @@ require 'spec_helper'
 require 'datadog/core/telemetry/client'
 
 RSpec.describe Datadog::Core::Telemetry::Client do
-  subject(:client) { described_class.new(enabled: enabled) }
+  subject(:client) { described_class.new(enabled: enabled, heartbeat_interval_seconds: heartbeat_interval_seconds) }
   let(:enabled) { true }
+  let(:heartbeat_interval_seconds) { 1.3 }
   let(:emitter) { double(Datadog::Core::Telemetry::Emitter) }
   let(:response) { double(Datadog::Core::Telemetry::Http::Adapters::Net::Response) }
   let(:not_found) { false }
@@ -21,8 +22,8 @@ RSpec.describe Datadog::Core::Telemetry::Client do
       client.worker.join
     end
 
-    context 'when no params provided' do
-      subject(:client) { described_class.new }
+    context 'with default parameters' do
+      subject(:client) { described_class.new(heartbeat_interval_seconds: heartbeat_interval_seconds) }
       it { is_expected.to be_a_kind_of(described_class) }
       it { expect(client.enabled).to be(true) }
       it { expect(client.emitter).to be(emitter) }
@@ -164,7 +165,8 @@ RSpec.describe Datadog::Core::Telemetry::Client do
     let(:worker) { instance_double(Datadog::Core::Telemetry::Heartbeat) }
 
     before do
-      allow(Datadog::Core::Telemetry::Heartbeat).to receive(:new).and_return(worker)
+      allow(Datadog::Core::Telemetry::Heartbeat).to receive(:new)
+        .with(enabled: enabled, heartbeat_interval_seconds: heartbeat_interval_seconds).and_return(worker)
       allow(worker).to receive(:start)
       allow(worker).to receive(:stop)
     end
@@ -234,6 +236,49 @@ RSpec.describe Datadog::Core::Telemetry::Client do
         expect_in_fork do
           client.started!
           expect(emitter).to_not receive(:request).with(:'app-integrations-change')
+        end
+      end
+    end
+  end
+
+  describe '#client_configuration_change!' do
+    subject(:client_configuration_change!) { client.client_configuration_change!(changes) }
+    let(:changes) { double('changes') }
+
+    after do
+      client.worker.stop(true)
+      client.worker.join
+    end
+
+    context 'when disabled' do
+      let(:enabled) { false }
+      it do
+        client_configuration_change!
+        expect(emitter).to_not have_received(:request)
+      end
+    end
+
+    context 'when enabled' do
+      let(:enabled) { true }
+      it do
+        client_configuration_change!
+        expect(emitter).to have_received(:request).with(
+          'app-client-configuration-change',
+          data: { changes: changes, origin: 'remote_config' }
+        )
+      end
+
+      it { is_expected.to be(response) }
+    end
+
+    context 'when in fork' do
+      before { skip 'Fork not supported on current platform' unless Process.respond_to?(:fork) }
+
+      it do
+        client
+        expect_in_fork do
+          client.started!
+          expect(emitter).to_not have_received(:request)
         end
       end
     end

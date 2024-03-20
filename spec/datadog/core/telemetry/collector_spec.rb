@@ -9,13 +9,26 @@ require 'datadog/core/telemetry/v1/dependency'
 require 'datadog/core/telemetry/v1/host'
 require 'datadog/core/telemetry/v1/integration'
 require 'datadog/core/telemetry/v1/product'
-require 'ddtrace/transport/ext'
+require 'datadog/core/transport/ext'
+require 'datadog/profiling/profiler'
 
 require 'ddtrace'
 require 'ddtrace/version'
 
 RSpec.describe Datadog::Core::Telemetry::Collector do
   let(:dummy_class) { Class.new { extend(Datadog::Core::Telemetry::Collector) } }
+
+  before do
+    # We don't care about details of profiling initialization (which requires
+    # interacting with native extension) in this suite. This initialization is
+    # tested in other suites. Thus, mock it to nil throughout.
+    # NOTE: We could have used a double but that leads to messy configuration
+    # lifecycle as we'd need to do a full reconfiguration in an `after` block
+    # (which would require extra allow/expect for unrelated things). The global
+    # reset with `around` happens already outside of a test context where it is
+    # forbidden to interact with doubles (and thus we can't call shutdown! on it)
+    allow(Datadog::Profiling::Component).to receive(:build_profiler_component).and_return(nil)
+  end
 
   describe '#application' do
     subject(:application) { dummy_class.application }
@@ -86,8 +99,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
         end
 
         after do
-          Datadog.configuration.profiling.send(:reset!)
-          Datadog.configuration.appsec.send(:reset!)
+          Datadog.configuration.reset!
         end
 
         it { expect(products.appsec).to eq({ version: '4.2' }) }
@@ -98,7 +110,6 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
         require 'datadog/appsec'
 
         before do
-          allow_any_instance_of(Datadog::Profiling::Profiler).to receive(:start) if PlatformHelpers.mri?
           Datadog.configure do |c|
             c.profiling.enabled = true
             c.appsec.enabled = true
@@ -106,8 +117,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
         end
 
         after do
-          Datadog.configuration.profiling.send(:reset!)
-          Datadog.configuration.appsec.send(:reset!)
+          Datadog.configuration.reset!
         end
 
         it { is_expected.to be_a_kind_of(Datadog::Core::Telemetry::V1::Product) }
@@ -149,7 +159,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
       end
 
       context 'when adapter is type :unix' do
-        let(:adapter_type) { Datadog::Transport::Ext::UnixSocket::ADAPTER }
+        let(:adapter_type) { Datadog::Core::Transport::Ext::UnixSocket::ADAPTER }
 
         before do
           allow(Datadog::Core::Configuration::AgentSettingsResolver)
@@ -175,6 +185,46 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
       context 'when nil' do
         let(:dd_trace_sample_rate) { nil }
         it { is_expected.to_not include(:DD_TRACE_SAMPLE_RATE) }
+      end
+    end
+
+    context 'DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED' do
+      around do |example|
+        ClimateControl.modify(
+          DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED: dd_trace_remove_integration_service_names_enabled
+        ) do
+          example.run
+        end
+      end
+
+      context 'when set to true' do
+        let(:dd_trace_remove_integration_service_names_enabled) { 'true' }
+        it { is_expected.to include(:DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED => true) }
+      end
+
+      context 'when nil defaults to false' do
+        let(:dd_trace_remove_integration_service_names_enabled) { nil }
+        it { is_expected.to include(:DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED => false) }
+      end
+    end
+
+    context 'DD_TRACE_PEER_SERVICE_MAPPING' do
+      around do |example|
+        ClimateControl.modify(
+          DD_TRACE_PEER_SERVICE_MAPPING: dd_trace_peer_service_mapping
+        ) do
+          example.run
+        end
+      end
+
+      context 'when set' do
+        let(:dd_trace_peer_service_mapping) { 'key:value' }
+        it { is_expected.to include(:DD_TRACE_PEER_SERVICE_MAPPING => 'key:value') }
+      end
+
+      context 'when nil is blank' do
+        let(:dd_trace_peer_service_mapping) { nil }
+        it { is_expected.to include(:DD_TRACE_PEER_SERVICE_MAPPING => '') }
       end
     end
   end
@@ -215,8 +265,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
         Datadog.configuration.appsec.enabled = false
       end
       after do
-        Datadog.configuration.profiling.send(:reset!)
-        Datadog.configuration.appsec.send(:reset!)
+        Datadog.configuration.reset!
       end
       it { is_expected.to include('profiling.enabled' => false) }
     end
@@ -224,7 +273,6 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
     context 'when profiling is enabled' do
       before do
         stub_const('Datadog::Core::Environment::Ext::TRACER_VERSION', '4.2')
-        allow_any_instance_of(Datadog::Profiling::Profiler).to receive(:start)
         Datadog.configure do |c|
           c.profiling.enabled = true
         end
@@ -243,7 +291,7 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
           c.appsec.enabled = true
         end
       end
-      after { Datadog.configuration.appsec.send(:reset!) }
+      after { Datadog.configuration.reset! }
 
       it { is_expected.to include('appsec.enabled' => true) }
     end
@@ -254,6 +302,14 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
       end
 
       it { is_expected.to include('tracing.opentelemetry.enabled' => true) }
+    end
+
+    context 'when OpenTracing is enabled' do
+      before do
+        stub_const('Datadog::OpenTracer::LOADED', true)
+      end
+
+      it { is_expected.to include('tracing.opentracing.enabled' => true) }
     end
   end
 
@@ -268,6 +324,77 @@ RSpec.describe Datadog::Core::Telemetry::Collector do
     subject(:host) { dummy_class.host }
 
     it { is_expected.to be_a_kind_of(Datadog::Core::Telemetry::V1::Host) }
+  end
+
+  describe '#install_signature' do
+    subject(:install_signature) { dummy_class.install_signature }
+
+    it { is_expected.to be_a_kind_of(Datadog::Core::Telemetry::V1::InstallSignature) }
+
+    describe ':install_id' do
+      subject(:install_id) { install_signature.install_id }
+
+      context 'when DD_INSTRUMENTATION_INSTALL_ID not set' do
+        it('is nil when unset') { is_expected.to be_nil }
+      end
+
+      context 'when DD_INSTRUMENTATION_INSTALL_ID set' do
+        let(:install_id) { '68e75c48-57ca-4a12-adfc-575c4b05fcbe' }
+
+        before do
+          Datadog.configure do |c|
+            c.telemetry.install_id = install_id
+          end
+        end
+        after do
+          Datadog.configuration.reset!
+        end
+
+        it { is_expected.to eql(install_id) }
+      end
+    end
+
+    describe ':install_type' do
+      subject(:install_type) { install_signature.install_type }
+
+      context 'when DD_INSTRUMENTATION_INSTALL_TYPE not set' do
+        it('is nil when unset') { is_expected.to be_nil }
+      end
+
+      context 'when DD_INSTRUMENTATION_INSTALL_TYPE set' do
+        before do
+          Datadog.configure do |c|
+            c.telemetry.install_type = install_type
+          end
+        end
+        after do
+          Datadog.configuration.reset!
+        end
+
+        it { is_expected.to eql(install_type) }
+      end
+    end
+
+    describe ':install_time' do
+      subject(:install_time) { install_signature.install_time }
+
+      context 'when DD_INSTRUMENTATION_INSTALL_TIME not set' do
+        it('is nil when unset') { is_expected.to be_nil }
+      end
+
+      context 'when DD_INSTRUMENTATION_INSTALL_TIME set' do
+        before do
+          Datadog.configure do |c|
+            c.telemetry.install_time = install_time
+          end
+        end
+        after do
+          Datadog.configuration.reset!
+        end
+
+        it { is_expected.to eql(install_time) }
+      end
+    end
   end
 
   describe '#integrations' do

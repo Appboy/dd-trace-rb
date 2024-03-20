@@ -2,6 +2,8 @@ require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/environment_service_name_examples'
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/tracing/contrib/span_attribute_schema_examples'
+require 'datadog/tracing/contrib/peer_service_configuration_examples'
+
 require 'time'
 require 'elasticsearch'
 require 'faraday'
@@ -10,8 +12,11 @@ require 'ddtrace'
 
 RSpec.describe 'Elasticsearch::Transport::Client tracing' do
   before do
+    # Seeing flakiness from this test suite when trying to emit traces to the APM Test Agent. Changing hostname resolves it
+    # TODO: Find why using testagent changes the elasticsearch test service name despite no differences between other tests
+    Datadog.configuration.agent.host = 'not-testagent'
     WebMock.enable!
-    WebMock.disable_net_connect!
+    WebMock.allow_net_connect!
   end
 
   after do
@@ -20,7 +25,7 @@ RSpec.describe 'Elasticsearch::Transport::Client tracing' do
     WebMock.disable!
   end
 
-  let(:host) { ENV.fetch('TEST_ELASTICSEARCH_HOST', '127.0.0.1') }
+  let(:host) { ENV.fetch('TEST_ELASTICSEARCH_HOST', '127.0.0.1').freeze }
   let(:port) { ENV.fetch('TEST_ELASTICSEARCH_PORT', '1234').to_i }
   let(:server) { "http://#{host}:#{port}" }
 
@@ -67,7 +72,15 @@ RSpec.describe 'Elasticsearch::Transport::Client tracing' do
     end
 
     describe 'the handlers' do
-      subject(:handlers) { client.transport.connections.first.connection.builder.handlers }
+      subject(:handlers) do
+        connections = if client.transport.respond_to? :connections
+                        client.transport.connections
+                      else
+                        client.transport.transport.connections
+                      end
+
+        connections.first.connection.builder.handlers
+      end
 
       it { is_expected.to include(middleware) }
     end
@@ -101,9 +114,13 @@ RSpec.describe 'Elasticsearch::Transport::Client tracing' do
           expect(span.get_tag('out.port')).to eq(port)
         end
 
-        it_behaves_like 'a peer service span'
-        it_behaves_like 'environment service name', 'DD_TRACE_ELASTICSEARCH_SERVICE_NAME'
         it_behaves_like 'schema version span'
+        it_behaves_like 'environment service name', 'DD_TRACE_ELASTICSEARCH_SERVICE_NAME'
+        it_behaves_like 'configured peer service span', 'DD_TRACE_ELASTICSEARCH_PEER_SERVICE'
+        it_behaves_like 'a peer service span' do
+          let(:peer_service_val) { ENV.fetch('TEST_ELASTICSEARCH_HOST', '127.0.0.1') }
+          let(:peer_service_source) { 'peer.hostname' }
+        end
       end
 
       context 'PUT request' do
@@ -134,9 +151,13 @@ RSpec.describe 'Elasticsearch::Transport::Client tracing' do
             expect(span.get_tag('out.port')).to eq(port)
           end
 
-          it_behaves_like 'a peer service span'
-          it_behaves_like 'environment service name', 'DD_TRACE_ELASTICSEARCH_SERVICE_NAME'
           it_behaves_like 'schema version span'
+          it_behaves_like 'environment service name', 'DD_TRACE_ELASTICSEARCH_SERVICE_NAME'
+          it_behaves_like 'configured peer service span', 'DD_TRACE_ELASTICSEARCH_PEER_SERVICE'
+          it_behaves_like 'a peer service span' do
+            let(:peer_service_val) { ENV.fetch('TEST_ELASTICSEARCH_HOST', '127.0.0.1') }
+            let(:peer_service_source) { 'peer.hostname' }
+          end
         end
 
         context 'with Hash params' do
@@ -181,6 +202,9 @@ RSpec.describe 'Elasticsearch::Transport::Client tracing' do
         context 'configured at the Elasticsearch client level' do
           before do
             skip('Configuration through client object is not possible in Elasticsearch >= 8.0.0') if version_greater_than_8
+
+            Datadog::Tracing::Contrib::Elasticsearch::Patcher::SELF_DEPRECATION_ONLY_ONCE
+              .send(:reset_ran_once_state_for_tests)
 
             Datadog.configure_onto(client, service_name: 'custom')
           end

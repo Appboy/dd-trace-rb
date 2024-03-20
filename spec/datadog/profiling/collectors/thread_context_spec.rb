@@ -9,7 +9,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
     expect(Thread.list).to include(Thread.main, t1, t2, t3)
   end
 
-  let(:recorder) { build_stack_recorder }
+  let(:recorder) { build_stack_recorder(timeline_enabled: timeline_enabled) }
   let(:ready_queue) { Queue.new }
   let(:t1) do
     Thread.new(ready_queue) do |ready_queue|
@@ -38,6 +38,8 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
   let(:invalid_time) { -1 }
   let(:tracer) { nil }
   let(:endpoint_collection_enabled) { true }
+  let(:timeline_enabled) { false }
+  let(:allocation_type_enabled) { true }
 
   subject(:cpu_and_wall_time_collector) do
     described_class.new(
@@ -45,6 +47,8 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
       max_frames: max_frames,
       tracer: tracer,
       endpoint_collection_enabled: endpoint_collection_enabled,
+      timeline_enabled: timeline_enabled,
+      allocation_type_enabled: allocation_type_enabled,
     )
   end
 
@@ -71,8 +75,8 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
     described_class::Testing._native_sample_after_gc(cpu_and_wall_time_collector)
   end
 
-  def sample_allocation(weight:)
-    described_class::Testing._native_sample_allocation(cpu_and_wall_time_collector, weight)
+  def sample_allocation(weight:, new_object: Object.new)
+    described_class::Testing._native_sample_allocation(cpu_and_wall_time_collector, weight, new_object)
   end
 
   def thread_list
@@ -85,6 +89,10 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
   def stats
     described_class::Testing._native_stats(cpu_and_wall_time_collector)
+  end
+
+  def gc_tracking
+    described_class::Testing._native_gc_tracking(cpu_and_wall_time_collector)
   end
 
   # This method exists only so we can look for its name in the stack trace in a few tests
@@ -104,7 +112,10 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
       sample
 
       expect(Thread.list).to eq(all_threads), 'Threads finished during this spec, causing flakiness!'
-      expect(samples.size).to be all_threads.size
+
+      seen_threads = samples.map(&:labels).map { |it| it.fetch(:'thread id') }.uniq
+
+      expect(seen_threads.size).to be all_threads.size
     end
 
     it 'tags the samples with the object ids of the Threads they belong to' do
@@ -114,20 +125,43 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         .to include(*[Thread.main, t1, t2, t3].map(&:object_id))
     end
 
-    it 'includes the thread names, if available' do
+    it 'includes the thread names' do
       t1.name = 'thread t1'
-      t2.name = nil
-      t3.name = 'thread t3'
+      t2.name = 'thread t2'
 
       sample
 
       t1_sample = samples_for_thread(samples, t1).first
       t2_sample = samples_for_thread(samples, t2).first
-      t3_sample = samples_for_thread(samples, t3).first
 
       expect(t1_sample.labels).to include(:'thread name' => 'thread t1')
-      expect(t2_sample.labels.keys).to_not include(:'thread name')
-      expect(t3_sample.labels).to include(:'thread name' => 'thread t3')
+      expect(t2_sample.labels).to include(:'thread name' => 'thread t2')
+    end
+
+    context 'when no thread names are available' do
+      # NOTE: As of this writing, the dd-trace-rb spec_helper.rb includes a monkey patch to Thread creation that we use
+      # to track specs that leak threads. This means that the invoke_location of every thread will point at the
+      # spec_helper in our test suite. Just in case you're looking at the output and being a bit confused :)
+      it 'uses the thread_invoke_location as a thread name' do
+        t1.name = nil
+        sample
+        t1_sample = samples_for_thread(samples, t1).first
+
+        expect(t1_sample.labels).to include(:'thread name' => per_thread_context.fetch(t1).fetch(:thread_invoke_location))
+        expect(t1_sample.labels).to include(:'thread name' => match(/.+\.rb:\d+/))
+      end
+    end
+
+    it 'includes a fallback name for the main thread, when not set' do
+      expect(Thread.main.name).to eq('Thread.main') # We set this in the spec_helper.rb
+
+      Thread.main.name = nil
+
+      sample
+
+      expect(samples_for_thread(samples, Thread.main).first.labels).to include(:'thread name' => 'main')
+
+      Thread.main.name = 'Thread.main'
     end
 
     it 'includes the wall-time elapsed between samples' do
@@ -140,66 +174,38 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         per_thread_context.fetch(t1).fetch(:wall_time_at_previous_sample_ns)
 
       t1_samples = samples_for_thread(samples, t1)
-      wall_time = t1_samples.first.values.fetch(:'wall-time')
 
-      expect(t1_samples.size)
-        .to be(1), "Expected thread t1 to always have same stack trace (because it's sleeping), got #{t1_samples.inspect}"
-
+      wall_time = t1_samples.map(&:values).map { |it| it.fetch(:'wall-time') }.reduce(:+)
       expect(wall_time).to be(wall_time_at_second_sample - wall_time_at_first_sample)
     end
 
     it 'tags samples with how many times they were seen' do
       5.times { sample }
 
-      t1_sample = samples_for_thread(samples, t1).first
+      t1_samples = samples_for_thread(samples, t1)
 
-      expect(t1_sample.values).to include(:'cpu-samples' => 5)
+      expect(t1_samples.map(&:values).map { |it| it.fetch(:'cpu-samples') }.reduce(:+)).to eq 5
     end
 
-    [:before, :after].each do |on_gc_finish_order|
-      context "when a thread is marked as being in garbage collection, #{on_gc_finish_order} on_gc_finish" do
-        # Until sample_after_gc gets called, the state left over by both on_gc_start and on_gc_finish "blocks" time
-        # from being assigned to further samples. Note this is expected to be very rare in practice, otherwise we would
-        # probably want to look into skipping these samples entirely.
-        it 'records the wall-time between a previous sample and the start of garbage collection, and no further time' do
-          sample
-          wall_time_at_first_sample = per_thread_context.fetch(Thread.current).fetch(:wall_time_at_previous_sample_ns)
+    context 'when a thread is marked as being in garbage collection by on_gc_start' do
+      # @ivoanjo: This spec exists because for cpu-time the behavior is not this one (e.g. we don't keep recording
+      # cpu-time), and I wanted to validate that the different behavior does not get applied to wall-time.
+      it 'keeps recording the wall-time after every sample' do
+        sample
+        wall_time_at_first_sample = per_thread_context.fetch(Thread.current).fetch(:wall_time_at_previous_sample_ns)
 
-          on_gc_start
-          on_gc_finish if on_gc_finish_order == :after
+        on_gc_start
 
-          wall_time_at_gc_start = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.wall_time_at_start_ns')
+        5.times { sample }
 
-          # Even though we keep calling sample, the result only includes the time until we called on_gc_start
-          5.times { another_way_of_calling_sample }
+        time_after = Datadog::Core::Utils::Time.get_time(:nanosecond)
 
-          total_wall_for_rspec_thread =
-            samples_for_thread(samples, Thread.current)
-              .select { |it| it.locations.find { |frame| frame.base_label == 'another_way_of_calling_sample' } }
-              .map { |it| it.values.fetch(:'wall-time') }
-              .reduce(:+)
+        sample
 
-          expect(total_wall_for_rspec_thread).to be(wall_time_at_gc_start - wall_time_at_first_sample)
-        end
+        wall_time_at_last_sample = per_thread_context.fetch(Thread.current).fetch(:wall_time_at_previous_sample_ns)
 
-        # The whole point of wall_time_at_previous_sample_ns is to track the past point in time that we use as start of
-        # the time range for a sample.
-        # BUT, we can't let it advance during GC as it should only get accounted for when GC finishes.
-        it 'does not advance wall_time_at_previous_sample_ns for the thread beyond gc_tracking.wall_time_at_start_ns' do
-          sample
-
-          on_gc_start
-          on_gc_finish if on_gc_finish_order == :after
-
-          wall_time_at_gc_start = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.wall_time_at_start_ns')
-
-          5.times { sample }
-
-          wall_time_at_previous_sample_ns =
-            per_thread_context.fetch(Thread.current).fetch(:wall_time_at_previous_sample_ns)
-
-          expect(wall_time_at_previous_sample_ns).to be wall_time_at_gc_start
-        end
+        expect(wall_time_at_last_sample).to be >= wall_time_at_first_sample
+        expect(wall_time_at_last_sample).to be >= time_after
       end
     end
 
@@ -212,7 +218,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         it 'sets the cpu-time on every sample to zero' do
           5.times { sample }
 
-          expect(samples).to all include(values: include(:'cpu-time' => 0))
+          expect(samples).to all have_attributes(values: include(:'cpu-time' => 0))
         end
       end
 
@@ -240,47 +246,61 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
           expect(total_cpu_for_rspec_thread).to be_between(1, rspec_thread_spent_time)
         end
 
-        [:before, :after].each do |on_gc_finish_order|
-          context "when a thread is marked as being in garbage collection, #{on_gc_finish_order} on_gc_finish" do
-            it 'records the cpu-time between a previous sample and the start of garbage collection, and no further time' do
-              sample
-              cpu_time_at_first_sample = per_thread_context.fetch(Thread.current).fetch(:cpu_time_at_previous_sample_ns)
+        context 'when a thread is marked as being in garbage collection by on_gc_start' do
+          it 'records the cpu-time between a previous sample and the start of garbage collection, and no further time' do
+            sample
+            cpu_time_at_first_sample = per_thread_context.fetch(Thread.current).fetch(:cpu_time_at_previous_sample_ns)
 
-              on_gc_start
-              on_gc_finish if on_gc_finish_order == :after
+            on_gc_start
 
-              cpu_time_at_gc_start = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_start_ns')
+            cpu_time_at_gc_start = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_start_ns')
 
-              # Even though we keep calling sample, the result only includes the time until we called on_gc_start
-              5.times { another_way_of_calling_sample }
+            # Even though we keep calling sample, the result only includes the time until we called on_gc_start
+            5.times { another_way_of_calling_sample }
 
-              total_cpu_for_rspec_thread =
-                samples_for_thread(samples, Thread.current)
-                  .select { |it| it.locations.find { |frame| frame.base_label == 'another_way_of_calling_sample' } }
-                  .map { |it| it.values.fetch(:'cpu-time') }
-                  .reduce(:+)
+            total_cpu_for_rspec_thread =
+              samples_for_thread(samples, Thread.current)
+                .select { |it| it.locations.find { |frame| frame.base_label == 'another_way_of_calling_sample' } }
+                .map { |it| it.values.fetch(:'cpu-time') }
+                .reduce(:+)
 
-              expect(total_cpu_for_rspec_thread).to be(cpu_time_at_gc_start - cpu_time_at_first_sample)
-            end
+            expect(total_cpu_for_rspec_thread).to be(cpu_time_at_gc_start - cpu_time_at_first_sample)
+          end
 
-            # The whole point of cpu_time_at_previous_sample_ns is to track the past point in time that we use as start of
-            # the time range for a sample.
-            # BUT, we can't let it advance during GC as it should only get accounted for when GC finishes.
-            it 'does not advance cpu_time_at_previous_sample_ns for the thread beyond gc_tracking.cpu_time_at_start_ns' do
-              sample
+          # When a thread is marked as being in GC the cpu_time_at_previous_sample_ns is not allowed to advance until
+          # the GC finishes.
+          it 'does not advance cpu_time_at_previous_sample_ns for the thread beyond gc_tracking.cpu_time_at_start_ns' do
+            sample
 
-              on_gc_start
-              on_gc_finish if on_gc_finish_order == :after
+            on_gc_start
 
-              cpu_time_at_gc_start = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_start_ns')
+            cpu_time_at_gc_start = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_start_ns')
 
-              5.times { sample }
+            5.times { sample }
 
-              cpu_time_at_previous_sample_ns =
-                per_thread_context.fetch(Thread.current).fetch(:cpu_time_at_previous_sample_ns)
+            cpu_time_at_previous_sample_ns =
+              per_thread_context.fetch(Thread.current).fetch(:cpu_time_at_previous_sample_ns)
 
-              expect(cpu_time_at_previous_sample_ns).to be cpu_time_at_gc_start
-            end
+            expect(cpu_time_at_previous_sample_ns).to be cpu_time_at_gc_start
+          end
+        end
+
+        context 'when a thread is unmarked as being in garbage collection by on_gc_finish' do
+          it 'lets cpu_time_at_previous_sample_ns advance again' do
+            sample
+
+            on_gc_start
+
+            cpu_time_at_gc_start = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_start_ns')
+
+            on_gc_finish
+
+            5.times { sample }
+
+            cpu_time_at_previous_sample_ns =
+              per_thread_context.fetch(Thread.current).fetch(:cpu_time_at_previous_sample_ns)
+
+            expect(cpu_time_at_previous_sample_ns).to be > cpu_time_at_gc_start
           end
         end
       end
@@ -357,19 +377,13 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
           end
 
           before do
-            # Sanity checks
             expect(@t1_span_id).to be > 0
             expect(@t1_local_root_span_id).to be > 0
-            expect(@t1_span_id).to_not be @t1_local_root_span_id
-          end
-
-          it 'samples successfully' do
-            sample
-
-            expect(t1_sample).to_not be_nil
           end
 
           it 'includes "local root span id" and "span id" labels in the samples' do
+            expect(@t1_span_id).to_not be @t1_local_root_span_id
+
             sample
 
             expect(t1_sample.labels).to include(
@@ -384,9 +398,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
             expect(t1_sample.labels).to_not include(:'trace endpoint' => anything)
           end
 
-          context 'when local root span type is web' do
-            let(:root_span_type) { 'web' }
-
+          shared_examples_for 'samples with code hotspots information' do
             it 'includes the "trace endpoint" label in the samples' do
               sample
 
@@ -474,9 +486,9 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
                 t1_samples = samples_for_thread(samples, t1)
 
-                expect(t1_samples).to have(1).item
-                expect(t1_samples.first.labels).to include(:'trace endpoint' => 'changed_after_first_sample')
-                expect(t1_samples.first.values).to include(:'cpu-samples' => 2)
+                expect(t1_samples)
+                  .to all have_attributes(labels: include(:'trace endpoint' => 'changed_after_first_sample'))
+                expect(t1_samples.map(&:values).map { |it| it.fetch(:'cpu-samples') }.reduce(:+)).to eq 2
               end
 
               context 'when the resource is changed multiple times' do
@@ -489,11 +501,172 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
                   t1_samples = samples_for_thread(samples, t1)
 
-                  expect(t1_samples).to have(1).item
-                  expect(t1_samples.first.labels).to include(:'trace endpoint' => 'changed_after_second_sample')
-                  expect(t1_samples.first.values).to include(:'cpu-samples' => 3)
+                  expect(t1_samples)
+                    .to all have_attributes(labels: include(:'trace endpoint' => 'changed_after_second_sample'))
+                  expect(t1_samples.map(&:values).map { |it| it.fetch(:'cpu-samples') }.reduce(:+)).to eq 3
                 end
               end
+            end
+          end
+
+          context 'when local root span type is web' do
+            let(:root_span_type) { 'web' }
+
+            it_behaves_like 'samples with code hotspots information'
+          end
+
+          # Used by the rack integration with request_queuing: true
+          context 'when local root span type is proxy' do
+            let(:root_span_type) { 'proxy' }
+
+            it_behaves_like 'samples with code hotspots information'
+          end
+
+          def self.otel_sdk_available?
+            begin
+              require 'opentelemetry/sdk'
+              true
+            rescue LoadError
+              false
+            end
+          end
+
+          context 'when trace comes from otel sdk', if: otel_sdk_available? do
+            let(:otel_tracer) do
+              require 'datadog/opentelemetry'
+
+              OpenTelemetry::SDK.configure
+              OpenTelemetry.tracer_provider.tracer('ddtrace-profiling-test')
+            end
+
+            let(:t1) do
+              Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                otel_tracer.in_span('profiler.test') do
+                  @t1_span_id = Datadog::Tracing.correlation.span_id
+                  @t1_local_root_span_id = Datadog::Tracing.correlation.span_id
+                  ready_queue << true
+                  sleep
+                end
+              end
+            end
+
+            it 'includes "local root span id" and "span id" labels in the samples' do
+              sample
+
+              expect(t1_sample.labels).to include(
+                :'local root span id' => @t1_local_root_span_id.to_i,
+                :'span id' => @t1_span_id.to_i,
+              )
+            end
+
+            it 'does not include the "trace endpoint" label' do
+              sample
+
+              expect(t1_sample.labels).to_not include(:'trace endpoint' => anything)
+            end
+
+            context 'when there are multiple otel spans nested' do
+              let(:t1) do
+                Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                  otel_tracer.in_span('profiler.test') do
+                    @t1_local_root_span_id = Datadog::Tracing.correlation.span_id
+                    otel_tracer.in_span('profiler.test.nested.1') do
+                      otel_tracer.in_span('profiler.test.nested.2') do
+                        otel_tracer.in_span('profiler.test.nested.3') do
+                          @t1_span_id = Datadog::Tracing.correlation.span_id
+                          ready_queue << true
+                          sleep
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+
+              it 'includes "local root span id" and "span id" labels in the samples' do
+                sample
+
+                expect(t1_sample.labels).to include(
+                  :'local root span id' => @t1_local_root_span_id.to_i,
+                  :'span id' => @t1_span_id.to_i,
+                )
+              end
+            end
+
+            context 'mixing of otel sdk and ddtrace' do
+              context 'when top-level span is started from ddtrace' do
+                let(:t1) do
+                  Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                    Datadog::Tracing.trace('profiler.test', type: :web) do |_span, trace|
+                      trace.resource = 'example_resource'
+
+                      @t1_local_root_span_id = Datadog::Tracing.correlation.span_id
+                      otel_tracer.in_span('profiler.test.nested.1') do
+                        Datadog::Tracing.trace('profiler.test.nested.2') do
+                          otel_tracer.in_span('profiler.test.nested.3') do
+                            Datadog::Tracing.trace('profiler.test.nested.4') do
+                              @t1_span_id = Datadog::Tracing.correlation.span_id
+                              ready_queue << true
+                              sleep
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+
+                it 'uses the local root span id from the top-level span, and the span id from the leaf span' do
+                  sample
+
+                  expect(t1_sample.labels).to include(
+                    :'local root span id' => @t1_local_root_span_id.to_i,
+                    :'span id' => @t1_span_id.to_i,
+                  )
+                end
+
+                it 'includes the "trace endpoint" label in the samples with the trace resource' do
+                  sample
+
+                  expect(t1_sample.labels).to include(:'trace endpoint' => 'example_resource')
+                end
+              end
+
+              context 'when top-level span is started from otel' do
+                let(:t1) do
+                  Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                    otel_tracer.in_span('profiler.test') do
+                      @t1_local_root_span_id = Datadog::Tracing.correlation.span_id
+                      otel_tracer.in_span('profiler.test.nested.1') do
+                        Datadog::Tracing.trace('profiler.test.nested.2') do
+                          otel_tracer.in_span('profiler.test.nested.3') do
+                            Datadog::Tracing.trace('profiler.test.nested.4') do
+                              @t1_span_id = Datadog::Tracing.correlation.span_id
+                              ready_queue << true
+                              sleep
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+
+                it 'uses the local root span id from the top-level span, and the span id from the leaf span' do
+                  sample
+
+                  expect(t1_sample.labels).to include(
+                    :'local root span id' => @t1_local_root_span_id.to_i,
+                    :'span id' => @t1_span_id.to_i,
+                  )
+                end
+              end
+            end
+          end
+
+          context 'when trace comes from otel sdk (warning)', unless: otel_sdk_available? do
+            it 'is not being tested' do
+              skip 'Skipping OpenTelemetry tests because `opentelemetry-sdk` gem is not available'
             end
           end
         end
@@ -540,6 +713,30 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
       expect(second_sample_stack.first.labels).to_not include(:'profiler overhead' => anything)
       expect(profiler_overhead_stack.first.labels).to include(:'profiler overhead' => 1)
+    end
+
+    describe 'timeline support' do
+      context 'when timeline is disabled' do
+        let(:timeline_enabled) { false }
+
+        it 'does not include end_timestamp_ns labels in samples' do
+          sample
+
+          expect(samples.map(&:labels).flat_map(&:keys).uniq).to_not include(:end_timestamp_ns)
+        end
+      end
+
+      context 'when timeline is enabled' do
+        let(:timeline_enabled) { true }
+
+        it 'includes a end_timestamp_ns containing epoch time in every sample' do
+          time_before = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+          sample
+          time_after = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+
+          expect(samples.first.labels).to include(end_timestamp_ns: be_between(time_before, time_after))
+        end
+      end
     end
   end
 
@@ -591,26 +788,11 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
           it "records the cpu-time when garbage collection started in the caller thread's context" do
             on_gc_start
 
-            expect(per_thread_context.fetch(Thread.current)).to include(:'gc_tracking.cpu_time_at_start_ns' => be > 0)
+            cpu_time_at_previous_sample_ns = per_thread_context.fetch(Thread.current).fetch(:cpu_time_at_previous_sample_ns)
+
+            expect(per_thread_context.fetch(Thread.current))
+              .to include(:'gc_tracking.cpu_time_at_start_ns' => (be > cpu_time_at_previous_sample_ns))
           end
-        end
-      end
-
-      context 'when called again after on_gc_finish but before sample_after_gc' do
-        before do
-          on_gc_start
-          on_gc_finish
-        end
-
-        it 'does not change the gc start times' do
-          start_times = proc do
-            cpu_time = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_start_ns')
-            wall_time = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.wall_time_at_start_ns')
-
-            [cpu_time, wall_time]
-          end
-
-          expect { on_gc_start }.to_not change(&start_times)
         end
       end
     end
@@ -631,26 +813,42 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
       context 'when on_gc_start was not called before' do
         # See comment in the actual implementation on when/why this can happen
 
-        it 'does not change the gc finish times' do
+        it 'does not change the wall_time_at_previous_gc_ns' do
           on_gc_finish
 
-          expect(per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_finish_ns')).to be invalid_time
-          expect(per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.wall_time_at_finish_ns')).to be invalid_time
+          expect(gc_tracking.fetch(:wall_time_at_previous_gc_ns)).to be invalid_time
         end
       end
 
       context 'when on_gc_start was previously called' do
         before { on_gc_start }
 
-        it "records the wall-time when garbage collection finished in the caller thread's context" do
+        it 'records the wall-time when garbage collection finished in the gc_tracking' do
           wall_time_before_on_gc_finish_ns = Datadog::Core::Utils::Time.get_time(:nanosecond)
           on_gc_finish
           wall_time_after_on_gc_finish_ns = Datadog::Core::Utils::Time.get_time(:nanosecond)
 
+          expect(gc_tracking.fetch(:wall_time_at_previous_gc_ns))
+            .to be_between(wall_time_before_on_gc_finish_ns, wall_time_after_on_gc_finish_ns)
+        end
+
+        it 'resets the gc tracking fields back to invalid_time' do
+          on_gc_finish
+
           expect(per_thread_context.fetch(Thread.current)).to include(
-            :'gc_tracking.wall_time_at_finish_ns' =>
-              be_between(wall_time_before_on_gc_finish_ns, wall_time_after_on_gc_finish_ns)
+            :'gc_tracking.cpu_time_at_start_ns' => invalid_time,
+            :'gc_tracking.wall_time_at_start_ns' => invalid_time,
           )
+        end
+
+        it 'records the wall-time time spent between calls to on_gc_start and on_gc_finish' do
+          wall_time_at_start_ns = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.wall_time_at_start_ns')
+
+          wall_time_before_on_gc_finish_ns = Datadog::Core::Utils::Time.get_time(:nanosecond)
+          on_gc_finish
+
+          expect(gc_tracking.fetch(:accumulated_wall_time_ns))
+            .to be >= (wall_time_before_on_gc_finish_ns - wall_time_at_start_ns)
         end
 
         context 'cpu-time behavior' do
@@ -659,10 +857,10 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
               skip 'The fallback behavior only applies when not on Linux' if PlatformHelpers.linux?
             end
 
-            it "records the cpu-time when garbage collection finished in the caller thread's context as zero" do
+            it 'records the accumulated_cpu_time_ns as zero' do
               on_gc_finish
 
-              expect(per_thread_context.fetch(Thread.current)).to include(:'gc_tracking.cpu_time_at_finish_ns' => 0)
+              expect(gc_tracking.fetch(:accumulated_cpu_time_ns)).to be 0
             end
           end
 
@@ -671,177 +869,152 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
               skip 'Test only runs on Linux' unless PlatformHelpers.linux?
             end
 
-            it "records the cpu-time when garbage collection finished in the caller thread's context" do
+            it 'records the cpu-time spent between calls to on_gc_start and on_gc_finish' do
               on_gc_finish
 
-              expect(per_thread_context.fetch(Thread.current)).to include(:'gc_tracking.cpu_time_at_finish_ns' => be > 0)
+              expect(gc_tracking.fetch(:accumulated_cpu_time_ns)).to be > 0
+            end
+
+            it 'advances the cpu_time_at_previous_sample_ns for the sampled thread by the time spent in GC' do
+              cpu_time_at_previous_sample_ns_before =
+                per_thread_context.fetch(Thread.current).fetch(:cpu_time_at_previous_sample_ns)
+
+              on_gc_finish
+
+              expect(per_thread_context.fetch(Thread.current)).to include(
+                cpu_time_at_previous_sample_ns: be > cpu_time_at_previous_sample_ns_before
+              )
             end
           end
         end
       end
 
       context 'when going through multiple cycles of on_gc_start/on_gc_finish without sample_after_gc getting called' do
-        it 'keeps the cpu-time and wall-time at finish from the LAST on_gc_finish' do
-          context_tracking = []
+        let(:context_tracking) { [] }
 
+        before do
           5.times do
             on_gc_start
             on_gc_finish
 
-            context_tracking << per_thread_context.fetch(Thread.current)
+            context_tracking << gc_tracking
           end
+        end
 
-          cpu_time_from_last_on_gc_finish = context_tracking.last.fetch(:'gc_tracking.cpu_time_at_finish_ns')
-          wall_time_from_last_on_gc_finish = context_tracking.last.fetch(:'gc_tracking.wall_time_at_finish_ns')
+        it 'accumulates the cpu-time and wall-time from the multiple GCs' do
+          all_accumulated_wall_time = context_tracking.map { |it| it.fetch(:accumulated_wall_time_ns) }
 
-          expect(context_tracking.first)
-            .to include(:'gc_tracking.wall_time_at_finish_ns' => be < wall_time_from_last_on_gc_finish)
+          expect(all_accumulated_wall_time).to eq all_accumulated_wall_time.sort
+          expect(all_accumulated_wall_time.first).to be <= all_accumulated_wall_time.last
 
-          # This always advances: all_but_last <= the last one
-          # (Needs the <= because unfortunately we may not get enough precision, otherwise it would be <)
-          all_but_last = context_tracking[0..-2]
-          expect(
-            all_but_last.map { |it| it.fetch(:'gc_tracking.cpu_time_at_finish_ns') }
-          ).to all be <= cpu_time_from_last_on_gc_finish
-          expect(
-            all_but_last.map { |it| it.fetch(:'gc_tracking.wall_time_at_finish_ns') }
-          ).to all be <= wall_time_from_last_on_gc_finish
+          all_accumulated_cpu_time = context_tracking.map { |it| it.fetch(:accumulated_cpu_time_ns) }
+          expect(all_accumulated_cpu_time).to eq all_accumulated_cpu_time.sort
+
+          expect(all_accumulated_cpu_time.first).to be < all_accumulated_cpu_time.last if all_accumulated_cpu_time.first > 0
+        end
+
+        it 'updates the wall_time_at_previous_gc_ns with the latest one' do
+          all_wall_time_at_previous_gc_ns = context_tracking.map { |it| it.fetch(:wall_time_at_previous_gc_ns) }
+
+          expect(all_wall_time_at_previous_gc_ns.last).to be all_wall_time_at_previous_gc_ns.max
         end
       end
     end
   end
 
   describe '#sample_after_gc' do
-    let(:gc_samples) { samples.select { |it| it.locations.first.path == 'Garbage Collection' } }
-
     before { sample }
 
-    context 'when there is no thread with gc time to be sampled' do
-      it 'does not sample any threads' do
-        sample_after_gc
-
-        expect(gc_samples).to be_empty
-      end
-
-      it 'does not increment the gc_samples stat' do
-        sample_after_gc
-
-        expect(stats.fetch(:gc_samples)).to be 0
+    context 'when called before on_gc_start/on_gc_finish' do
+      it do
+        expect { sample_after_gc }.to raise_error(RuntimeError, /Unexpected call to sample_after_gc/)
       end
     end
 
-    context 'when there is a thread with gc start time but no finish time' do
-      before { on_gc_start }
-
-      it 'does not sample any threads' do
-        sample_after_gc
-
-        expect(gc_samples).to be_empty
-      end
-
-      it 'does not increment the gc_samples stat' do
-        sample_after_gc
-
-        expect(stats.fetch(:gc_samples)).to be 0
-      end
-    end
-
-    context 'when there is a thread with a recorded gc start and finish time' do
-      let(:gc_sample) do
-        expect(gc_samples.size).to be 1
-        gc_samples.first
-      end
+    context 'when there is gc information to record' do
+      let(:gc_sample) { samples.find { |it| it.labels.fetch(:'thread name') == 'Garbage Collection' } }
 
       before do
         on_gc_start
+        @time_before = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
         on_gc_finish
+        @time_after = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
       end
 
-      it 'samples the thread with recorded gc start and finish time, marking it as being in Garbage Collection' do
-        sample_after_gc
+      context 'when called more than once in a row' do
+        it do
+          sample_after_gc
 
-        expect(object_id_from(gc_sample.labels.fetch(:'thread id'))).to eq Thread.current.object_id
+          expect { sample_after_gc }.to raise_error(RuntimeError, /Unexpected call to sample_after_gc/)
+        end
       end
 
-      it 'samples the thread with recorded gc start and finish time, recording the times between gc start and finish' do
-        cpu_time_at_start_ns = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_start_ns')
-        cpu_time_at_finish_ns = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.cpu_time_at_finish_ns')
-        wall_time_at_start_ns = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.wall_time_at_start_ns')
-        wall_time_at_finish_ns = per_thread_context.fetch(Thread.current).fetch(:'gc_tracking.wall_time_at_finish_ns')
-
-        sample_after_gc
-
-        expect(gc_sample.values).to include(
-          :"cpu-samples" => 1,
-          :'cpu-time' => cpu_time_at_finish_ns - cpu_time_at_start_ns,
-          :"wall-time" => wall_time_at_finish_ns - wall_time_at_start_ns,
-        )
-      end
-
-      it 'resets the gc tracking fields back to invalid_time' do
-        sample_after_gc
-
-        expect(per_thread_context.fetch(Thread.current)).to include(
-          :'gc_tracking.cpu_time_at_start_ns' => invalid_time,
-          :'gc_tracking.cpu_time_at_finish_ns' => invalid_time,
-          :'gc_tracking.wall_time_at_start_ns' => invalid_time,
-          :'gc_tracking.wall_time_at_finish_ns' => invalid_time,
-        )
-      end
-
-      it 'increments the gc_samples stat' do
+      it 'increments the gc_samples counter' do
         expect { sample_after_gc }.to change { stats.fetch(:gc_samples) }.from(0).to(1)
       end
 
-      it 'does not sample any other threads' do
+      it 'sets the wall_time_at_last_flushed_gc_event_ns from the wall_time_at_previous_gc_ns' do
+        wall_time_at_previous_gc_ns = gc_tracking.fetch(:wall_time_at_previous_gc_ns)
+
         sample_after_gc
 
-        expect(gc_samples.size).to be 1
+        expect(gc_tracking.fetch(:wall_time_at_last_flushed_gc_event_ns)).to be wall_time_at_previous_gc_ns
       end
 
-      it 'advances the wall_time_at_previous_sample_ns for the sampled thread by the time spent in garbage collection' do
-        wall_time_at_previous_sample_ns_before =
-          per_thread_context.fetch(Thread.current).fetch(:wall_time_at_previous_sample_ns)
+      it 'resets the wall_time_at_previous_gc_ns to invalid_time' do
+        sample_after_gc
+
+        expect(gc_tracking.fetch(:wall_time_at_previous_gc_ns)).to be invalid_time
+      end
+
+      it 'creates a Garbage Collection sample' do
+        sample_after_gc
+
+        expect(gc_sample.values.fetch(:'cpu-samples')).to be 1
+        expect(gc_sample.labels).to match a_hash_including(
+          :state => 'had cpu',
+          :'thread id' => 'GC',
+          :'thread name' => 'Garbage Collection',
+          :event => 'gc',
+          :'gc cause' => an_instance_of(String),
+          :'gc type' => an_instance_of(String),
+        )
+        expect(gc_sample.locations.first.path).to eq 'Garbage Collection'
+      end
+
+      it 'creates a Garbage Collection sample using the accumulated_cpu_time_ns and accumulated_wall_time_ns' do
+        accumulated_cpu_time_ns = gc_tracking.fetch(:accumulated_cpu_time_ns)
+        accumulated_wall_time_ns = gc_tracking.fetch(:accumulated_wall_time_ns)
 
         sample_after_gc
 
-        wall_time_spent_in_gc = gc_sample.values.fetch(:'wall-time')
-
-        expect(per_thread_context.fetch(Thread.current)).to include(
-          wall_time_at_previous_sample_ns: wall_time_at_previous_sample_ns_before + wall_time_spent_in_gc
+        expect(gc_sample.values).to match a_hash_including(
+          :'cpu-time' => accumulated_cpu_time_ns,
+          :'wall-time' => accumulated_wall_time_ns,
         )
       end
 
-      context 'cpu-time behavior' do
-        context 'when not on Linux' do
-          before do
-            skip 'The fallback behavior only applies when not on Linux' if PlatformHelpers.linux?
-          end
+      it 'does not include the timeline timestamp' do
+        sample_after_gc
 
-          it 'keeps the cpu_time_at_previous_sample_ns as invalid_time' do
-            sample_after_gc
+        expect(gc_sample.labels.keys).to_not include(:end_timestamp_ns)
+      end
 
-            expect(per_thread_context.fetch(Thread.current)).to include(cpu_time_at_previous_sample_ns: invalid_time)
-          end
+      context 'when timeline is enabled' do
+        let(:timeline_enabled) { true }
+
+        it 'creates a Garbage Collection sample using the accumulated_wall_time_ns as the timeline duration' do
+          accumulated_wall_time_ns = gc_tracking.fetch(:accumulated_wall_time_ns)
+
+          sample_after_gc
+
+          expect(gc_sample.values.fetch(:timeline)).to be accumulated_wall_time_ns
         end
 
-        context 'on Linux' do
-          before do
-            skip 'Test only runs on Linux' unless PlatformHelpers.linux?
-          end
+        it 'creates a Garbage Collection sample using the timestamp set by on_gc_finish, converted to epoch ns' do
+          sample_after_gc
 
-          it 'advances the cpu_time_at_previous_sample_ns for the sampled thread by the time spent in garbage collection' do
-            cpu_time_at_previous_sample_ns_before =
-              per_thread_context.fetch(Thread.current).fetch(:cpu_time_at_previous_sample_ns)
-
-            sample_after_gc
-
-            cpu_time_spent_in_gc = gc_sample.values.fetch(:'cpu-time')
-
-            expect(per_thread_context.fetch(Thread.current)).to include(
-              cpu_time_at_previous_sample_ns: cpu_time_at_previous_sample_ns_before + cpu_time_spent_in_gc
-            )
-          end
+          expect(gc_sample.labels.fetch(:end_timestamp_ns)).to be_between(@time_before, @time_after)
         end
       end
     end
@@ -870,13 +1043,10 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         Thread.current.name = 'thread_with_name'
         sample_allocation(weight: 123)
       end.join
-      thread_without_name = Thread.new { sample_allocation(weight: 123) }.join
 
       sample_with_name = samples_for_thread(samples, thread_with_name).first
-      sample_without_name = samples_for_thread(samples, thread_without_name).first
 
       expect(sample_with_name.labels).to include(:'thread name' => 'thread_with_name')
-      expect(sample_without_name.labels).to_not include(:'thread name')
     end
 
     describe 'code hotspots' do
@@ -911,6 +1081,124 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
             :'span id' => @t1_span_id.to_i,
             :'trace endpoint' => 'trace_resource',
           )
+        end
+      end
+    end
+
+    context 'when timeline is enabled' do
+      let(:timeline_enabled) { true }
+
+      it 'does not include end_timestamp_ns labels in GC samples' do
+        sample_allocation(weight: 123)
+
+        expect(single_sample.labels.keys).to_not include(:end_timestamp_ns)
+      end
+    end
+
+    [
+      { expected_type: :T_OBJECT, object: Object.new, klass: 'Object' },
+      { expected_type: :T_CLASS, object: Object, klass: 'Class' },
+      { expected_type: :T_MODULE, object: Kernel, klass: 'Module' },
+      { expected_type: :T_FLOAT, object: 1.0, klass: 'Float' },
+      { expected_type: :T_STRING, object: 'Hello!', klass: 'String' },
+      { expected_type: :T_REGEXP, object: /Hello/, klass: 'Regexp' },
+      { expected_type: :T_ARRAY, object: [], klass: 'Array' },
+      { expected_type: :T_HASH, object: {}, klass: 'Hash' },
+      { expected_type: :T_BIGNUM, object: 2**256, klass: RUBY_VERSION < '2.4' ? 'Bignum' : 'Integer' },
+      # ThreadContext is a T_DATA; we create here a dummy instance just as an example
+      { expected_type: :T_DATA, object: described_class.allocate, klass: 'Datadog::Profiling::Collectors::ThreadContext' },
+      { expected_type: :T_MATCH, object: 'a'.match(Regexp.new('a')), klass: 'MatchData' },
+      { expected_type: :T_COMPLEX, object: Complex(1), klass: 'Complex' },
+      { expected_type: :T_RATIONAL, object: 1/2r, klass: 'Rational' },
+      { expected_type: :T_NIL, object: nil, klass: 'NilClass' },
+      { expected_type: :T_TRUE, object: true, klass: 'TrueClass' },
+      { expected_type: :T_FALSE, object: false, klass: 'FalseClass' },
+      { expected_type: :T_SYMBOL, object: :hello, klass: 'Symbol' },
+      { expected_type: :T_FIXNUM, object: 1, klass: RUBY_VERSION < '2.4' ? 'Fixnum' : 'Integer' },
+    ].each do |type|
+      expected_type = type.fetch(:expected_type)
+      object = type.fetch(:object)
+      klass = type.fetch(:klass)
+
+      context "when sampling a #{expected_type}" do
+        it 'includes the correct ruby vm type for the passed object' do
+          sample_allocation(weight: 123, new_object: object)
+
+          expect(single_sample.labels.fetch(:'ruby vm type')).to eq expected_type.to_s
+        end
+
+        it 'includes the correct class for the passed object' do
+          sample_allocation(weight: 123, new_object: object)
+
+          expect(single_sample.labels.fetch(:'allocation class')).to eq klass
+        end
+
+        context 'when allocation_type_enabled is false' do
+          let(:allocation_type_enabled) { false }
+
+          it 'does not record the correct class for the passed object' do
+            sample_allocation(weight: 123, new_object: object)
+
+            expect(single_sample.labels).to_not include(:'allocation class' => anything)
+          end
+        end
+      end
+    end
+
+    context 'when sampling a T_FILE' do
+      it 'includes the correct ruby vm type for the passed object' do
+        File.open(__FILE__) do |file|
+          sample_allocation(weight: 123, new_object: file)
+        end
+
+        expect(single_sample.labels.fetch(:'ruby vm type')).to eq 'T_FILE'
+      end
+
+      it 'includes the correct class for the passed object' do
+        File.open(__FILE__) do |file|
+          sample_allocation(weight: 123, new_object: file)
+        end
+
+        expect(single_sample.labels.fetch(:'allocation class')).to eq 'File'
+      end
+
+      context 'when allocation_type_enabled is false' do
+        let(:allocation_type_enabled) { false }
+
+        it 'does not record the correct class for the passed object' do
+          File.open(__FILE__) do |file|
+            sample_allocation(weight: 123, new_object: file)
+          end
+
+          expect(single_sample.labels).to_not include(:'allocation class' => anything)
+        end
+      end
+    end
+
+    context 'when sampling a Struct' do
+      before do
+        stub_const('ThreadContextSpec::TestStruct', Struct.new(:a))
+      end
+
+      it 'includes the correct ruby vm type for the passed object' do
+        sample_allocation(weight: 123, new_object: ThreadContextSpec::TestStruct.new)
+
+        expect(single_sample.labels.fetch(:'ruby vm type')).to eq 'T_STRUCT'
+      end
+
+      it 'includes the correct class for the passed object' do
+        sample_allocation(weight: 123, new_object: ThreadContextSpec::TestStruct.new)
+
+        expect(single_sample.labels.fetch(:'allocation class')).to eq 'ThreadContextSpec::TestStruct'
+      end
+
+      context 'when allocation_type_enabled is false' do
+        let(:allocation_type_enabled) { false }
+
+        it 'does not record the correct class for the passed object' do
+          sample_allocation(weight: 123, new_object: ThreadContextSpec::TestStruct.new)
+
+          expect(single_sample.labels).to_not include(:'allocation class' => anything)
         end
       end
     end
@@ -1026,6 +1314,66 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
               include(thread_cpu_time_id_valid?: true)
             )
           end
+        end
+      end
+
+      describe ':thread_invoke_location' do
+        it 'is empty for the main thread' do
+          expect(per_thread_context.fetch(Thread.main).fetch(:thread_invoke_location)).to be_empty
+        end
+
+        # NOTE: As of this writing, the dd-trace-rb spec_helper.rb includes a monkey patch to Thread creation that we use
+        # to track specs that leak threads. This means that the invoke_location of every thread will point at the
+        # spec_helper in our test suite. Just in case you're looking at the output and being a bit confused :)
+        it 'contains the file and line for the started threads' do
+          [t1, t2, t3].each do |thread|
+            invoke_location = per_thread_context.fetch(thread).fetch(:thread_invoke_location)
+
+            expect(thread.inspect).to include(invoke_location)
+            expect(invoke_location).to match(/.+\.rb:\d+/)
+          end
+        end
+
+        it 'contains a fallback for threads started in native code' do
+          native_thread = described_class::Testing._native_new_empty_thread
+
+          sample
+
+          native_thread.kill
+          native_thread.join
+
+          invoke_location = per_thread_context.fetch(native_thread).fetch(:thread_invoke_location)
+          expect(invoke_location).to eq '(Unnamed thread from native code)'
+        end
+
+        context 'when the `logging` gem has monkey patched thread creation' do
+          # rubocop:disable Style/GlobalVars
+          before do
+            load("#{__dir__}/helper/lib/logging/diagnostic_context.rb")
+            $simulated_logging_gem_monkey_patched_thread_ready_queue.pop
+          end
+
+          after do
+            $simulated_logging_gem_monkey_patched_thread.kill
+            $simulated_logging_gem_monkey_patched_thread.join
+            $simulated_logging_gem_monkey_patched_thread = nil
+            $simulated_logging_gem_monkey_patched_thread_ready_queue = nil
+          end
+
+          # We detect logging gem monkey patching by checking the invoke location of a thread and not using it when
+          # it belongs to the logging gem. This matching is done by matching the partial path
+          # `lib/logging/diagnostic_context.rb`, which is where the monkey patching is implemented.
+          #
+          # To simulate this on our test suite without having to bring in the `logging` gem (and monkey patch our
+          # threads), a helper was created that has a matching partial path.
+          it 'contains a placeholder only' do
+            sample
+
+            invoke_location =
+              per_thread_context.fetch($simulated_logging_gem_monkey_patched_thread).fetch(:thread_invoke_location)
+            expect(invoke_location).to eq '(Unnamed thread)'
+          end
+          # rubocop:enable Style/GlobalVars
         end
       end
     end
