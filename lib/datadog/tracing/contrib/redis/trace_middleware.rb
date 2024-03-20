@@ -27,36 +27,14 @@ module Datadog
                 raw_command = get_command(command, true)
                 span.resource = command_args ? raw_command : get_command(command, false)
 
-                ### BRAZE MODIFICATION
-                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_FILEPATH,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH]
-                  )
-                end
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_CODEOWNER,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
-                  )
-                end
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_SHARD_INDEX,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX]
-                  )
-                end
-
-                span.set_metric Contrib::Redis::Ext::METRIC_RESP_COMMAND_LEN, result.to_s.bytesize
-                ### END BRAZE MODIFICATION
-
                 Contrib::Redis::Tags.set_common_tags(client, span, raw_command)
 
-                yield
+                ### BRAZE MODIFICATION
+                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, raw_command.to_s.length
+                result = yield
+                span.set_metric Contrib::Redis::Ext::METRIC_RESP_COMMAND_LEN, result.to_s.bytesize
+                result
+                ### END BRAZE MODIFICATION
               end
             end
 
@@ -65,38 +43,16 @@ module Datadog
                 raw_command = get_pipeline_commands(commands, true)
                 span.resource = command_args ? raw_command : get_pipeline_commands(commands, false)
 
-                ### BRAZE MODIFICATION
-                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, args.to_s.length
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_FILEPATH,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_FILEPATH]
-                  )
-                end
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_CODEOWNER,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_CODEOWNER]
-                  )
-                end
-
-                if !Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX].nil?
-                  span.set_tag(
-                    Contrib::Redis::Ext::METRIC_SHARD_INDEX,
-                    Thread.current[Contrib::Redis::Ext::THREAD_GLOBAL_SHARD_INDEX]
-                  )
-                end
-
-                span.set_metric Contrib::Redis::Ext::METRIC_RESP_COMMAND_LEN, result.to_s.bytesize
-                ### END BRAZE MODIFICATION
-
                 span.set_metric Contrib::Redis::Ext::METRIC_PIPELINE_LEN, commands.length
 
                 Contrib::Redis::Tags.set_common_tags(client, span, raw_command)
 
-                yield
+                ### BRAZE MODIFICATION
+                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, raw_command.to_s.length
+                result = yield
+                span.set_metric Contrib::Redis::Ext::METRIC_RESP_COMMAND_LEN, result.to_s.bytesize
+                result
+                ### END BRAZE MODIFICATION
               end
             end
 
