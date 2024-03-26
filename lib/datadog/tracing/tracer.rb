@@ -320,16 +320,20 @@ module Datadog
         if digest
           TraceOperation.new(
             hostname: hostname,
+            profiling_enabled: profiling_enabled,
             id: digest.trace_id,
             origin: digest.trace_origin,
             parent_span_id: digest.span_id,
             sampling_priority: digest.trace_sampling_priority,
             # Distributed tags are just regular trace tags with special meaning to Datadog
             tags: digest.trace_distributed_tags,
+            trace_state: digest.trace_state,
+            trace_state_unknown_fields: digest.trace_state_unknown_fields,
           )
         else
           TraceOperation.new(
-            hostname: hostname
+            hostname: hostname,
+            profiling_enabled: profiling_enabled,
           )
         end
       end
@@ -349,6 +353,8 @@ module Datadog
         end
       end
 
+      # Creates a new TraceOperation, with events bounds to this Tracer instance.
+      # @return [TraceOperation]
       def start_trace(continue_from: nil)
         # Build a new trace using digest if provided.
         trace = build_trace(continue_from)
@@ -524,6 +530,11 @@ module Datadog
         else
           span
         end
+      end
+
+      def profiling_enabled
+        @profiling_enabled ||=
+          !!(defined?(Datadog::Profiling) && Datadog::Profiling.respond_to?(:enabled?) && Datadog::Profiling.enabled?)
       end
     end
   end

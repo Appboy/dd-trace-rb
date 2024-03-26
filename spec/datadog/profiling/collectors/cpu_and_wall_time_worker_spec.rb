@@ -1,28 +1,34 @@
 require 'datadog/profiling/spec_helper'
-require 'datadog/profiling/collectors/cpu_and_wall_time_worker'
 
-RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
+RSpec.describe 'Datadog::Profiling::Collectors::CpuAndWallTimeWorker' do
   before { skip_if_profiling_not_supported(self) }
 
-  let(:recorder) { build_stack_recorder }
+  # This is needed because this class uses syntax that doesn't work on Ruby 2.1/2.2; we can undo this once dd-trace-rb
+  # drops support for these Rubies globally
+  let(:described_class) { Datadog::Profiling::Collectors::CpuAndWallTimeWorker }
+
   let(:endpoint_collection_enabled) { true }
   let(:gc_profiling_enabled) { true }
-  let(:allocation_counting_enabled) { true }
-  let(:no_signals_workaround_enabled) { false }
-  let(:options) { {} }
-
-  subject(:cpu_and_wall_time_worker) do
-    described_class.new(
-      recorder: recorder,
-      max_frames: 400,
-      tracer: nil,
-      endpoint_collection_enabled: endpoint_collection_enabled,
-      gc_profiling_enabled: gc_profiling_enabled,
-      allocation_counting_enabled: allocation_counting_enabled,
-      no_signals_workaround_enabled: no_signals_workaround_enabled,
-      **options
-    )
+  let(:allocation_profiling_enabled) { false }
+  let(:heap_profiling_enabled) { false }
+  let(:recorder) do
+    build_stack_recorder(heap_samples_enabled: heap_profiling_enabled, heap_size_enabled: heap_profiling_enabled)
   end
+  let(:no_signals_workaround_enabled) { false }
+  let(:timeline_enabled) { false }
+  let(:options) { {} }
+  let(:worker_settings) do
+    {
+      gc_profiling_enabled: gc_profiling_enabled,
+      no_signals_workaround_enabled: no_signals_workaround_enabled,
+      thread_context_collector: build_thread_context_collector(recorder),
+      dynamic_sampling_rate_overhead_target_percentage: 2.0,
+      allocation_profiling_enabled: allocation_profiling_enabled,
+      **options
+    }
+  end
+
+  subject(:cpu_and_wall_time_worker) { described_class.new(**worker_settings, **options) }
 
   describe '.new' do
     it 'creates the garbage collection tracepoint in the disabled state' do
@@ -40,10 +46,23 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
           cpu_and_wall_time_worker
         end
       end
+
+      context "when timeline_enabled is #{value}" do
+        let(:timeline_enabled) { value }
+
+        it "initializes the ThreadContext collector with timeline_enabled: #{value}" do
+          expect(Datadog::Profiling::Collectors::ThreadContext)
+            .to receive(:new).with(hash_including(timeline_enabled: value)).and_call_original
+
+          cpu_and_wall_time_worker
+        end
+      end
     end
   end
 
   describe '#start' do
+    let(:expected_worker_initialization_error) { nil }
+
     subject(:start) do
       cpu_and_wall_time_worker.start
       wait_until_running
@@ -57,6 +76,13 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
       start
 
       expect(Thread.list.map(&:name)).to include(described_class.name)
+    end
+
+    # See https://github.com/puma/puma/blob/32e011ab9e029c757823efb068358ed255fb7ef4/lib/puma/cluster.rb#L353-L359
+    it 'marks the new thread as fork-safe' do
+      start
+
+      expect(cpu_and_wall_time_worker.instance_variable_get(:@worker_thread).thread_variable_get(:fork_safe)).to be true
     end
 
     it 'does not create a second thread if start is called again' do
@@ -185,10 +211,10 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
 
       stats = cpu_and_wall_time_worker.stats
 
-      sampling_time_ns_min = stats.fetch(:sampling_time_ns_min)
-      sampling_time_ns_max = stats.fetch(:sampling_time_ns_max)
-      sampling_time_ns_total = stats.fetch(:sampling_time_ns_total)
-      sampling_time_ns_avg = stats.fetch(:sampling_time_ns_avg)
+      sampling_time_ns_min = stats.fetch(:cpu_sampling_time_ns_min)
+      sampling_time_ns_max = stats.fetch(:cpu_sampling_time_ns_max)
+      sampling_time_ns_total = stats.fetch(:cpu_sampling_time_ns_total)
+      sampling_time_ns_avg = stats.fetch(:cpu_sampling_time_ns_avg)
 
       expect(sampling_time_ns_min).to be <= sampling_time_ns_max
       expect(sampling_time_ns_max).to be <= sampling_time_ns_total
@@ -197,61 +223,57 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
       expect(sampling_time_ns_max).to be < one_second_in_ns, "A single sample should not take longer than 1s, #{stats}"
     end
 
-    it 'does not allocate Ruby objects during the regular operation of sampling' do
-      # The intention of this test is to warn us if we accidentally trigger object allocations during "happy path"
-      # sampling.
-      # Note that when something does go wrong during sampling, we do allocate exceptions (and then raise them).
+    context 'with allocation profiling enabled' do
+      # We need this otherwise allocations_during_sample will never change
+      let(:allocation_profiling_enabled) { true }
 
-      start
+      it 'does not allocate Ruby objects during the regular operation of sampling' do
+        # The intention of this test is to warn us if we accidentally trigger object allocations during "happy path"
+        # sampling.
+        # Note that when something does go wrong during sampling, we do allocate exceptions (and then raise them).
 
-      try_wait_until do
-        samples = samples_from_pprof_without_gc_and_overhead(recorder.serialize!)
-        samples if samples.any?
+        start
+
+        try_wait_until do
+          samples = samples_from_pprof_without_gc_and_overhead(recorder.serialize!)
+          samples if samples.any?
+        end
+
+        cpu_and_wall_time_worker.stop
+
+        stats = cpu_and_wall_time_worker.stats
+
+        expect(stats).to include(allocations_during_sample: 0)
       end
-
-      cpu_and_wall_time_worker.stop
-
-      stats = cpu_and_wall_time_worker.stats
-
-      expect(stats).to include(allocations_during_sample: 0)
     end
 
     it 'records garbage collection cycles' do
-      if RUBY_VERSION.start_with?('3.')
-        skip(
-          'This test (and feature...) is broken on Ruby 3 if any Ractors get used due to a bug in the VM during ' \
-          'Ractor GC, see https://bugs.ruby-lang.org/issues/19112 for details. ' \
-          'For that reason, we disable this feature on Ruby 3 by default by passing `gc_profiling_enabled: false` during ' \
-          'profiler initialization.'
-        )
-      end
-
       start
 
       described_class::Testing._native_trigger_sample
 
-      invoke_gc_times = 5
-
-      invoke_gc_times.times do
+      5.times do
         Thread.pass
         GC.start
+        Thread.pass
       end
 
       cpu_and_wall_time_worker.stop
 
       all_samples = samples_from_pprof(recorder.serialize!)
 
-      current_thread_gc_samples =
-        samples_for_thread(all_samples, Thread.current)
-          .select { |it| it.locations.first.path == 'Garbage Collection' }
+      gc_sample = all_samples.find { |sample| sample.labels[:'gc cause'] == 'GC.start()' }
 
-      # NOTE: In some cases, Ruby may actually call two GC's back-to-back without us having the possibility to take
-      # a sample. I don't expect this to happen for this test (that's what the `Thread.pass` above is trying to avoid)
-      # but if this spec turns out to be flaky, that is probably the issue, and that would mean we'd need to relax the
-      # check.
-      expect(
-        current_thread_gc_samples.inject(0) { |sum, sample| sum + sample.values.fetch(:'cpu-samples') }
-      ).to be >= invoke_gc_times
+      expect(gc_sample.labels).to match a_hash_including(
+        :state => 'had cpu',
+        :'thread id' => 'GC',
+        :'thread name' => 'Garbage Collection',
+        :event => 'gc',
+        :'gc reason' => an_instance_of(String),
+        :'gc cause' => 'GC.start()',
+        :'gc type' => 'major',
+      )
+      expect(gc_sample.locations.first.path).to eq 'Garbage Collection'
     end
 
     context 'when the background thread dies without cleaning up (after Ruby forks)' do
@@ -394,13 +416,281 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
             .map { |it| it.values.fetch(:'cpu-samples') }
             .reduce(:+)
 
+        # Since we're reading the stats AFTER the worker is stopped, we expect a consistent view, as otherwise we
+        # would have races (e.g. the stats could be changing as we're trying to read them, since it's on a background
+        # thread that doesn't hold the Global VM Lock while mutating some of these values)
         stats = cpu_and_wall_time_worker.stats
+        trigger_sample_attempts = stats.fetch(:trigger_sample_attempts)
 
         expect(sample_count).to be > 0
-        expect(stats.fetch(:trigger_sample_attempts)).to eq(stats.fetch(:trigger_simulated_signal_delivery_attempts))
-        expect(stats.fetch(:trigger_sample_attempts)).to eq(stats.fetch(:simulated_signal_delivery))
-        expect(stats.fetch(:trigger_sample_attempts)).to eq(stats.fetch(:signal_handler_enqueued_sample))
-        expect(stats.fetch(:trigger_sample_attempts)).to eq(stats.fetch(:postponed_job_success))
+        expect(stats).to(
+          match(
+            a_hash_including(
+              trigger_simulated_signal_delivery_attempts: trigger_sample_attempts,
+              simulated_signal_delivery: trigger_sample_attempts,
+              signal_handler_enqueued_sample: trigger_sample_attempts,
+              # @ivoanjo: A flaky test run was reported for this assertion -- a case where `trigger_sample_attempts` was 1
+              # but `postponed_job_success` was 0 (on Ruby 2.6).
+              # See https://app.circleci.com/pipelines/github/DataDog/dd-trace-rb/11866/workflows/08660eeb-0746-4675-87fd-33d473a3f479/jobs/445903
+              # At the time, the test didn't print the full `stats` contents, so it's unclear to me if the test failed
+              # because the postponed job API returned something other than success, or if something else entirely happened.
+              # If/when it happens again, hopefully the extra debugging + this info helps out with the investigation.
+              postponed_job_success: trigger_sample_attempts,
+            )
+          ),
+          "**If you see this test flaking, please report it to @ivoanjo!**\n\n" \
+          "sample_count: #{sample_count}, samples: #{all_samples}"
+        )
+      end
+    end
+
+    context 'when allocation profiling is enabled' do
+      let(:allocation_profiling_enabled) { true }
+      let(:test_num_allocated_object) { 123 }
+      # Explicitly disable dynamic sampling in these tests so we can deterministically verify
+      # sample counts.
+      let(:options) { { dynamic_sampling_rate_enabled: false } }
+
+      before do
+        allow(Datadog.logger).to receive(:warn)
+        allow(Datadog.logger).to receive(:warn).with(/dynamic sampling rate disabled/)
+      end
+
+      it 'records allocated objects' do
+        stub_const('CpuAndWallTimeWorkerSpec::TestStruct', Struct.new(:foo))
+
+        start
+
+        test_num_allocated_object.times { CpuAndWallTimeWorkerSpec::TestStruct.new }
+        allocation_line = __LINE__ - 1
+
+        cpu_and_wall_time_worker.stop
+
+        allocation_sample =
+          samples_for_thread(samples_from_pprof(recorder.serialize!), Thread.current)
+            .find { |s| s.labels[:'allocation class'] == 'CpuAndWallTimeWorkerSpec::TestStruct' }
+
+        expect(allocation_sample.values).to include(:'alloc-samples' => test_num_allocated_object)
+        expect(allocation_sample.locations.first.lineno).to eq allocation_line
+      end
+
+      context 'with dynamic_sampling_rate_enabled' do
+        let(:options) { { dynamic_sampling_rate_enabled: true } }
+        it 'keeps statistics on how allocation sampling is doing' do
+          stub_const('CpuAndWallTimeWorkerSpec::TestStruct', Struct.new(:foo))
+
+          start
+
+          test_num_allocated_object.times { CpuAndWallTimeWorkerSpec::TestStruct.new }
+
+          cpu_and_wall_time_worker.stop
+
+          stats = cpu_and_wall_time_worker.stats
+
+          sampled = stats.fetch(:allocation_sampled)
+          skipped = stats.fetch(:allocation_skipped)
+          effective_rate = stats.fetch(:allocation_effective_sample_rate)
+          sampling_time_ns_min = stats.fetch(:allocation_sampling_time_ns_min)
+          sampling_time_ns_max = stats.fetch(:allocation_sampling_time_ns_max)
+          sampling_time_ns_total = stats.fetch(:allocation_sampling_time_ns_total)
+          sampling_time_ns_avg = stats.fetch(:allocation_sampling_time_ns_avg)
+
+          expect(sampled).to be > 0
+          expect(skipped).to be > 0
+          expect(effective_rate).to be > 0
+          expect(effective_rate).to be < 1
+          expect(sampling_time_ns_min).to be <= sampling_time_ns_max
+          expect(sampling_time_ns_max).to be <= sampling_time_ns_total
+          expect(sampling_time_ns_avg).to be >= sampling_time_ns_min
+          one_second_in_ns = 1_000_000_000
+          expect(sampling_time_ns_max).to be < one_second_in_ns, "A single sample should not take longer than 1s, #{stats}"
+        end
+      end
+
+      context 'when sampling optimized Ruby strings' do
+        # Regression test: Some internal Ruby classes use a `rb_str_tmp_frozen_acquire` function which allocates a
+        # weird "intermediate" string object that has its class pointer set to 0.
+        #
+        # When such an object gets sampled, we need to take care not to try to resolve its class name.
+        #
+        # In practice, this test is actually validating behavior of the `ThreadContext` collector, but we can only
+        # really trigger this situation when using the allocation tracepoint, which lives in the `CpuAndWallTimeWorker`.
+        it 'does not crash' do
+          start
+
+          expect(Time.new.strftime(String.new('Potato'))).to_not be nil
+        end
+      end
+
+      context 'T_IMEMO internal VM objects' do
+        let(:something_that_triggers_creation_of_imemo_objects) do
+          eval('proc { def self.foo; rand; end; foo }.call') # rubocop:disable Style/EvalWithLocation
+        end
+
+        context 'on Ruby 2.x' do
+          before { skip 'Behavior only applies on Ruby 2.x' unless RUBY_VERSION.start_with?('2.') }
+
+          it 'records internal VM objects, not including their specific kind' do
+            start
+
+            something_that_triggers_creation_of_imemo_objects
+
+            cpu_and_wall_time_worker.stop
+
+            imemo_samples =
+              samples_for_thread(samples_from_pprof(recorder.serialize!), Thread.current)
+                .select { |s| s.labels.fetch(:'allocation class', '') == '(VM Internal, T_IMEMO)' }
+
+            expect(imemo_samples.size).to be >= 1 # We should always get some T_IMEMO objects
+          end
+        end
+
+        context 'on Ruby 3.x' do
+          before { skip 'Behavior only applies on Ruby 3.x' if RUBY_VERSION.start_with?('2.') }
+
+          it 'records internal VM objects, including their specific kind' do
+            start
+
+            something_that_triggers_creation_of_imemo_objects
+
+            cpu_and_wall_time_worker.stop
+
+            imemo_samples =
+              samples_for_thread(samples_from_pprof(recorder.serialize!), Thread.current)
+                .select { |s| s.labels.fetch(:'allocation class', '').start_with?('(VM Internal, T_IMEMO') }
+
+            expect(imemo_samples.size).to be >= 1 # We should always get some T_IMEMO objects
+
+            # To avoid coupling too much on VM internals we check that at each of the found allocation classes are
+            # a known member of the imemo_type enum (even if we don't exactly match on which one)
+            expect(imemo_samples.map { |s| s.labels.fetch(:'allocation class') }).to all(
+              match(
+                /(env|cref|svar|throw_data|ifunc|memo|ment|iseq|tmpbuf|ast|parser_strterm|callinfo|callcache|constcache)/
+              )
+            )
+          end
+        end
+      end
+    end
+
+    context 'when allocation sampling is disabled' do
+      let(:allocation_profiling_enabled) { false }
+
+      it 'does not record allocations' do
+        stub_const('CpuAndWallTimeWorkerSpec::TestStruct', Struct.new(:foo))
+
+        start
+
+        123.times { CpuAndWallTimeWorkerSpec::TestStruct.new }
+
+        cpu_and_wall_time_worker.stop
+
+        expect(samples_from_pprof(recorder.serialize!).map(&:values)).to all(include(:'alloc-samples' => 0))
+      end
+    end
+
+    context 'when heap profiling is enabled' do
+      let(:allocation_profiling_enabled) { true }
+      let(:heap_profiling_enabled) { true }
+      let(:test_num_allocated_object) { 123 }
+      # Explicitly disable dynamic sampling in these tests so we can deterministically verify
+      # sample counts.
+      let(:options) { { dynamic_sampling_rate_enabled: false } }
+
+      before do
+        allow(Datadog.logger).to receive(:warn)
+        expect(Datadog.logger).to receive(:warn).with(/dynamic sampling rate disabled/)
+      end
+
+      it 'records live heap objects' do
+        stub_const('CpuAndWallTimeWorkerSpec::TestStruct', Struct.new(:foo))
+
+        start
+
+        live_objects = Array.new(test_num_allocated_object)
+
+        test_num_allocated_object.times { |i| live_objects[i] = CpuAndWallTimeWorkerSpec::TestStruct.new }
+        allocation_line = __LINE__ - 1
+
+        cpu_and_wall_time_worker.stop
+
+        test_struct_heap_sample = lambda { |sample|
+          first_frame = sample.locations.first
+          first_frame.lineno == allocation_line &&
+            first_frame.path == __FILE__ &&
+            first_frame.base_label == 'new' &&
+            sample.labels[:'allocation class'] == 'CpuAndWallTimeWorkerSpec::TestStruct' &&
+            (sample.values[:'heap-live-samples'] || 0) > 0
+        }
+
+        relevant_sample = samples_from_pprof(recorder.serialize!)
+          .find(&test_struct_heap_sample)
+
+        expect(relevant_sample.values[:'heap-live-samples']).to eq test_num_allocated_object
+        # 40 is the size of a basic object and we have test_num_allocated_object of them
+        expect(relevant_sample.values[:'heap-live-size']).to eq test_num_allocated_object * 40
+      end
+    end
+
+    context 'when heap profiling is disabled' do
+      let(:heap_profiling_enabled) { false }
+
+      it 'does not record heap samples' do
+        stub_const('CpuAndWallTimeWorkerSpec::TestStruct', Struct.new(:foo))
+
+        start
+
+        123.times { CpuAndWallTimeWorkerSpec::TestStruct.new }
+
+        cpu_and_wall_time_worker.stop
+
+        expect(samples_from_pprof(recorder.serialize!).select { |s| s.values.key?(:'heap-live-samples') }).to be_empty
+      end
+    end
+
+    context 'Process::Waiter crash regression tests' do
+      # On Ruby 2.3 to 2.6, there's a crash when accessing instance variables of the `process_waiter_thread`,
+      # see https://bugs.ruby-lang.org/issues/17807 .
+      #
+      # In those Ruby versions, there's a very special subclass of `Thread` called `Process::Waiter` that causes VM
+      # crashes whenever something tries to read its instance or thread variables. This subclass of thread only
+      # shows up when the `Process.detach` API gets used.
+      #
+      # @ivoanjo: This affected the old profiler at some point (but never affected the new profiler), but I think
+      # it's useful to keep around so that we don't regress if we decide to start reading/writing some
+      # info to thread objects to implement some future feature.
+      it 'can sample an instance of Process::Waiter without crashing' do
+        forked_process = fork { sleep }
+        process_waiter_thread = Process.detach(forked_process)
+
+        start
+
+        all_samples = try_wait_until do
+          samples = samples_from_pprof_without_gc_and_overhead(recorder.serialize!)
+          samples if samples.any?
+        end
+
+        cpu_and_wall_time_worker.stop
+
+        sample = samples_for_thread(all_samples, process_waiter_thread).first
+
+        expect(sample.locations.first.path).to eq 'In native code'
+
+        Process.kill('TERM', forked_process)
+        process_waiter_thread.join
+      end
+    end
+
+    context 'when the _native_sampling_loop terminates with an exception' do
+      it 'calls the on_failure_proc' do
+        expect(described_class).to receive(:_native_sampling_loop).and_raise(StandardError.new('Simulated error'))
+        expect(Datadog.logger).to receive(:warn)
+
+        proc_called = Queue.new
+
+        cpu_and_wall_time_worker.start(on_failure_proc: proc { proc_called << true })
+
+        proc_called.pop
       end
     end
   end
@@ -430,13 +720,13 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
       end
     end
 
-    context 'when called from a background ractor' do
+    context 'when called from a background ractor', :ractors => true do
       # Even though we're not testing it explicitly, the GC profiling hooks can sometimes be called when running these
       # specs. Unfortunately, there's a VM crash in that case as well -- https://bugs.ruby-lang.org/issues/18464 --
       # so this must be disabled when interacting with Ractors.
       let(:gc_profiling_enabled) { false }
       # ...same thing for the tracepoint for allocation counting/profiling :(
-      let(:allocation_counting_enabled) { false }
+      let(:allocation_profiling_enabled) { false }
 
       describe 'handle_sampling_signal' do
         include_examples 'does not trigger a sample',
@@ -534,18 +824,16 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
     end
   end
 
-  describe '#enabled=' do
-    it 'does nothing (provided only for API compatibility)' do
-      cpu_and_wall_time_worker.enabled = true
-    end
-  end
-
   describe '#reset_after_fork' do
     subject(:reset_after_fork) { cpu_and_wall_time_worker.reset_after_fork }
 
     let(:thread_context_collector) do
       Datadog::Profiling::Collectors::ThreadContext.new(
-        recorder: recorder, max_frames: 400, tracer: nil, endpoint_collection_enabled: endpoint_collection_enabled,
+        recorder: recorder,
+        max_frames: 400,
+        tracer: nil,
+        endpoint_collection_enabled: endpoint_collection_enabled,
+        timeline_enabled: timeline_enabled,
       )
     end
     let(:options) { { thread_context_collector: thread_context_collector } }
@@ -582,23 +870,34 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
 
       reset_after_fork
 
-      expect(cpu_and_wall_time_worker.stats).to eq(
-        trigger_sample_attempts: 0,
-        trigger_simulated_signal_delivery_attempts: 0,
-        simulated_signal_delivery: 0,
-        signal_handler_enqueued_sample: 0,
-        signal_handler_wrong_thread: 0,
-        sampled: 0,
-        skipped_sample_because_of_dynamic_sampling_rate: 0,
-        postponed_job_skipped_already_existed: 0,
-        postponed_job_success: 0,
-        postponed_job_full: 0,
-        postponed_job_unknown_result: 0,
-        sampling_time_ns_min: nil,
-        sampling_time_ns_max: nil,
-        sampling_time_ns_total: nil,
-        sampling_time_ns_avg: nil,
-        allocations_during_sample: 0,
+      expect(cpu_and_wall_time_worker.stats).to match(
+        {
+          trigger_sample_attempts: 0,
+          trigger_simulated_signal_delivery_attempts: 0,
+          simulated_signal_delivery: 0,
+          signal_handler_enqueued_sample: 0,
+          signal_handler_wrong_thread: 0,
+          postponed_job_skipped_already_existed: 0,
+          postponed_job_success: 0,
+          postponed_job_full: 0,
+          postponed_job_unknown_result: 0,
+          cpu_sampled: 0,
+          cpu_skipped: 0,
+          cpu_effective_sample_rate: nil,
+          cpu_sampling_time_ns_min: nil,
+          cpu_sampling_time_ns_max: nil,
+          cpu_sampling_time_ns_total: nil,
+          cpu_sampling_time_ns_avg: nil,
+          allocation_sampled: nil,
+          allocation_skipped: nil,
+          allocation_effective_sample_rate: nil,
+          allocation_sampling_time_ns_min: nil,
+          allocation_sampling_time_ns_max: nil,
+          allocation_sampling_time_ns_total: nil,
+          allocation_sampling_time_ns_avg: nil,
+          allocation_sampler_snapshot: nil,
+          allocations_during_sample: nil,
+        }
       )
     end
   end
@@ -620,52 +919,169 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
         cpu_and_wall_time_worker.stop
       end
 
-      it 'returns the number of allocations between two calls of the method' do
-        # To get the exact expected number of allocations, we run this once before so that Ruby can create and cache all
-        # it needs to
-        new_object = proc { Object.new }
-        1.times(&new_object)
+      context 'when allocation profiling is enabled' do
+        let(:allocation_profiling_enabled) { true }
 
-        before_allocations = described_class._native_allocation_count
-        100.times(&new_object)
-        after_allocations = described_class._native_allocation_count
-
-        expect(after_allocations - before_allocations).to be 100
-      end
-
-      it 'returns different numbers of allocations for different threads' do
-        # To get the exact expected number of allocations, we run this once before so that Ruby can create and cache all
-        # it needs to
-        new_object = proc { Object.new }
-        1.times(&new_object)
-
-        t1_can_run = Queue.new
-        t1_has_run = Queue.new
-        before_t1 = nil
-        after_t1 = nil
-
-        background_t1 = Thread.new do
-          before_t1 = described_class._native_allocation_count
-          t1_can_run.pop
-
-          100.times(&new_object)
-          after_t1 = described_class._native_allocation_count
-          t1_has_run << true
+        it 'always returns a >= 0 value' do
+          expect(described_class._native_allocation_count).to be >= 0
         end
 
-        before_allocations = described_class._native_allocation_count
-        t1_can_run << true
-        t1_has_run.pop
-        after_allocations = described_class._native_allocation_count
+        it 'returns the number of allocations between two calls of the method' do
+          # To get the exact expected number of allocations, we run this once before so that Ruby can create and cache all
+          # it needs to
+          new_object = proc { Object.new }
+          1.times(&new_object)
 
-        background_t1.join
+          before_allocations = described_class._native_allocation_count
+          100.times(&new_object)
+          after_allocations = described_class._native_allocation_count
 
-        # This test checks that even though we observed 100 allocations in a background thread t1, the counters for
-        # the current thread were not affected by this change
+          expect(after_allocations - before_allocations).to be 100
+        end
 
-        expect(after_t1 - before_t1).to be 100
-        expect(after_allocations - before_allocations).to be < 10
+        it 'returns different numbers of allocations for different threads' do
+          # To get the exact expected number of allocations, we run this once before so that Ruby can create and cache all
+          # it needs to
+          new_object = proc { Object.new }
+          1.times(&new_object)
+
+          t1_can_run = Queue.new
+          t1_has_run = Queue.new
+          before_t1 = nil
+          after_t1 = nil
+
+          background_t1 = Thread.new do
+            before_t1 = described_class._native_allocation_count
+            t1_can_run.pop
+
+            100.times(&new_object)
+            after_t1 = described_class._native_allocation_count
+            t1_has_run << true
+          end
+
+          before_allocations = described_class._native_allocation_count
+          t1_can_run << true
+          t1_has_run.pop
+          after_allocations = described_class._native_allocation_count
+
+          background_t1.join
+
+          # This test checks that even though we observed 100 allocations in a background thread t1, the counters for
+          # the current thread were not affected by this change
+
+          expect(after_t1 - before_t1).to be 100
+          expect(after_allocations - before_allocations).to be < 10
+        end
       end
+
+      context 'when allocation profiling is disabled' do
+        let(:allocation_profiling_enabled) { false }
+        it 'always returns a nil value' do
+          100.times { Object.new }
+
+          expect(described_class._native_allocation_count).to be nil
+        end
+      end
+    end
+  end
+
+  describe '#stats_reset_not_thread_safe' do
+    let(:allocation_profiling_enabled) { true }
+
+    it 'returns accumulated stats and resets them back to 0' do
+      cpu_and_wall_time_worker.start
+      wait_until_running
+
+      try_wait_until do
+        samples = samples_from_pprof_without_gc_and_overhead(recorder.serialize!)
+        samples if samples.any?
+      end
+
+      stub_const('CpuAndWallTimeWorkerSpec::TestStruct', Struct.new(:foo))
+      1000.times { CpuAndWallTimeWorkerSpec::TestStruct.new }
+
+      cpu_and_wall_time_worker.stop
+
+      stats = cpu_and_wall_time_worker.stats_and_reset_not_thread_safe
+
+      expect(stats).to match(
+        hash_including(
+          :cpu_sampled => be > 0,
+          :allocation_sampled => be > 0,
+          :cpu_sampling_time_ns_avg => be > 0,
+          :allocation_sampling_time_ns_avg => be > 0,
+        )
+      )
+
+      stats = cpu_and_wall_time_worker.stats
+
+      expect(stats).to match(
+        hash_including(
+          :cpu_sampled => 0,
+          :allocation_sampled => 0,
+          :cpu_sampling_time_ns_avg => nil,
+          :allocation_sampling_time_ns_avg => nil,
+        )
+      )
+    end
+  end
+
+  describe '.delayed_error' do
+    before { allow(Datadog.logger).to receive(:warn) }
+
+    it 'on allocation, raises on start' do
+      worker = described_class.allocate
+      # Simulate a delayed failure pre-initialization (i.e. during new)
+      Datadog::Profiling::Collectors::CpuAndWallTimeWorker::Testing._native_delayed_error(
+        worker,
+        'test failure'
+      )
+
+      worker.send(:initialize, **worker_settings, **options)
+
+      proc_called = Queue.new
+
+      # Start the worker
+      worker.start(on_failure_proc: proc { proc_called << true })
+
+      # We expect this to have been filled by the on_failure_proc
+      proc_called.pop
+
+      # And we expect the worker to be shutdown with a failure exception
+      expect(described_class::Testing._native_is_running?(worker)).to be false
+      exception = try_wait_until(backoff: 0.01) { worker.send(:failure_exception) }
+      expect(exception.message).to include 'test failure'
+
+      worker.stop
+    end
+
+    it 'raises on next iteration' do
+      proc_called = Queue.new
+
+      cpu_and_wall_time_worker.start(on_failure_proc: proc { proc_called << true })
+      wait_until_running
+
+      # Make sure things are fully running by waiting for some samples
+      try_wait_until do
+        samples = samples_from_pprof_without_gc_and_overhead(recorder.serialize!)
+        samples if samples.any?
+      end
+
+      # Simulate a delayed failure while running
+      Datadog::Profiling::Collectors::CpuAndWallTimeWorker::Testing._native_delayed_error(
+        cpu_and_wall_time_worker,
+        'test failure'
+      )
+
+      # We expect this to have been filled by the on_failure_proc
+      proc_called.pop
+
+      # And we expect the worker to be shutdown with a failure exception
+      expect(described_class::Testing._native_is_running?(cpu_and_wall_time_worker)).to be false
+      exception = try_wait_until(backoff: 0.01) { cpu_and_wall_time_worker.send(:failure_exception) }
+      expect(exception.message).to include 'test failure'
+
+      cpu_and_wall_time_worker.stop
     end
   end
 
@@ -684,14 +1100,16 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
   end
 
   def build_another_instance
-    described_class.new(
-      recorder: build_stack_recorder,
+    described_class.new(**worker_settings)
+  end
+
+  def build_thread_context_collector(recorder)
+    Datadog::Profiling::Collectors::ThreadContext.new(
+      recorder: recorder,
       max_frames: 400,
       tracer: nil,
       endpoint_collection_enabled: endpoint_collection_enabled,
-      gc_profiling_enabled: gc_profiling_enabled,
-      allocation_counting_enabled: allocation_counting_enabled,
-      no_signals_workaround_enabled: no_signals_workaround_enabled,
+      timeline_enabled: timeline_enabled,
     )
   end
 end

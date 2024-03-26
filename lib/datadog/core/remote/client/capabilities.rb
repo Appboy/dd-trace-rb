@@ -1,12 +1,13 @@
 # frozen_string_literal: true
 
 require_relative '../../../appsec/remote'
+require_relative '../../../tracing/remote'
 
 module Datadog
   module Core
     module Remote
       class Client
-        # Capbailities
+        # Capabilities
         class Capabilities
           attr_reader :products, :capabilities, :receivers, :base64_capabilities
 
@@ -28,6 +29,10 @@ module Datadog
               register_products(Datadog::AppSec::Remote.products)
               register_receivers(Datadog::AppSec::Remote.receivers)
             end
+
+            register_capabilities(Datadog::Tracing::Remote.capabilities)
+            register_products(Datadog::Tracing::Remote.products)
+            register_receivers(Datadog::Tracing::Remote.receivers)
           end
 
           def register_capabilities(capabilities)

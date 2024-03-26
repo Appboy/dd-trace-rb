@@ -3,8 +3,6 @@ require 'datadog/tracing/contrib/graphql/test_types'
 
 require 'ddtrace'
 RSpec.describe 'GraphQL patcher' do
-  include ConfigurationHelpers
-
   # GraphQL generates tons of warnings.
   # This suppresses those warnings.
   around do |example|
@@ -79,7 +77,12 @@ RSpec.describe 'GraphQL patcher' do
 
           valid_operations << 'authorized'
 
-          expect(spans).to have(11).items
+          # new Ruby-based parser doesn't emit a "lex" event. (graphql/c_parser still does.)
+          if Gem::Version.new(::GraphQL::VERSION) >= Gem::Version.new('2.2')
+            expect(spans).to have(10).items
+          else
+            expect(spans).to have(11).items
+          end
         end
 
         # Expect root span to be 'execute.graphql'
@@ -115,7 +118,8 @@ RSpec.describe 'GraphQL patcher' do
 
   describe '.define-style schema' do
     before do
-      if Gem::Version.new(GraphQL::VERSION) >= Gem::Version.new('2.0')
+      # Broken 1.13.x with define-style schema
+      if Gem::Version.new(GraphQL::VERSION) >= Gem::Version.new('1.13')
         skip('graphql >= 2.0 has deprecated this schema definition style')
       end
     end

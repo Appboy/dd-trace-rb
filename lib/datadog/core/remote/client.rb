@@ -10,6 +10,7 @@ module Datadog
     module Remote
       # Client communicates with the agent and sync remote configuration
       class Client
+        class TransportError < StandardError; end
         class SyncError < StandardError; end
 
         attr_reader :transport, :repository, :id, :dispatcher
@@ -107,6 +108,8 @@ module Datadog
             else
               dispatcher.dispatch(changes, repository)
             end
+          elsif response.internal_error?
+            raise TransportError, response.to_s
           end
         end
         # rubocop:enable Metrics/AbcSize,Metrics/PerceivedComplexity,Metrics/MethodLength,Metrics/CyclomaticComplexity
@@ -136,7 +139,7 @@ module Datadog
             runtime_id: Core::Environment::Identity.id,
             language: Core::Environment::Identity.lang,
             tracer_version: tracer_version_semver2,
-            service: Datadog.configuration.service,
+            service: service_name,
             env: Datadog.configuration.env,
             tags: client_tracer_tags,
           }
@@ -165,6 +168,10 @@ module Datadog
             },
             cached_target_files: state.cached_target_files,
           }
+        end
+
+        def service_name
+          Datadog.configuration.remote.service || Datadog.configuration.service
         end
 
         def tracer_version_semver2

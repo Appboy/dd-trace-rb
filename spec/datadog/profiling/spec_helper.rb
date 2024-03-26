@@ -1,34 +1,22 @@
 require 'datadog/profiling'
+if Datadog::Profiling.supported?
+  require 'datadog/profiling/pprof/pprof_pb'
+  require 'extlz4'
+end
 
 module ProfileHelpers
-  Sample = Struct.new(:locations, :values, :labels) # rubocop:disable Lint/StructNewOverride
-  Frame = Struct.new(:base_label, :path, :lineno)
+  Sample = Struct.new(:locations, :values, :labels) do |_sample_class| # rubocop:disable Lint/StructNewOverride
+    def value?(type)
+      (values[type] || 0) > 0
+    end
 
-  def build_stack_sample(
-    locations: nil,
-    thread_id: nil,
-    root_span_id: nil,
-    span_id: nil,
-    trace_resource: nil,
-    cpu_time_ns: nil,
-    wall_time_ns: nil
-  )
-    locations ||= Thread.current.backtrace_locations
-
-    Datadog::Profiling::Events::StackSample.new(
-      nil,
-      locations.map do |location|
-        Datadog::Profiling::BacktraceLocation.new(location.base_label, location.lineno, location.path)
-      end,
-      locations.length,
-      thread_id || rand(1e9),
-      root_span_id || rand(1e9),
-      span_id || rand(1e9),
-      trace_resource || "resource#{rand(1e9)}",
-      cpu_time_ns || rand(1e9),
-      wall_time_ns || rand(1e9)
-    )
+    def has_location?(path:, line:)
+      locations.any? do |location|
+        location.path == path && location.lineno == line
+      end
+    end
   end
+  Frame = Struct.new(:base_label, :path, :lineno)
 
   def skip_if_profiling_not_supported(testcase)
     testcase.skip('Profiling is not supported on JRuby') if PlatformHelpers.jruby?
@@ -51,8 +39,12 @@ module ProfileHelpers
       'Try running `bundle exec rake compile` before running this test.'
   end
 
+  def decode_profile(pprof_data)
+    ::Perftools::Profiles::Profile.decode(LZ4.decode(pprof_data))
+  end
+
   def samples_from_pprof(pprof_data)
-    decoded_profile = ::Perftools::Profiles::Profile.decode(pprof_data)
+    decoded_profile = decode_profile(pprof_data)
 
     string_table = decoded_profile.string_table
     pretty_sample_types = decoded_profile.sample_type.map { |it| string_table[it.type].to_sym }
@@ -83,15 +75,34 @@ module ProfileHelpers
   end
 
   def object_id_from(thread_id)
-    Integer(thread_id.match(/\d+ \((?<object_id>\d+)\)/)[:object_id])
+    if thread_id != 'GC'
+      Integer(thread_id.match(/\d+ \((?<object_id>\d+)\)/)[:object_id])
+    else
+      -1
+    end
   end
 
   def samples_for_thread(samples, thread)
-    samples.select { |sample| object_id_from(sample.labels.fetch(:'thread id')) == thread.object_id }
+    samples.select do |sample|
+      thread_id = sample.labels[:'thread id']
+      thread_id && object_id_from(thread_id) == thread.object_id
+    end
   end
 
-  def build_stack_recorder
-    Datadog::Profiling::StackRecorder.new(cpu_time_enabled: true, alloc_samples_enabled: true)
+  # We disable heap_sample collection by default in tests since it requires some extra mocking/
+  # setup for it to properly work.
+  def build_stack_recorder(
+    heap_samples_enabled: false, heap_size_enabled: false, heap_sample_every: 1,
+    timeline_enabled: false
+  )
+    Datadog::Profiling::StackRecorder.new(
+      cpu_time_enabled: true,
+      alloc_samples_enabled: true,
+      heap_samples_enabled: heap_samples_enabled,
+      heap_size_enabled: heap_size_enabled,
+      heap_sample_every: heap_sample_every,
+      timeline_enabled: timeline_enabled,
+    )
   end
 end
 

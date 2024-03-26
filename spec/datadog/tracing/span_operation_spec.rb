@@ -359,7 +359,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
         end
 
         context 'that is an Integer' do
-          let(:trace_id) { Datadog::Tracing::Utils.next_id }
+          let(:trace_id) { Datadog::Tracing::Utils::TraceId.next_id }
           it { is_expected.to have_attributes(trace_id: trace_id) }
         end
       end
@@ -930,7 +930,6 @@ RSpec.describe Datadog::Tracing::SpanOperation do
         sleep(duration_wall_time)
         span_op.stop
 
-        puts "\nduration: #{duration}\nwall_time: #{duration_wall_time * 1e9}\n"
         expect(duration).to be_within(1).of(duration_wall_time * 1e9)
       end
 

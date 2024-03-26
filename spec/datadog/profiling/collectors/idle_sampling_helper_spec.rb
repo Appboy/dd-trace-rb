@@ -15,15 +15,22 @@ RSpec.describe Datadog::Profiling::Collectors::IdleSamplingHelper do
 
     it 'resets the IdleSamplingHelper before creating a new thread' do
       expect(described_class).to receive(:_native_reset).with(idle_sampling_helper).ordered
-      expect(Thread).to receive(:new).ordered
+      expect(Thread).to receive(:new).ordered.and_call_original
 
       start
     end
 
     it 'creates a new thread' do
-      expect(Thread).to receive(:new)
+      expect(Thread).to receive(:new).ordered.and_call_original
 
       start
+    end
+
+    # See https://github.com/puma/puma/blob/32e011ab9e029c757823efb068358ed255fb7ef4/lib/puma/cluster.rb#L353-L359
+    it 'marks the new thread as fork-safe' do
+      start
+
+      expect(idle_sampling_helper.instance_variable_get(:@worker_thread).thread_variable_get(:fork_safe)).to be true
     end
 
     it 'does not create a second thread if start is called again' do

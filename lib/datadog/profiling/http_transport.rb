@@ -1,3 +1,5 @@
+require_relative '../core/transport/ext'
+
 module Datadog
   module Profiling
     # Used to report profiling data to Datadog.
@@ -40,6 +42,9 @@ module Datadog
           code_provenance_data: flush.code_provenance_data,
 
           tags_as_array: flush.tags_as_array,
+          internal_metadata_json: flush.internal_metadata_json,
+
+          info_json: flush.info_json
         )
 
         if status == :ok
@@ -47,11 +52,14 @@ module Datadog
             Datadog.logger.debug('Successfully reported profiling data')
             true
           else
-            Datadog.logger.error("Failed to report profiling data: server returned unexpected HTTP #{result} status code")
+            Datadog.logger.error(
+              "Failed to report profiling data (#{config_without_api_key}): " \
+              "server returned unexpected HTTP #{result} status code"
+            )
             false
           end
         else
-          Datadog.logger.error("Failed to report profiling data: #{result}")
+          Datadog.logger.error("Failed to report profiling data (#{config_without_api_key}): #{result}")
           false
         end
       end
@@ -66,9 +74,9 @@ module Datadog
 
       def base_url_from(agent_settings)
         case agent_settings.adapter
-        when Datadog::Transport::Ext::HTTP::ADAPTER
+        when Datadog::Core::Transport::Ext::HTTP::ADAPTER
           "#{agent_settings.ssl ? 'https' : 'http'}://#{agent_settings.hostname}:#{agent_settings.port}/"
-        when Datadog::Transport::Ext::UnixSocket::ADAPTER
+        when Datadog::Core::Transport::Ext::UnixSocket::ADAPTER
           "unix://#{agent_settings.uds_path}"
         else
           raise ArgumentError, "Unexpected adapter: #{agent_settings.adapter}"
@@ -76,7 +84,8 @@ module Datadog
       end
 
       def validate_agent_settings(agent_settings)
-        supported_adapters = [Datadog::Transport::Ext::HTTP::ADAPTER, Datadog::Transport::Ext::UnixSocket::ADAPTER]
+        supported_adapters = [Datadog::Core::Transport::Ext::HTTP::ADAPTER,
+                              Datadog::Core::Transport::Ext::UnixSocket::ADAPTER]
         unless supported_adapters.include?(agent_settings.adapter)
           raise ArgumentError,
             "Unsupported transport configuration for profiling: Adapter #{agent_settings.adapter} " \
@@ -109,7 +118,9 @@ module Datadog
         pprof_data:,
         code_provenance_file_name:,
         code_provenance_data:,
-        tags_as_array:
+        tags_as_array:,
+        internal_metadata_json:,
+        info_json:
       )
         self.class._native_do_export(
           exporter_configuration,
@@ -123,7 +134,13 @@ module Datadog
           code_provenance_file_name,
           code_provenance_data,
           tags_as_array,
+          internal_metadata_json,
+          info_json,
         )
+      end
+
+      def config_without_api_key
+        [@exporter_configuration[0..1]].to_h
       end
     end
   end

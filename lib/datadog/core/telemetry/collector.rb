@@ -9,9 +9,10 @@ require_relative '../utils/hash'
 require_relative 'v1/application'
 require_relative 'v1/dependency'
 require_relative 'v1/host'
+require_relative 'v1/install_signature'
 require_relative 'v1/integration'
 require_relative 'v1/product'
-require_relative '../../../ddtrace/transport/ext'
+require_relative '../transport/ext'
 
 module Datadog
   module Core
@@ -43,11 +44,19 @@ module Datadog
 
         # Forms a hash of standard key value pairs to be sent in the app-started event configuration
         def configurations
+          config = Datadog.configuration
           hash = {
-            DD_AGENT_HOST: Datadog.configuration.agent.host,
+            DD_AGENT_HOST: config.agent.host,
             DD_AGENT_TRANSPORT: agent_transport,
-            DD_TRACE_SAMPLE_RATE: format_configuration_value(Datadog.configuration.tracing.sampling.default_rate),
+            DD_TRACE_SAMPLE_RATE: format_configuration_value(config.tracing.sampling.default_rate),
+            DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED: config.tracing.contrib.global_default_service_name.enabled
           }
+          peer_service_mapping_str = ''
+          unless config.tracing.contrib.peer_service_mapping.empty?
+            peer_service_mapping = config.tracing.contrib.peer_service_mapping
+            peer_service_mapping_str = peer_service_mapping.map { |key, value| "#{key}:#{value}" }.join(',')
+          end
+          hash[:DD_TRACE_PEER_SERVICE_MAPPING] = peer_service_mapping_str
           hash.compact!
           hash
         end
@@ -70,6 +79,15 @@ module Datadog
             kernel_name: Core::Environment::Platform.kernel_name,
             kernel_release: Core::Environment::Platform.kernel_release,
             kernel_version: Core::Environment::Platform.kernel_version
+          )
+        end
+
+        # Forms a telemetry app-started install_signature object
+        def install_signature
+          Telemetry::V1::InstallSignature.new(
+            install_id: Datadog.configuration.dig('telemetry', 'install_id'),
+            install_type: Datadog.configuration.dig('telemetry', 'install_type'),
+            install_time: Datadog.configuration.dig('telemetry', 'install_time'),
           )
         end
 
@@ -138,6 +156,7 @@ module Datadog
           options['logger.instance'] = configuration.logger.instance.class.to_s
           options['appsec.enabled'] = configuration.dig('appsec', 'enabled') if configuration.respond_to?('appsec')
           options['tracing.opentelemetry.enabled'] = !defined?(Datadog::OpenTelemetry::LOADED).nil?
+          options['tracing.opentracing.enabled'] = !defined?(Datadog::OpenTracer::LOADED).nil?
           options.compact!
           options
         end
@@ -182,7 +201,7 @@ module Datadog
 
         def agent_transport
           adapter = Core::Configuration::AgentSettingsResolver.call(Datadog.configuration).adapter
-          if adapter == Datadog::Transport::Ext::UnixSocket::ADAPTER
+          if adapter == Datadog::Core::Transport::Ext::UnixSocket::ADAPTER
             'UDS'
           else
             'TCP'

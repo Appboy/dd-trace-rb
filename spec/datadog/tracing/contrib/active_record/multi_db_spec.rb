@@ -194,14 +194,6 @@ RSpec.describe 'ActiveRecord multi-database implementation' do
           # Widget isn't, ends up assigned to the default database service
           expect(widget_span.service).to eq(default_db_service_name)
         end
-
-        it_behaves_like 'a peer service span' do
-          let(:span) { gadget_span }
-        end
-
-        it_behaves_like 'a peer service span' do
-          let(:span) { widget_span }
-        end
       end
 
       context 'for an in-memory database' do
@@ -220,13 +212,23 @@ RSpec.describe 'ActiveRecord multi-database implementation' do
           # Widget belongs to its own database
           expect(widget_span.service).to eq(widget_db_service_name)
         end
+      end
 
-        it_behaves_like 'a peer service span' do
-          let(:span) { gadget_span }
-        end
+      context 'an invalid value' do
+        context 'for a typical server' do
+          before do
+            Datadog.configure do |c|
+              c.tracing.instrument :active_record, describes: 'some invalid string' do |gadget_db|
+                gadget_db.service_name = gadget_db_service_name
+              end
+            end
+          end
 
-        it_behaves_like 'a peer service span' do
-          let(:span) { widget_span }
+          it 'fails to configure' do
+            count
+
+            expect(gadget_span.service).to eq(default_db_service_name)
+          end
         end
       end
     end
@@ -248,14 +250,6 @@ RSpec.describe 'ActiveRecord multi-database implementation' do
         expect(gadget_span.service).to eq(default_db_service_name)
         # Widget belongs to its own database
         expect(widget_span.service).to eq(widget_db_service_name)
-      end
-
-      it_behaves_like 'a peer service span' do
-        let(:span) { gadget_span }
-      end
-
-      it_behaves_like 'a peer service span' do
-        let(:span) { widget_span }
       end
     end
   end

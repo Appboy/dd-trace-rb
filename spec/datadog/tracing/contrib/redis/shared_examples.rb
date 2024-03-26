@@ -31,17 +31,17 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
         expect(span.service).to eq(options[:service_name] || 'redis')
         if options[:command_args]
           expect(span.resource).to eq('SET FOO bar')
-          expect(span.get_tag('redis.raw_command')).to eq('SET FOO bar')
         else
           expect(span.resource).to eq('SET')
-          expect(span.get_tag('redis.raw_command')).to be_nil
         end
+        expect(span.get_tag('redis.raw_command')).to eq('SET FOO bar')
       end
 
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
       it_behaves_like 'analytics for integration' do
         let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Redis::Ext::ENV_ANALYTICS_ENABLED }
@@ -57,17 +57,17 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
 
         if options[:command_args]
           expect(span.resource).to eq('GET FOO')
-          expect(span.get_tag('redis.raw_command')).to eq('GET FOO')
         else
           expect(span.resource).to eq('GET')
-          expect(span.get_tag('redis.raw_command')).to be_nil
         end
+        expect(span.get_tag('redis.raw_command')).to eq('GET FOO')
       end
 
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
       it_behaves_like 'analytics for integration' do
         let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Redis::Ext::ENV_ANALYTICS_ENABLED }
@@ -89,7 +89,8 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
       it_behaves_like 'analytics for integration' do
         let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Redis::Ext::ENV_ANALYTICS_ENABLED }
@@ -99,11 +100,10 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
       it do
         if options[:command_args]
           expect(span.resource).to eq('SET FOO bar')
-          expect(span.get_tag('redis.raw_command')).to eq('SET FOO bar')
         else
           expect(span.resource).to eq('SET')
-          expect(span.get_tag('redis.raw_command')).to be_nil
         end
+        expect(span.get_tag('redis.raw_command')).to eq('SET FOO bar')
       end
     end
   end
@@ -144,17 +144,17 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
         expect(span.service).to eq(options[:service_name] || 'redis')
         if options[:command_args]
           expect(span.resource).to eq("SET v1 0\nSET v2 0\nINCR v1\nINCR v2\nINCR v2")
-          expect(span.get_tag('redis.raw_command')).to eq("SET v1 0\nSET v2 0\nINCR v1\nINCR v2\nINCR v2")
         else
           expect(span.resource).to eq("SET\nSET\nINCR\nINCR\nINCR")
-          expect(span.get_tag('redis.raw_command')).to be_nil
         end
+        expect(span.get_tag('redis.raw_command')).to eq("SET v1 0\nSET v2 0\nINCR v1\nINCR v2\nINCR v2")
       end
 
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
       it_behaves_like 'analytics for integration' do
         let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Redis::Ext::ENV_ANALYTICS_ENABLED }
@@ -188,17 +188,14 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
         expect(span.service).to eq(options[:service_name] || 'redis')
         expect(span.resource).to eq('(none)')
 
-        if options[:command_args]
-          expect(span.get_tag('redis.raw_command')).to eq('(none)')
-        else
-          expect(span.get_tag('redis.raw_command')).to be_nil
-        end
+        expect(span.get_tag('redis.raw_command')).to eq('(none)')
       end
 
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
       it_behaves_like 'analytics for integration' do
         let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Redis::Ext::ENV_ANALYTICS_ENABLED }
@@ -228,12 +225,11 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
 
         if options[:command_args]
           expect(span.resource).to eq('THIS_IS_NOT_A_REDIS_FUNC THIS_IS_NOT_A_VALID_ARG')
-          expect(span.get_tag('redis.raw_command')).to eq('THIS_IS_NOT_A_REDIS_FUNC THIS_IS_NOT_A_VALID_ARG')
         else
           expect(span.resource).to eq('THIS_IS_NOT_A_REDIS_FUNC')
-          expect(span.get_tag('redis.raw_command')).to be_nil
 
         end
+        expect(span.get_tag('redis.raw_command')).to eq('THIS_IS_NOT_A_REDIS_FUNC THIS_IS_NOT_A_VALID_ARG')
         expect(span.status).to eq(1)
         expect(span.get_tag('error.message')).to match(/ERR unknown command/)
         expect(span.get_tag('error.type')).to match(/CommandError/)
@@ -243,7 +239,8 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
       it_behaves_like 'analytics for integration' do
         let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Redis::Ext::ENV_ANALYTICS_ENABLED }
@@ -261,17 +258,17 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
 
         if options[:command_args]
           expect(span.resource).to eq("SET K #{'x' * 47}...")
-          expect(span.get_tag('redis.raw_command')).to eq("SET K #{'x' * 47}...")
         else
           expect(span.resource).to eq('SET')
-          expect(span.get_tag('redis.raw_command')).to be_nil
         end
+        expect(span.get_tag('redis.raw_command')).to eq("SET K #{'x' * 47}...")
       end
 
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
       it_behaves_like 'analytics for integration' do
         let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Redis::Ext::ENV_ANALYTICS_ENABLED }
@@ -292,17 +289,17 @@ RSpec.shared_examples_for 'redis instrumentation' do |options = {}|
         expect(span.service).to eq(options[:service_name] || 'redis')
         if options[:command_args]
           expect(span.resource).to eq('GET K')
-          expect(span.get_tag('redis.raw_command')).to eq('GET K')
         else
           expect(span.resource).to eq('GET')
-          expect(span.get_tag('redis.raw_command')).to be_nil
         end
+        expect(span.get_tag('redis.raw_command')).to eq('GET K')
       end
 
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
       it_behaves_like 'analytics for integration' do
         let(:analytics_enabled_var) { Datadog::Tracing::Contrib::Redis::Ext::ENV_ANALYTICS_ENABLED }
@@ -332,11 +329,10 @@ RSpec.shared_examples_for 'an authenticated redis instrumentation' do |options =
 
         if options[:command_args]
           expect(span.resource).to eq('AUTH ?')
-          expect(span.get_tag('redis.raw_command')).to eq('AUTH ?')
         else
           expect(span.resource).to eq('AUTH')
-          expect(span.get_tag('redis.raw_command')).to be_nil
         end
+        expect(span.get_tag('redis.raw_command')).to eq('AUTH ?')
       end
     end
 
@@ -356,7 +352,8 @@ RSpec.shared_examples_for 'an authenticated redis instrumentation' do |options =
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
     end
 
@@ -380,11 +377,12 @@ RSpec.shared_examples_for 'an authenticated redis instrumentation' do |options =
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
     end
 
-    context 'with redis optins' do
+    context 'with redis options' do
       let(:redis) do
         Redis.new(
           redis_options.merge(
@@ -405,7 +403,8 @@ RSpec.shared_examples_for 'an authenticated redis instrumentation' do |options =
       it_behaves_like 'a redis span with common tags'
       it_behaves_like 'measured span for integration', false
       it_behaves_like 'a peer service span' do
-        let(:peer_hostname) { host }
+        let(:peer_service_val) {  host }
+        let(:peer_service_source) { 'peer.hostname' }
       end
     end
   end
