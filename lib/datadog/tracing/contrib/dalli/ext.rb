@@ -26,6 +26,9 @@ module Datadog
           SPAN_COMMAND = 'memcached.command'
           SPAN_TYPE_COMMAND = 'memcached'
           TAG_COMMAND = 'memcached.command'
+          # BEGIN BRAZE MODIFICATION
+          TAG_LENGTH = 'memcached.length'
+          # END BRAZE MODIFICATION
           TAG_COMPONENT = 'dalli'
           TAG_OPERATION_COMMAND = 'command'
           TAG_SYSTEM = 'memcached'
