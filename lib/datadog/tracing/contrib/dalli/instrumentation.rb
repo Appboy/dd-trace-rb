@@ -54,6 +54,9 @@ module Datadog
                   cmd = Quantize.format_command(op, args)
                   span.set_tag(Ext::TAG_COMMAND, cmd)
                 end
+                # BEGIN BRAZE MODIFICATION
+                span.set_tag(Ext::TAG_LENGTH, Core::Utils.utf8_encode([op, *args].join(' ').strip, binary: true).length)
+                # END BRAZE MODIFICATION
 
                 Contrib::SpanAttributeSchema.set_peer_service!(span, Ext::PEER_SERVICE_SOURCES)
                 super
