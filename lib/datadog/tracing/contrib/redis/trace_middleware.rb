@@ -31,7 +31,12 @@ module Datadog
 
                 Contrib::Redis::Tags.set_common_tags(client, span, raw_command)
 
-                yield
+                ### BRAZE MODIFICATION
+                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, raw_command.to_s.length
+                result = yield
+                span.set_metric Contrib::Redis::Ext::METRIC_RESP_COMMAND_LEN, result.to_s.bytesize
+                result
+                ### END BRAZE MODIFICATION
               end
             end
 
@@ -44,7 +49,12 @@ module Datadog
 
                 Contrib::Redis::Tags.set_common_tags(client, span, raw_command)
 
-                yield
+                ### BRAZE MODIFICATION
+                span.set_metric Contrib::Redis::Ext::METRIC_RAW_COMMAND_LEN, raw_command.to_s.length
+                result = yield
+                span.set_metric Contrib::Redis::Ext::METRIC_RESP_COMMAND_LEN, result.to_s.bytesize
+                result
+                ### END BRAZE MODIFICATION
               end
             end
 
