@@ -11,7 +11,6 @@ This guide covers some of the common how-tos and technical reference material fo
      - [Checking code quality](#checking-code-quality)
  - [Appendix](#appendix)
      - [Writing new integrations](#writing-new-integrations)
-     - [Custom transport adapters](#custom-transport-adapters)
 
 ## Setting up
 
@@ -54,22 +53,22 @@ All tests should run in CI. When adding new `_spec.rb` files, you may need to ad
  ```ruby
    namespace :spec do
      RSpec::Core::RakeTask.new(:foo) do |t, args|
-       t.pattern = "spec/datadog/tracing/contrib/bar/**/*_spec.rb"
+       t.pattern = "spec/datadog/tracing/contrib/foo/**/*_spec.rb"
        t.rspec_opts = args.to_a.join(' ')
      end
    end
  ```
 
- - Ensure the Rake task is configured to run for the appropriate Ruby runtimes, by introducing it to our test matrix. You should find the task with `bundle exec rake -T test:<foo>`.
+ - Ensure the Rake task is configured to run for the appropriate Ruby runtimes, by adding it to our `Matrixfile`. You should find the task with `bundle exec rake -T test:foo` after adding it.
 
 ```ruby
-  TEST_METADATA = {
+  {
     'foo' => {
       # Without any appraisal group dependencies
       ''    => '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ 3.2 / ✅ 3.3 / ✅ jruby',
 
-      # or with appraisal group definition `bar`
-      'bar' => '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ 3.2 / ✅ 3.3 / ✅ jruby'
+      # or with appraisal group definition `foo-on-rails`, that includes additional gems
+      'foo-on-rails' => '✅ 2.1 / ✅ 2.2 / ✅ 2.3 / ✅ 2.4 / ✅ 2.5 / ✅ 2.6 / ✅ 2.7 / ✅ 3.0 / ✅ 3.1 / ✅ 3.2 / ✅ 3.3 / ✅ jruby'
     },
   }
 ```
@@ -88,7 +87,7 @@ $ bundle exec rake test:main
 
 **For integrations**
 
-Integrations which interact with dependencies not listed in the `ddtrace` gemspec will need to load these dependencies to run their tests. Each test task could consist of multiple spec tasks which are executed with different groups of dependencies (likely against different versions or variations).
+Integrations which interact with dependencies not listed in the `datadog` gemspec will need to load these dependencies to run their tests. Each test task could consist of multiple spec tasks which are executed with different groups of dependencies (likely against different versions or variations).
 
 To get a list of the test tasks, run `bundle exec rake -T test`
 
@@ -118,7 +117,7 @@ After introducing a new group definition or changing existing one, run `bundle e
 
 To install dependencies, run `bundle exec appraisal install`.
 
-In addition, if you already know which appraisal group definition to work with, you can target a specific group operation with environment vairable `APPRAISAL_GROUP`, instead of all the groups from your environment. For example:
+In addition, if you already know which appraisal group definition to work with, you can target a specific group operation with environment variable `APPRAISAL_GROUP`, instead of all the groups from your environment. For example:
 
 ```
 # This would only install dependencies for `aws` group definition
@@ -165,11 +164,11 @@ Test leaked 1 thread: "Datadog::Workers::AsyncTransport integration tests"
 Ensure all threads are terminated when test finishes:
 1: #<Thread:0x00007fcbc99863d0 /Users/marco.costa/work/dd-trace-rb/spec/spec_helper.rb:145 sleep> (Thread)
 Thread Creation Site:
-        ./dd-trace-rb/spec/ddtrace/workers_integration_spec.rb:245:in 'new'
-        ./dd-trace-rb/spec/ddtrace/workers_integration_spec.rb:245:in 'block (4 levels) in <top (required)>'
+        ./dd-trace-rb/spec/datadog/tracing/workers_integration_spec.rb:245:in 'new'
+        ./dd-trace-rb/spec/datadog/tracing/workers_integration_spec.rb:245:in 'block (4 levels) in <top (required)>'
 Thread Backtrace:
-        ./dd-trace-rb/spec/ddtrace/workers_integration_spec.rb:262:in 'sleep'
-        .dd-trace-rb/spec/ddtrace/workers_integration_spec.rb:262:in 'block (5 levels) in <top (required)>'
+        ./dd-trace-rb/spec/datadog/tracing/workers_integration_spec.rb:262:in 'sleep'
+        .dd-trace-rb/spec/datadog/tracing/workers_integration_spec.rb:262:in 'block (5 levels) in <top (required)>'
         ./dd-trace-rb/spec/spec_helper.rb:147:in 'block in initialize'
 ```
 
@@ -213,7 +212,7 @@ Integrations are extensions to the trace library that add support for external d
 
 Some general guidelines for adding new integrations:
 
- - An integration can either be added directly to `dd-trace-rb`, or developed as its own gem that depends on `ddtrace`.
+ - An integration can either be added directly to `dd-trace-rb`, or developed as its own gem that depends on `datadog`.
  - Integrations should implement the configuration API for easy, consistent implementation. (See existing integrations as examples of this.)
  - All new integrations require documentation, unit/integration tests written in RSpec, and passing CI builds.
  - It's highly encouraged to share screenshots or other demos of how the new integration looks and works.
@@ -228,68 +227,6 @@ Then [open a pull request](../CONTRIBUTING.md#have-a-patch) and be sure to add t
  - Links to the repository/website of the library being integrated
  - Screenshots showing a sample trace
  - Any additional code snippets, sample apps, benchmarks, or other resources that demonstrate its implementation are a huge plus!
-
-### Custom transport adapters
-
-The tracer can be configured with transports that customize how data is sent and where it is sent to. This is done through the use of adapters: classes that receive generic requests, process them, and return appropriate responses.
-
-#### Developing HTTP transport adapters
-
-To create a custom HTTP adapter, define a class that responds to `call(env)` which returns a kind of `Datadog::Transport::Response`:
-
-```ruby
-require 'ddtrace/transport/response'
-
-class CustomAdapter
-  # Sends HTTP request
-  # env: Datadog::Transport::HTTP::Env
-  def call(env)
-    # Add custom code here to send data.
-    # Then return a Response object.
-    Response.new
-  end
-
-  class Response
-    include Datadog::Transport::Response
-
-    # Implement the following methods as appropriate
-    # for your adapter.
-
-    # Return a String
-    def payload; end
-
-    # Return true/false
-    # Return nil if it does not apply
-    def ok?; end
-    def unsupported?; end
-    def not_found?; end
-    def client_error?; end
-    def server_error?; end
-    def internal_error?; end
-  end
-end
-```
-
-Optionally, you can register the adapter as a well-known type:
-
-```ruby
-Datadog::Transport::HTTP::Builder::REGISTRY.set(CustomAdapter, :custom)
-```
-
-Then pass an adapter instance to the tracer configuration:
-
-```ruby
-Datadog.configure do |c|
-  c.tracing.transport_options = proc { |t|
-    # By name
-    t.adapter :custom
-
-    # By instance
-    custom_adapter = CustomAdapter.new
-    t.adapter custom_adapter
-  }
-end
-```
 
 ### Generating GRPC proto stubs for tests
 

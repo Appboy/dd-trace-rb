@@ -7,7 +7,7 @@ require 'datadog/tracing/contrib/environment_service_name_examples'
 require 'datadog/tracing/contrib/span_attribute_schema_examples'
 require 'datadog/tracing/contrib/peer_service_configuration_examples'
 
-require 'ddtrace'
+require 'datadog'
 require 'trilogy'
 
 RSpec.describe 'Trlogy::Client patcher' do
@@ -85,6 +85,7 @@ RSpec.describe 'Trlogy::Client patcher' do
 
           expect(spans.count).to eq(1)
           expect(span.get_tag('span.kind')).to eq('client')
+          expect(span.get_tag('db.instance')).to eq(database)
           expect(span.get_tag('trilogy.db.name')).to eq(database)
           expect(span.get_tag('out.host')).to eq(host)
           expect(span.get_tag('out.port')).to eq(port.to_f)

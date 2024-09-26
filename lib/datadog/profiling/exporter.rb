@@ -1,5 +1,7 @@
-require_relative 'ext'
-require_relative 'tag_builder'
+# frozen_string_literal: true
+
+require_relative "ext"
+require_relative "tag_builder"
 
 module Datadog
   module Profiling
@@ -52,13 +54,14 @@ module Datadog
 
       def flush
         worker_stats = @worker.stats_and_reset_not_thread_safe
-        start, finish, compressed_pprof = pprof_recorder.serialize
+        serialization_result = pprof_recorder.serialize
+        return if serialization_result.nil?
+
+        start, finish, compressed_pprof, profile_stats = serialization_result
         @last_flush_finish_at = finish
 
-        return if compressed_pprof.nil? # We don't want to report empty profiles
-
         if duration_below_threshold?(start, finish)
-          Datadog.logger.debug('Skipped exporting profiling events as profile duration is below minimum')
+          Datadog.logger.debug("Skipped exporting profiling events as profile duration is below minimum")
           return
         end
 
@@ -75,6 +78,8 @@ module Datadog
           internal_metadata: internal_metadata.merge(
             {
               worker_stats: worker_stats,
+              profile_stats: profile_stats,
+              recorder_stats: pprof_recorder.stats,
               gc: GC.stat,
             }
           ),

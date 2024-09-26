@@ -11,11 +11,6 @@
 static VALUE ok_symbol = Qnil; // :ok in Ruby
 static VALUE error_symbol = Qnil; // :error in Ruby
 
-static ID agentless_id; // id of :agentless in Ruby
-static ID agent_id; // id of :agent in Ruby
-
-static ID log_failure_to_process_tag_id; // id of :log_failure_to_process_tag in Ruby
-
 static VALUE library_version_string = Qnil;
 
 struct call_exporter_without_gvl_arguments {
@@ -26,13 +21,10 @@ struct call_exporter_without_gvl_arguments {
   bool send_ran;
 };
 
-inline static ddog_ByteSlice byte_slice_from_ruby_string(VALUE string);
+static inline ddog_ByteSlice byte_slice_from_ruby_string(VALUE string);
 static VALUE _native_validate_exporter(VALUE self, VALUE exporter_configuration);
 static ddog_prof_Exporter_NewResult create_exporter(VALUE exporter_configuration, VALUE tags_as_array);
 static VALUE handle_exporter_failure(ddog_prof_Exporter_NewResult exporter_result);
-static ddog_Endpoint endpoint_from(VALUE exporter_configuration);
-static ddog_Vec_Tag convert_tags(VALUE tags_as_array);
-static void safely_log_failure_to_process_tag(ddog_Vec_Tag tags, VALUE err_details);
 static VALUE _native_do_export(
   VALUE self,
   VALUE exporter_configuration,
@@ -60,15 +52,12 @@ void http_transport_init(VALUE profiling_module) {
 
   ok_symbol = ID2SYM(rb_intern_const("ok"));
   error_symbol = ID2SYM(rb_intern_const("error"));
-  agentless_id = rb_intern_const("agentless");
-  agent_id = rb_intern_const("agent");
-  log_failure_to_process_tag_id = rb_intern_const("log_failure_to_process_tag");
 
-  library_version_string = ddtrace_version();
+  library_version_string = datadog_gem_version();
   rb_global_variable(&library_version_string);
 }
 
-inline static ddog_ByteSlice byte_slice_from_ruby_string(VALUE string) {
+static inline ddog_ByteSlice byte_slice_from_ruby_string(VALUE string) {
   ENFORCE_TYPE(string, T_STRING);
   ddog_ByteSlice byte_slice = {.ptr = (uint8_t *) StringValuePtr(string), .len = RSTRING_LEN(string)};
   return byte_slice;
@@ -88,13 +77,39 @@ static VALUE _native_validate_exporter(DDTRACE_UNUSED VALUE _self, VALUE exporte
   return rb_ary_new_from_args(2, ok_symbol, Qnil);
 }
 
+static ddog_prof_Endpoint endpoint_from(VALUE exporter_configuration) {
+  ENFORCE_TYPE(exporter_configuration, T_ARRAY);
+
+  VALUE exporter_working_mode = rb_ary_entry(exporter_configuration, 0);
+  ENFORCE_TYPE(exporter_working_mode, T_SYMBOL);
+  ID working_mode = SYM2ID(exporter_working_mode);
+
+  ID agentless_id = rb_intern("agentless");
+  ID agent_id = rb_intern("agent");
+
+  if (working_mode != agentless_id && working_mode != agent_id) {
+    rb_raise(rb_eArgError, "Failed to initialize transport: Unexpected working mode, expected :agentless or :agent");
+  }
+
+  if (working_mode == agentless_id) {
+    VALUE site = rb_ary_entry(exporter_configuration, 1);
+    VALUE api_key = rb_ary_entry(exporter_configuration, 2);
+
+    return ddog_prof_Endpoint_agentless(char_slice_from_ruby_string(site), char_slice_from_ruby_string(api_key));
+  } else { // agent_id
+    VALUE base_url = rb_ary_entry(exporter_configuration, 1);
+
+    return ddog_prof_Endpoint_agent(char_slice_from_ruby_string(base_url));
+  }
+}
+
 static ddog_prof_Exporter_NewResult create_exporter(VALUE exporter_configuration, VALUE tags_as_array) {
   ENFORCE_TYPE(exporter_configuration, T_ARRAY);
   ENFORCE_TYPE(tags_as_array, T_ARRAY);
 
   // This needs to be called BEFORE convert_tags since it can raise an exception and thus cause the ddog_Vec_Tag
   // to be leaked.
-  ddog_Endpoint endpoint = endpoint_from(exporter_configuration);
+  ddog_prof_Endpoint endpoint = endpoint_from(exporter_configuration);
 
   ddog_Vec_Tag tags = convert_tags(tags_as_array);
 
@@ -116,88 +131,6 @@ static VALUE handle_exporter_failure(ddog_prof_Exporter_NewResult exporter_resul
     rb_ary_new_from_args(2, error_symbol, get_error_details_and_drop(&exporter_result.err));
 }
 
-static ddog_Endpoint endpoint_from(VALUE exporter_configuration) {
-  ENFORCE_TYPE(exporter_configuration, T_ARRAY);
-
-  ID working_mode = SYM2ID(rb_ary_entry(exporter_configuration, 0)); // SYM2ID verifies its input so we can do this safely
-
-  if (working_mode != agentless_id && working_mode != agent_id) {
-    rb_raise(rb_eArgError, "Failed to initialize transport: Unexpected working mode, expected :agentless or :agent");
-  }
-
-  if (working_mode == agentless_id) {
-    VALUE site = rb_ary_entry(exporter_configuration, 1);
-    VALUE api_key = rb_ary_entry(exporter_configuration, 2);
-    ENFORCE_TYPE(site, T_STRING);
-    ENFORCE_TYPE(api_key, T_STRING);
-
-    return ddog_Endpoint_agentless(char_slice_from_ruby_string(site), char_slice_from_ruby_string(api_key));
-  } else { // agent_id
-    VALUE base_url = rb_ary_entry(exporter_configuration, 1);
-    ENFORCE_TYPE(base_url, T_STRING);
-
-    return ddog_Endpoint_agent(char_slice_from_ruby_string(base_url));
-  }
-}
-
-__attribute__((warn_unused_result))
-static ddog_Vec_Tag convert_tags(VALUE tags_as_array) {
-  ENFORCE_TYPE(tags_as_array, T_ARRAY);
-
-  long tags_count = RARRAY_LEN(tags_as_array);
-  ddog_Vec_Tag tags = ddog_Vec_Tag_new();
-
-  for (long i = 0; i < tags_count; i++) {
-    VALUE name_value_pair = rb_ary_entry(tags_as_array, i);
-
-    if (!RB_TYPE_P(name_value_pair, T_ARRAY)) {
-      ddog_Vec_Tag_drop(tags);
-      ENFORCE_TYPE(name_value_pair, T_ARRAY);
-    }
-
-    // Note: We can index the array without checking its size first because rb_ary_entry returns Qnil if out of bounds
-    VALUE tag_name = rb_ary_entry(name_value_pair, 0);
-    VALUE tag_value = rb_ary_entry(name_value_pair, 1);
-
-    if (!(RB_TYPE_P(tag_name, T_STRING) && RB_TYPE_P(tag_value, T_STRING))) {
-      ddog_Vec_Tag_drop(tags);
-      ENFORCE_TYPE(tag_name, T_STRING);
-      ENFORCE_TYPE(tag_value, T_STRING);
-    }
-
-    ddog_Vec_Tag_PushResult push_result =
-      ddog_Vec_Tag_push(&tags, char_slice_from_ruby_string(tag_name), char_slice_from_ruby_string(tag_value));
-
-    if (push_result.tag == DDOG_VEC_TAG_PUSH_RESULT_ERR) {
-      // libdatadog validates tags and may catch invalid tags that ddtrace didn't actually catch.
-      // We warn users about such tags, and then just ignore them.
-      safely_log_failure_to_process_tag(tags, get_error_details_and_drop(&push_result.err));
-    }
-  }
-
-  return tags;
-}
-
-static VALUE log_failure_to_process_tag(VALUE err_details) {
-  VALUE datadog_module = rb_const_get(rb_cObject, rb_intern("Datadog"));
-  VALUE profiling_module = rb_const_get(datadog_module, rb_intern("Profiling"));
-  VALUE http_transport_class = rb_const_get(profiling_module, rb_intern("HttpTransport"));
-
-  return rb_funcall(http_transport_class, log_failure_to_process_tag_id, 1, err_details);
-}
-
-// Since we are calling into Ruby code, it may raise an exception. This method ensure that dynamically-allocated tags
-// get cleaned before propagating the exception.
-static void safely_log_failure_to_process_tag(ddog_Vec_Tag tags, VALUE err_details) {
-  int exception_state;
-  rb_protect(log_failure_to_process_tag, err_details, &exception_state);
-
-  if (exception_state) {           // An exception was raised
-    ddog_Vec_Tag_drop(tags); // clean up
-    rb_jump_tag(exception_state);  // "Re-raise" exception
-  }
-}
-
 // Note: This function handles a bunch of libdatadog dynamically-allocated objects, so it MUST not use any Ruby APIs
 // which can raise exceptions, otherwise the objects will be leaked.
 static VALUE perform_export(
@@ -208,8 +141,7 @@ static VALUE perform_export(
   ddog_prof_Exporter_Slice_File files_to_export_unmodified,
   ddog_Vec_Tag *additional_tags,
   ddog_CharSlice internal_metadata,
-  ddog_CharSlice info,
-  uint64_t timeout_milliseconds
+  ddog_CharSlice info
 ) {
   ddog_prof_ProfiledEndpointsStats *endpoints_stats = NULL; // Not in use yet
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
@@ -221,8 +153,7 @@ static VALUE perform_export(
     additional_tags,
     endpoints_stats,
     &internal_metadata,
-    &info,
-    timeout_milliseconds
+    &info
   );
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {
@@ -347,6 +278,15 @@ static VALUE _native_do_export(
   VALUE failure_tuple = handle_exporter_failure(exporter_result);
   if (!NIL_P(failure_tuple)) return failure_tuple;
 
+  ddog_prof_MaybeError timeout_result = ddog_prof_Exporter_set_timeout(exporter_result.ok, timeout_milliseconds);
+  if (timeout_result.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
+    // NOTE: Seems a bit harsh to fail the upload if we can't set a timeout. OTOH, this is only expected to fail
+    // if the exporter is not well built. Because such a situation should already be caught above I think it's
+    // preferable to leave this here as a virtually unreachable exception rather than ignoring it.
+    ddog_prof_Exporter_drop(exporter_result.ok);
+    return rb_ary_new_from_args(2, error_symbol, get_error_details_and_drop(&timeout_result.some));
+  }
+
   return perform_export(
     exporter_result.ok,
     start,
@@ -355,8 +295,7 @@ static VALUE _native_do_export(
     files_to_export_unmodified,
     null_additional_tags,
     internal_metadata,
-    info,
-    timeout_milliseconds
+    info
   );
 }
 

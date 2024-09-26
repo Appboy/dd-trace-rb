@@ -1,3 +1,7 @@
+# frozen_string_literal: true
+
+require_relative "../core/telemetry/logger"
+
 module Datadog
   module Profiling
     # Stores stack samples in a native libdatadog data structure and expose Ruby-level serialization APIs
@@ -31,15 +35,16 @@ module Datadog
         status, result = @no_concurrent_synchronize_mutex.synchronize { self.class._native_serialize(self) }
 
         if status == :ok
-          start, finish, encoded_pprof = result
+          start, finish, encoded_pprof, profile_stats = result
 
           Datadog.logger.debug { "Encoded profile covering #{start.iso8601} to #{finish.iso8601}" }
 
-          [start, finish, encoded_pprof]
+          [start, finish, encoded_pprof, profile_stats]
         else
           error_message = result
 
           Datadog.logger.error("Failed to serialize profiling data: #{error_message}")
+          Datadog::Core::Telemetry::Logger.error("Failed to serialize profiling data")
 
           nil
         end
@@ -61,6 +66,10 @@ module Datadog
 
       def reset_after_fork
         self.class._native_reset_after_fork(self)
+      end
+
+      def stats
+        self.class._native_stats(self)
       end
     end
   end

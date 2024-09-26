@@ -58,7 +58,7 @@ module Datadog
         def to_msgpack(packer = nil)
           packer ||= MessagePack::Packer.new
 
-          number_of_elements_to_write = 10
+          number_of_elements_to_write = 11
 
           if span.stopped?
             packer.write_map_header(number_of_elements_to_write + 2) # Set header with how many elements in the map
@@ -71,6 +71,9 @@ module Datadog
           else
             packer.write_map_header(number_of_elements_to_write) # Set header with how many elements in the map
           end
+
+          # serialize span events as meta tags
+          span.set_tag('events', span.events.map(&:to_hash).to_json) if span.events.any?
 
           # DEV: We use strings as keys here, instead of symbols, as
           # DEV: MessagePack will ultimately convert them to strings.
@@ -93,6 +96,8 @@ module Datadog
           packer.write(span.meta)
           packer.write('metrics')
           packer.write(span.metrics)
+          packer.write('span_links')
+          packer.write(span.links.map(&:to_hash))
           packer.write('error')
           packer.write(span.status)
           packer

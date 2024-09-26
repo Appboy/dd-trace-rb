@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require_relative '../../core/worker'
 require_relative '../../core/workers/async'
 require_relative '../../core/workers/polling'
@@ -41,7 +43,7 @@ module Datadog
           traces = process_traces(traces)
           flush_traces(traces)
         rescue StandardError => e
-          Datadog.logger.error(
+          Datadog.logger.warn(
             "Error while writing traces: dropped #{traces.length} items. Cause: #{e} Location: #{Array(e.backtrace).first}"
           )
         end

@@ -1,9 +1,3 @@
-appraise 'hanami-1' do
-  gem 'rack'
-  gem 'rack-test' # Dev dependencies for testing rack-based code
-  gem 'hanami', '~> 1'
-end
-
 appraise 'rails5-mysql2' do
   gem 'rails', '~> 5.2.1'
   gem 'activerecord-jdbcmysql-adapter', platform: :jruby
@@ -170,6 +164,11 @@ end
 appraise 'aws' do
   gem 'aws-sdk'
   gem 'shoryuken'
+
+  # https://www.ruby-lang.org/en/news/2024/05/16/dos-rexml-cve-2024-35176/
+  # `rexml` 3.2.7+ breaks because of strscan incompatibility
+  # `strsan` 3.1.0 does not fix the issue and raise TypeError when StringScanner#scan is given a string instead of Regexp
+  gem 'rexml', '= 3.2.6'
 end
 
 appraise 'http' do
@@ -187,21 +186,12 @@ appraise 'http' do
   gem 'http', '~> 4' # TODO: Fix test breakage and flakiness for 5+
   gem 'httpclient'
   gem 'rest-client'
-  gem 'stripe', '~> 7.0'
   gem 'typhoeus'
 end
 
-[2, 3].each do |n|
-  appraise "opensearch-#{n}" do
-    gem 'opensearch-ruby', "~> #{n}"
-  end
-end
-
-[7, 8].each do |n|
-  appraise "elasticsearch-#{n}" do
-    gem 'elasticsearch', "~> #{n}"
-  end
-end
+build_coverage_matrix('stripe', 7..12, min: '5.15.0')
+build_coverage_matrix('opensearch', 2..3, gem: 'opensearch-ruby')
+build_coverage_matrix('elasticsearch', 7..8)
 
 appraise 'relational_db' do
   gem 'activerecord', '~> 5'
@@ -210,7 +200,7 @@ appraise 'relational_db' do
   gem 'makara'
   gem 'activerecord-jdbcmysql-adapter', '>= 52', platform: :jruby
   gem 'activerecord-jdbcpostgresql-adapter', '>= 52', platform: :jruby
-  gem 'sequel', '~> 5.54.0' # TODO: Support sequel 5.62.0+
+  gem 'sequel'
   gem 'activerecord-jdbcsqlite3-adapter', '>= 52', platform: :jruby
 end
 
@@ -245,30 +235,23 @@ end
 
 [
   '2.0',
-  '1.13',
-  '1.12',
 ].each do |v|
   appraise "graphql-#{v}" do
+    gem 'rails', '~> 6.1.0'
     gem 'graphql', "~> #{v}.0"
+    gem 'sprockets', '< 4'
+    gem 'lograge', '~> 0.11'
   end
 end
 
-[1, 2, 3].each do |n|
-  appraise "rack-#{n}" do
-    gem 'rack', "~> #{n}"
+build_coverage_matrix('rack', 1..3, meta: { 'rack-contrib' => nil, 'rack-test' => nil })
+
+[2].each do |n|
+  appraise "sinatra-#{n}" do
+    gem 'sinatra', "~> #{n}"
     gem 'rack-contrib'
     gem 'rack-test' # Dev dependencies for testing rack-based code
   end
-end
-
-appraise 'sinatra' do
-  gem 'sinatra'
-  gem 'rack-contrib'
-  gem 'rack-test' # Dev dependencies for testing rack-based code
-end
-
-appraise 'opentracing' do
-  gem 'opentracing', '>= 0.4.1'
 end
 
 [3, 4, 5].each do |n|

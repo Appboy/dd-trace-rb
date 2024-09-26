@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require_relative 'buffer'
 require_relative 'pipeline'
 
@@ -54,7 +56,7 @@ module Datadog
             # ensures that the thread will not die because of an exception.
             # TODO[manu]: findout the reason and reschedule the send if it's not
             # a fatal exception
-            Datadog.logger.error(
+            Datadog.logger.warn(
               "Error during traces flush: dropped #{traces.length} items. Cause: #{e} Location: #{Array(e.backtrace).first}"
             )
           end

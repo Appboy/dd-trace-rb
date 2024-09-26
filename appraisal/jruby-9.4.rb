@@ -1,8 +1,6 @@
-# TODO: Actually test JRuby 9.4
-
 appraise 'rails61-mysql2' do
   gem 'rails', '~> 6.1.0'
-  gem 'activerecord-jdbcmysql-adapter', platform: :jruby
+  gem 'activerecord-jdbcmysql-adapter', '~> 61.0', platform: :jruby
   gem 'sprockets', '< 4'
   gem 'lograge', '~> 0.11'
   gem 'net-smtp'
@@ -65,30 +63,21 @@ appraise 'http' do
   gem 'http', '~> 4' # TODO: Completely broken with this JRuby version, this has not be validate on CI
   gem 'httpclient'
   gem 'rest-client'
-  gem 'stripe'
   gem 'typhoeus'
 end
 
-[2, 3].each do |n|
-  appraise "opensearch-#{n}" do
-    gem 'opensearch-ruby', "~> #{n}"
-  end
-end
-
-[7, 8].each do |n|
-  appraise "elasticsearch-#{n}" do
-    gem 'elasticsearch', "~> #{n}"
-  end
-end
+build_coverage_matrix('stripe', 7..12, min: '5.15.0')
+build_coverage_matrix('opensearch', 2..3, gem: 'opensearch-ruby')
+build_coverage_matrix('elasticsearch', 7..8)
 
 appraise 'relational_db' do
-  gem 'activerecord', '~> 7'
+  gem 'activerecord', '~> 6.1.0'
   gem 'delayed_job'
   gem 'delayed_job_active_record'
   gem 'makara', '>= 0.6.0.pre' # Ruby 3 requires >= 0.6.0, which is currently in pre-release: https://rubygems.org/gems/makara/versions
-  gem 'activerecord-jdbcmysql-adapter', platform: :jruby
-  gem 'activerecord-jdbcpostgresql-adapter', platform: :jruby
-  gem 'sequel', '~> 5.54.0' # TODO: Support sequel 5.62.0+
+  gem 'activerecord-jdbcmysql-adapter', '~> 61.0', platform: :jruby
+  gem 'activerecord-jdbcpostgresql-adapter', '~> 61.0', platform: :jruby
+  gem 'sequel'
   gem 'jdbc-sqlite3', '>= 3.28', platform: :jruby
 end
 
@@ -120,14 +109,17 @@ appraise 'contrib' do
 end
 
 [
+  '2.3',
   '2.2',
   '2.1',
   '2.0',
   '1.13',
-  '1.12',
 ].each do |v|
   appraise "graphql-#{v}" do
+    gem 'rails', '~> 6.1.0'
     gem 'graphql', "~> #{v}.0"
+    gem 'sprockets', '< 4'
+    gem 'lograge', '~> 0.11'
   end
 end
 
@@ -137,22 +129,14 @@ end
   end
 end
 
-[1, 2, 3].each do |n|
-  appraise "rack-#{n}" do
-    gem 'rack', "~> #{n}"
+build_coverage_matrix('rack', 1..3, meta: { 'rack-contrib' => nil, 'rack-test' => nil })
+
+[2, 3, 4].each do |n|
+  appraise "sinatra-#{n}" do
+    gem 'sinatra', "~> #{n}"
     gem 'rack-contrib'
     gem 'rack-test' # Dev dependencies for testing rack-based code
   end
-end
-
-appraise 'sinatra' do
-  gem 'sinatra', '>= 3'
-  gem 'rack-contrib'
-  gem 'rack-test' # Dev dependencies for testing rack-based code
-end
-
-appraise 'opentracing' do
-  gem 'opentracing', '>= 0.4.1'
 end
 
 appraise 'contrib-old' do
