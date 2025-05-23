@@ -14,11 +14,11 @@
 static VALUE missing_string = Qnil;
 
 // Used as scratch space during sampling
-struct sampling_buffer {
+struct sampling_buffer { // Note: typedef'd in the header to sampling_buffer
   uint16_t max_frames;
   ddog_prof_Location *locations;
   frame_info *stack_buffer;
-}; // Note: typedef'd in the header to sampling_buffer
+};
 
 static VALUE _native_sample(int argc, VALUE *argv, DDTRACE_UNUSED VALUE _self);
 static VALUE native_sample_do(VALUE args);
@@ -44,7 +44,7 @@ void collectors_stack_init(VALUE profiling_module) {
   rb_global_variable(&missing_string);
 }
 
-struct native_sample_args {
+typedef struct {
   VALUE in_gc;
   VALUE recorder_instance;
   sample_values values;
@@ -52,7 +52,7 @@ struct native_sample_args {
   VALUE thread;
   ddog_prof_Location *locations;
   sampling_buffer *buffer;
-};
+} native_sample_args;
 
 // This method exists only to enable testing Datadog::Profiling::Collectors::Stack behavior using RSpec.
 // It SHOULD NOT be used for other purposes.
@@ -123,7 +123,7 @@ static VALUE _native_sample(int argc, VALUE *argv, DDTRACE_UNUSED VALUE _self) {
 
   ddog_prof_Slice_Label slice_labels = {.ptr = labels, .len = labels_count};
 
-  struct native_sample_args args_struct = {
+  native_sample_args args_struct = {
     .in_gc = in_gc,
     .recorder_instance = recorder_instance,
     .values = values,
@@ -137,7 +137,7 @@ static VALUE _native_sample(int argc, VALUE *argv, DDTRACE_UNUSED VALUE _self) {
 }
 
 static VALUE native_sample_do(VALUE args) {
-  struct native_sample_args *args_struct = (struct native_sample_args *) args;
+  native_sample_args *args_struct = (native_sample_args *) args;
 
   if (args_struct->in_gc == Qtrue) {
     record_placeholder_stack(
@@ -160,7 +160,7 @@ static VALUE native_sample_do(VALUE args) {
 }
 
 static VALUE native_sample_ensure(VALUE args) {
-  struct native_sample_args *args_struct = (struct native_sample_args *) args;
+  native_sample_args *args_struct = (native_sample_args *) args;
 
   ruby_xfree(args_struct->locations);
   sampling_buffer_free(args_struct->buffer);
@@ -217,7 +217,10 @@ void sample_thread(
   ddog_prof_Label *state_label = labels.state_label;
   bool cpu_or_wall_sample = values.cpu_or_wall_samples > 0;
   bool has_cpu_time = cpu_or_wall_sample && values.cpu_time_ns > 0;
-  bool only_wall_time = cpu_or_wall_sample && values.cpu_time_ns == 0 && values.wall_time_ns > 0;
+  // Note: In theory, a cpu_or_wall_sample should always have some wall-time. In practice, the first sample for a thread
+  // will be zero, as well as if the system clock does something weird. Thus, at some point we had values.wall_time_ns > 0
+  // here, but >= 0 makes this easier to understand/debug.
+  bool only_wall_time = cpu_or_wall_sample && values.cpu_time_ns == 0 && values.wall_time_ns >= 0;
 
   if (cpu_or_wall_sample && state_label == NULL) rb_raise(rb_eRuntimeError, "BUG: Unexpected missing state_label");
 
@@ -297,7 +300,7 @@ void sample_thread(
     }
 
     buffer->locations[i] = (ddog_prof_Location) {
-      .mapping = {.filename = DDOG_CHARSLICE_C(""), .build_id = DDOG_CHARSLICE_C("")},
+      .mapping = {.filename = DDOG_CHARSLICE_C(""), .build_id = DDOG_CHARSLICE_C(""), .build_id_id = {}},
       .function = (ddog_prof_Function) {.name = name_slice, .filename = filename_slice},
       .line = line,
     };
@@ -376,7 +379,7 @@ static void maybe_add_placeholder_frames_omitted(VALUE thread, sampling_buffer* 
   ddog_CharSlice function_name = DDOG_CHARSLICE_C("");
   ddog_CharSlice function_filename = {.ptr = frames_omitted_message, .len = strlen(frames_omitted_message)};
   buffer->locations[buffer->max_frames - 1] = (ddog_prof_Location) {
-    .mapping = {.filename = DDOG_CHARSLICE_C(""), .build_id = DDOG_CHARSLICE_C("")},
+    .mapping = {.filename = DDOG_CHARSLICE_C(""), .build_id = DDOG_CHARSLICE_C(""), .build_id_id = {}},
     .function = (ddog_prof_Function) {.name = function_name, .filename = function_filename},
     .line = 0,
   };
@@ -423,7 +426,7 @@ void record_placeholder_stack(
   ddog_CharSlice placeholder_stack
 ) {
   ddog_prof_Location placeholder_location = {
-    .mapping = {.filename = DDOG_CHARSLICE_C(""), .build_id = DDOG_CHARSLICE_C("")},
+    .mapping = {.filename = DDOG_CHARSLICE_C(""), .build_id = DDOG_CHARSLICE_C(""), .build_id_id = {}},
     .function = {.name = DDOG_CHARSLICE_C(""), .filename = placeholder_stack},
     .line = 0,
   };

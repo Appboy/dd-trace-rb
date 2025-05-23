@@ -19,14 +19,7 @@ class ProfilerSampleSerializeBenchmark
 
   def create_profiler
     timeline_enabled = ENV['TIMELINE'] == 'true'
-    @recorder = Datadog::Profiling::StackRecorder.new(
-      cpu_time_enabled: true,
-      alloc_samples_enabled: false,
-      heap_samples_enabled: false,
-      heap_size_enabled: false,
-      heap_sample_every: 1,
-      timeline_enabled: timeline_enabled,
-    )
+    @recorder = Datadog::Profiling::StackRecorder.for_testing(timeline_enabled: timeline_enabled)
     @collector = Datadog::Profiling::Collectors::ThreadContext.for_testing(recorder: @recorder, timeline_enabled: timeline_enabled)
   end
 
@@ -42,7 +35,7 @@ class ProfilerSampleSerializeBenchmark
         simulate_seconds = 60
 
         (samples_per_second * simulate_seconds).times do
-          Datadog::Profiling::Collectors::ThreadContext::Testing._native_sample(@collector, PROFILER_OVERHEAD_STACK_THREAD)
+          Datadog::Profiling::Collectors::ThreadContext::Testing._native_sample(@collector, PROFILER_OVERHEAD_STACK_THREAD, false)
         end
 
         @recorder.serialize

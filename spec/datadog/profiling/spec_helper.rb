@@ -38,12 +38,12 @@ module ProfileHelpers
       "Try running `bundle exec rake compile` before running this test."
   end
 
-  def decode_profile(pprof_data)
-    ::Perftools::Profiles::Profile.decode(LZ4.decode(pprof_data))
+  def decode_profile(encoded_profile)
+    ::Perftools::Profiles::Profile.decode(LZ4.decode(encoded_profile._native_bytes))
   end
 
-  def samples_from_pprof(pprof_data)
-    decoded_profile = decode_profile(pprof_data)
+  def samples_from_pprof(encoded_profile)
+    decoded_profile = decode_profile(encoded_profile)
 
     string_table = decoded_profile.string_table
     pretty_sample_types = decoded_profile.sample_type.map { |it| string_table[it.type].to_sym }
@@ -96,22 +96,6 @@ module ProfileHelpers
     samples_for_thread(samples, thread, expected_size: 1).first
   end
 
-  # We disable heap_sample collection by default in tests since it requires some extra mocking/
-  # setup for it to properly work.
-  def build_stack_recorder(
-    heap_samples_enabled: false, heap_size_enabled: false, heap_sample_every: 1,
-    timeline_enabled: false
-  )
-    Datadog::Profiling::StackRecorder.new(
-      cpu_time_enabled: true,
-      alloc_samples_enabled: true,
-      heap_samples_enabled: heap_samples_enabled,
-      heap_size_enabled: heap_size_enabled,
-      heap_sample_every: heap_sample_every,
-      timeline_enabled: timeline_enabled,
-    )
-  end
-
   def self.maybe_fix_label_range(key, value)
     if [:"local root span id", :"span id"].include?(key) && value < 0
       # pprof labels are defined to be decoded as signed values BUT the backend explicitly interprets these as unsigned
@@ -123,8 +107,8 @@ module ProfileHelpers
   end
 
   def skip_if_gvl_profiling_not_supported(testcase)
-    if RUBY_VERSION < "3.3."
-      testcase.skip "GVL profiling is only supported on Ruby >= 3.3"
+    if RUBY_VERSION < "3.2."
+      testcase.skip "GVL profiling is only supported on Ruby >= 3.2"
     end
   end
 end

@@ -3,7 +3,6 @@
 require 'libdatadog'
 
 require_relative 'tag_builder'
-require_relative 'agent_base_url'
 require_relative '../utils/only_once'
 require_relative '../utils/at_fork_monkey_patch'
 
@@ -31,8 +30,7 @@ module Datadog
 
         def self.build(settings, agent_settings, logger:)
           tags = TagBuilder.call(settings)
-          agent_base_url = AgentBaseUrl.resolve(agent_settings)
-          logger.warn('Missing agent base URL; cannot enable crash tracking') unless agent_base_url
+          agent_base_url = agent_settings.url
 
           ld_library_path = ::Libdatadog.ld_library_path
           logger.warn('Missing ld_library_path; cannot enable crash tracking') unless ld_library_path
@@ -66,7 +64,8 @@ module Datadog
         def start
           Utils::AtForkMonkeyPatch.apply!
 
-          start_or_update_on_fork(action: :start)
+          start_or_update_on_fork(action: :start, tags: tags)
+
           ONLY_ONCE.run do
             Utils::AtForkMonkeyPatch.at_fork(:child) do
               # Must NOT reference `self` here, as only the first instance will
@@ -77,8 +76,10 @@ module Datadog
           end
         end
 
-        def update_on_fork
-          start_or_update_on_fork(action: :update_on_fork)
+        def update_on_fork(settings: Datadog.configuration)
+          # Here we pick up the latest settings, so that we pick up any tags that change after forking
+          # such as the pid or runtime-id
+          start_or_update_on_fork(action: :update_on_fork, tags: TagBuilder.call(settings))
         end
 
         def stop
@@ -92,7 +93,7 @@ module Datadog
 
         attr_reader :tags, :agent_base_url, :ld_library_path, :path_to_crashtracking_receiver_binary, :logger
 
-        def start_or_update_on_fork(action:)
+        def start_or_update_on_fork(action:, tags:)
           self.class._native_start_or_update_on_fork(
             action: action,
             agent_base_url: agent_base_url,
@@ -101,7 +102,7 @@ module Datadog
             tags_as_array: tags.to_a,
             upload_timeout_seconds: 1
           )
-          logger.debug("Crash tracking #{action} successfully")
+          logger.debug("Crash tracking action: #{action} successful")
         rescue => e
           logger.error("Failed to #{action} crash tracking: #{e.message}")
         end

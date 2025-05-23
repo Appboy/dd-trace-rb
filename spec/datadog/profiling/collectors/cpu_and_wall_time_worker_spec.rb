@@ -10,11 +10,17 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
   let(:allocation_profiling_enabled) { false }
   let(:heap_profiling_enabled) { false }
   let(:recorder) do
-    build_stack_recorder(heap_samples_enabled: heap_profiling_enabled, heap_size_enabled: heap_profiling_enabled)
+    Datadog::Profiling::StackRecorder.for_testing(
+      alloc_samples_enabled: true,
+      heap_samples_enabled: heap_profiling_enabled,
+      heap_size_enabled: heap_profiling_enabled,
+      **stack_recorder_options,
+    )
   end
   let(:no_signals_workaround_enabled) { false }
   let(:timeline_enabled) { false }
   let(:options) { {} }
+  let(:stack_recorder_options) { {} }
   let(:allocation_counting_enabled) { false }
   let(:gvl_profiling_enabled) { false }
   let(:worker_settings) do
@@ -149,7 +155,7 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
     end
 
     context "when gvl_profiling_enabled is true on an unsupported Ruby" do
-      before { skip "Behavior does not apply to current Ruby version" if RUBY_VERSION >= "3.3." }
+      before { skip "Behavior does not apply to current Ruby version" if RUBY_VERSION >= "3.2." }
 
       let(:gvl_profiling_enabled) { true }
 
@@ -373,8 +379,10 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
       end
 
       after do
-        background_thread.kill
-        background_thread.join
+        unless RSpec.current_example.skipped?
+          background_thread.kill
+          background_thread.join
+        end
       end
 
       it "is able to sample even when the main thread is sleeping" do
@@ -397,7 +405,7 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
         trigger_sample_attempts = stats.fetch(:trigger_sample_attempts)
         signal_handler_enqueued_sample = stats.fetch(:signal_handler_enqueued_sample)
 
-        expect(signal_handler_enqueued_sample.to_f / trigger_sample_attempts).to (be >= 0.6), \
+        expect(signal_handler_enqueued_sample.to_f / trigger_sample_attempts).to (be >= 0.6),
           "Expected at least 60% of signals to be delivered to correct thread (#{stats})"
 
         # Sanity checking
@@ -441,6 +449,8 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
 
           sleep 0.2
 
+          threads = Thread.list
+
           cpu_and_wall_time_worker.stop
 
           background_thread.kill
@@ -451,27 +461,106 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
             background_thread_affected_by_gvl_contention
           ).sort_by { |s| s.labels.fetch(:end_timestamp_ns) }
 
+          thread_activity_time =
+            samples
+              .group_by { |s| s.labels[:state] }
+              .map { |state, state_samples| [state, state_samples.sum { |s| s.values.fetch(:"wall-time") }] }.to_h
+
           # Because the background_thread_affected_by_gvl_contention starts BEFORE the profiler, the first few samples
-          # will have an unknown state because the profiler may have missed the beginning of the Waiting for GVL
+          # will have a sequence of unknown states because the profiler may have missed the beginning of the
+          # Waiting for GVL (and cannot categorize the state yet).
+          #
+          # In these cases, the pattern will be "unknown (one or more times), had cpu, waiting for gvl".
+          #
+          # In rare cases, we observe the background_thread_affected_by_gvl_contention just as it's starting the
+          # Waiting for GVL. Because "starting the Waiting for GVL" still uses a bit of CPU, we'll see
+          # "unknown, had cpu, unknown (one or more times), had cpu, waiting for gvl".
           #
           # So that the below assertions make sense (and are not flaky), we drop these first few samples from our
           # consideration
-          missed_by_profiler_time =
-            samples.take_while { |s| s.labels[:state] == "unknown" }.sum { |sample| sample.values.fetch(:"wall-time") }
 
-          waiting_for_gvl_samples = samples.select { |sample| sample.labels[:state] == "waiting for gvl" }
+          found_first_cpu = false
+          missed_by_profiler_time =
+            samples
+              .take_while do |s|
+                if s.labels[:state] == "unknown"
+                  true
+                elsif s.labels[:state] == "had cpu" && !found_first_cpu
+                  found_first_cpu = true
+                  true
+                end
+              end.sum { |sample| sample.values.fetch(:"wall-time") }
+
           total_time = samples.sum { |sample| sample.values.fetch(:"wall-time") } - missed_by_profiler_time
+          waiting_for_gvl_samples = samples.select { |sample| sample.labels[:state] == "waiting for gvl" }
           waiting_for_gvl_time = waiting_for_gvl_samples.sum { |sample| sample.values.fetch(:"wall-time") }
 
-          expect(waiting_for_gvl_samples.size).to be > 0
+          debug_failures = {
+            thread_activity_time: thread_activity_time,
+            missed_by_profiler_time: missed_by_profiler_time,
+            total_time: total_time,
+            waiting_for_gvl_time: waiting_for_gvl_time,
+            sample_states: samples.map { |s| s.labels[:state] },
+            samples: samples.map { |s| [s.values, s.labels] },
+            threads: threads.map { |t| [t.inspect, t.object_id] }
+          }
 
           # The background thread should spend almost all of its time waiting to run (since when it gets to run
           # it just passes and starts waiting)
-          expect(total_time).to be >= 200_000_000 # This test should run for at least 200ms, which is how long we sleep for
-          expect(waiting_for_gvl_time).to be < total_time
-          expect(waiting_for_gvl_time).to be_within(5).percent_of(total_time)
 
-          expect(cpu_and_wall_time_worker.stats.fetch(:after_gvl_running)).to be > 0
+          # This test should run for at least 200ms, which is how long we sleep for
+          # (unless somehow the missed_by_profiler_time is too big?)
+          expect(total_time).to be >= 200_000_000
+          expect(waiting_for_gvl_time).to be < total_time
+          expect(waiting_for_gvl_time).to be_within(5).percent_of(total_time),
+            "Expected waiting_for_gvl_time to be close to total_time, debug_failures: #{debug_failures}"
+
+          expect(cpu_and_wall_time_worker.stats).to match(
+            hash_including(
+              after_gvl_running: be > 0,
+              gvl_sampling_time_ns_min: be > 0,
+              gvl_sampling_time_ns_max: be > 0,
+              gvl_sampling_time_ns_total: be > 0,
+              gvl_sampling_time_ns_avg: be > 0,
+            )
+          )
+        end
+
+        context "when 'Waiting for GVL' periods are below waiting_for_gvl_threshold_ns" do
+          let(:options) do
+            ten_seconds_as_ns = 1_000_000_000
+            collector = build_thread_context_collector(recorder, waiting_for_gvl_threshold_ns: ten_seconds_as_ns)
+
+            {thread_context_collector: collector}
+          end
+
+          it "does not trigger extra samples" do
+            background_thread_affected_by_gvl_contention
+            ready_queue_2.pop
+
+            start
+            wait_until_running
+
+            sleep 0.1
+            background_thread_affected_by_gvl_contention.kill
+
+            cpu_and_wall_time_worker.stop
+
+            # Note: There may still be "Waiting for GVL" samples in the output, but these samples will come from the
+            # periodic cpu/wall-sampling, not samples directly triggered by the end of a "Waiting for GVL" period.
+
+            expect(cpu_and_wall_time_worker.stats.fetch(:gvl_dont_sample)).to be > 0
+
+            expect(cpu_and_wall_time_worker.stats).to match(
+              hash_including(
+                after_gvl_running: 0,
+                gvl_sampling_time_ns_min: nil,
+                gvl_sampling_time_ns_max: nil,
+                gvl_sampling_time_ns_total: nil,
+                gvl_sampling_time_ns_avg: nil,
+              )
+            )
+          end
         end
       end
     end
@@ -499,7 +588,7 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
         trigger_sample_attempts = stats.fetch(:trigger_sample_attempts)
         simulated_signal_delivery = stats.fetch(:simulated_signal_delivery)
 
-        expect(simulated_signal_delivery.to_f / trigger_sample_attempts).to (be >= 0.8), \
+        expect(simulated_signal_delivery.to_f / trigger_sample_attempts).to (be >= 0.8),
           "Expected at least 80% of signals to be simulated, stats: #{stats}, debug_failures: #{debug_failures}"
 
         # Sanity checking
@@ -530,7 +619,7 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
           # To avoid the flakiness, I've added a dummy margin here but... yeah in practice this can happen as many times
           # as we try to sample.
           margin = 1
-          expect(trigger_sample_attempts).to (be >= (sample_count - margin)), \
+          expect(trigger_sample_attempts).to (be >= (sample_count - margin)),
             "sample_count: #{sample_count}, stats: #{stats}, debug_failures: #{debug_failures}"
         end
       end
@@ -778,6 +867,17 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
         expect(Datadog.logger).to receive(:warn).with(/dynamic sampling rate disabled/)
       end
 
+      after do |example|
+        # This is here to facilitate troubleshooting when this test fails. Otherwise
+        # it's very hard to understand what may be happening.
+        if example.exception
+          cpu_and_wall_time_worker.stop
+
+          puts("Heap recorder debugging info:")
+          puts(Datadog::Profiling::StackRecorder::Testing._native_debug_heap_recorder(recorder))
+        end
+      end
+
       it "records live heap objects" do
         stub_const("CpuAndWallTimeWorkerSpec::TestStruct", Struct.new(:foo))
 
@@ -816,6 +916,78 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
         # 40 is the size of a basic object and we have test_num_allocated_object of them
         expect(total_size).to eq test_num_allocated_object * 40
       end
+
+      describe "heap cleanup after GC" do
+        let(:options) { {dynamic_sampling_rate_enabled: false} }
+
+        let(:cleared_object_id) do
+          stub_const("CpuAndWallTimeWorkerSpec::TestStruct", Struct.new(:foo))
+
+          start
+
+          # Force a full GC to make sure there's no incremental GC going on at this point
+          GC.start
+
+          test_object = CpuAndWallTimeWorkerSpec::TestStruct.new
+          test_object_id = test_object.object_id
+
+          expect(
+            Datadog::Profiling::StackRecorder::Testing._native_is_object_recorded?(recorder, test_object_id)
+          ).to be true
+
+          # Let's replace the test_object reference with another object, so that the original one can be GC'd
+          test_object = Object.new # rubocop:disable Lint/UselessAssignment
+
+          # Force an update to happen on the next GC
+          Datadog::Profiling::StackRecorder::Testing._native_heap_recorder_reset_last_update(recorder)
+
+          GC.start
+
+          test_object_id
+        end
+
+        context "when gc_profiling_enabled is enabled" do
+          let(:gc_profiling_enabled) { true }
+
+          context "when heap_clean_after_gc_enabled is enabled in the recorder" do
+            let(:stack_recorder_options) { {**super(), heap_clean_after_gc_enabled: true} }
+
+            it "removes live heap objects after GCs" do
+              expect(
+                Datadog::Profiling::StackRecorder::Testing._native_is_object_recorded?(recorder, cleared_object_id)
+              ).to be false
+            end
+          end
+
+          context "when heap_clean_after_gc_enabled is disabled in the recorder" do
+            let(:stack_recorder_options) { {**super(), heap_clean_after_gc_enabled: false} }
+
+            it "does not remove live heap objects after GCs" do
+              expect(
+                Datadog::Profiling::StackRecorder::Testing._native_is_object_recorded?(recorder, cleared_object_id)
+              ).to be true
+            end
+          end
+        end
+
+        context "when GC profiling is disabled" do
+          let(:gc_profiling_enabled) { false }
+
+          it "does not remove live heap objects after minor GCs" do
+            # The object is still being tracked!
+            expect(
+              Datadog::Profiling::StackRecorder::Testing._native_is_object_recorded?(recorder, cleared_object_id)
+            ).to be true
+
+            # Sanity checking: It stops being tracked after a serialization, proving it was indeed dead, we just hadn't
+            # updated our state yet
+            recorder.serialize!
+            expect(
+              Datadog::Profiling::StackRecorder::Testing._native_is_object_recorded?(recorder, cleared_object_id)
+            ).to be false
+          end
+        end
+      end
     end
 
     context "when heap profiling is disabled" do
@@ -853,7 +1025,7 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
 
         all_samples = try_wait_until do
           samples = samples_from_pprof_without_gc_and_overhead(recorder.serialize!)
-          samples if samples.any?
+          samples if samples_for_thread(samples, process_waiter_thread).any?
         end
 
         cpu_and_wall_time_worker.stop
@@ -1101,6 +1273,11 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
           allocation_sampler_snapshot: nil,
           allocations_during_sample: nil,
           after_gvl_running: 0,
+          gvl_dont_sample: 0,
+          gvl_sampling_time_ns_min: nil,
+          gvl_sampling_time_ns_max: nil,
+          gvl_sampling_time_ns_total: nil,
+          gvl_sampling_time_ns_avg: nil,
         }
       )
     end
@@ -1170,6 +1347,10 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
         end
 
         it "returns different numbers of allocations for different threads" do
+          # GC disabled for the same reason as "returns the exact number of allocations between two calls of the method"
+          # spec above.
+          GC.disable
+
           # To get the exact expected number of allocations, we run this once before so that Ruby can create and cache all
           # it needs to
           new_object = proc { Object.new }
@@ -1199,8 +1380,10 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
           # This test checks that even though we observed 100 allocations in a background thread t1, the counters for
           # the current thread were not affected by this change
 
-          expect(after_t1 - before_t1).to be 100
+          expect(after_t1 - before_t1).to be >= 100
           expect(after_allocations - before_allocations).to be < 10
+        ensure
+          GC.enable
         end
 
         context "when allocation profiling is enabled but allocation counting is disabled" do
@@ -1371,8 +1554,8 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
   # and profiler overhead samples is a source of randomness which causes flakiness in the assertions.
   #
   # We have separate specs that assert on these behaviors.
-  def samples_from_pprof_without_gc_and_overhead(pprof_data)
-    samples_from_pprof(pprof_data)
+  def samples_from_pprof_without_gc_and_overhead(encoded_profile)
+    samples_from_pprof(encoded_profile)
       .reject { |it| it.locations.first.path == "Garbage Collection" }
       .reject { |it| it.labels.include?(:"profiler overhead") }
   end
@@ -1381,11 +1564,12 @@ RSpec.describe Datadog::Profiling::Collectors::CpuAndWallTimeWorker do
     described_class.new(**worker_settings)
   end
 
-  def build_thread_context_collector(recorder)
+  def build_thread_context_collector(recorder, **options)
     Datadog::Profiling::Collectors::ThreadContext.for_testing(
       recorder: recorder,
       endpoint_collection_enabled: endpoint_collection_enabled,
       timeline_enabled: timeline_enabled,
+      **options,
     )
   end
 

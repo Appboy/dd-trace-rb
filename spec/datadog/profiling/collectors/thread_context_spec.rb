@@ -3,13 +3,17 @@ require "datadog/profiling/collectors/thread_context"
 
 RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
   before do
+    @clean_threads_required = false
     skip_if_profiling_not_supported(self)
 
+    @clean_threads_required = true
     [t1, t2, t3].each { ready_queue.pop }
-    expect(Thread.list).to include(Thread.main, t1, t2, t3)
+    expect(Thread.list).to include(t1, t2, t3)
   end
 
-  let(:recorder) { build_stack_recorder(timeline_enabled: timeline_enabled) }
+  let(:recorder) do
+    Datadog::Profiling::StackRecorder.for_testing(alloc_samples_enabled: true, timeline_enabled: timeline_enabled)
+  end
   let(:ready_queue) { Queue.new }
   let(:t1) do
     Thread.new(ready_queue) do |ready_queue|
@@ -39,11 +43,11 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
   let(:tracer) { nil }
   let(:endpoint_collection_enabled) { true }
   let(:timeline_enabled) { false }
-  let(:allocation_type_enabled) { true }
-  # This mirrors the use of INTPTR_MAX for GVL_WAITING_ENABLED_EMPTY in the native code; it may need adjusting if we ever
-  # want to support more platforms
-  let(:gvl_waiting_enabled_empty_magic_value) { 2**63 - 1 }
+  # This mirrors the use of RUBY_FIXNUM_MAX for GVL_WAITING_ENABLED_EMPTY in the native code; it may need adjusting if we
+  # ever want to support more platforms
+  let(:gvl_waiting_enabled_empty_magic_value) { 2**62 - 1 }
   let(:waiting_for_gvl_threshold_ns) { 222_333_444 }
+  let(:otel_context_enabled) { false }
 
   subject(:cpu_and_wall_time_collector) do
     described_class.new(
@@ -53,19 +57,21 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
       endpoint_collection_enabled: endpoint_collection_enabled,
       timeline_enabled: timeline_enabled,
       waiting_for_gvl_threshold_ns: waiting_for_gvl_threshold_ns,
-      allocation_type_enabled: allocation_type_enabled,
+      otel_context_enabled: otel_context_enabled,
     )
   end
 
   after do
-    [t1, t2, t3].each do |thread|
-      thread.kill
-      thread.join
+    if @clean_threads_required
+      [t1, t2, t3].each do |thread|
+        thread.kill
+        thread.join
+      end
     end
   end
 
-  def sample(profiler_overhead_stack_thread: Thread.current)
-    described_class::Testing._native_sample(cpu_and_wall_time_collector, profiler_overhead_stack_thread)
+  def sample(profiler_overhead_stack_thread: Thread.current, allow_exception: false)
+    described_class::Testing._native_sample(cpu_and_wall_time_collector, profiler_overhead_stack_thread, allow_exception)
   end
 
   def on_gc_start
@@ -76,8 +82,8 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
     described_class::Testing._native_on_gc_finish(cpu_and_wall_time_collector)
   end
 
-  def sample_after_gc(reset_monotonic_to_system_state: false)
-    described_class::Testing._native_sample_after_gc(cpu_and_wall_time_collector, reset_monotonic_to_system_state)
+  def sample_after_gc(allow_exception: false)
+    described_class::Testing._native_sample_after_gc(cpu_and_wall_time_collector, allow_exception)
   end
 
   def sample_allocation(weight:, new_object: Object.new)
@@ -123,6 +129,31 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
   def apply_delta_to_cpu_time_at_previous_sample_ns(thread, delta_ns)
     described_class::Testing
       ._native_apply_delta_to_cpu_time_at_previous_sample_ns(cpu_and_wall_time_collector, thread, delta_ns)
+  end
+
+  # What's the deal with the `profiler_system_epoch_time_now_ns`? Internally the profiler uses a monotonic clock
+  # when measuring wall-time, and then needs to turn it into system time.
+  #
+  # Since there's no way (that I know of) to get both a monotonic and a system clock timestamp at once, our
+  # conversion code gets both in sequence and then uses that for the conversions.
+  #
+  # For a while in our tests, we were using `Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)` directly, but
+  # this caused a bunch of flakiness since sometimes the conversion was slightly off from the measurements we got
+  # when reading the system clock directly.
+  #
+  # To solve this flakiness once and for all, the tests were changed to **use the same clock source** as the profiler,
+  # thus guaranteeing that if we get a timestamp here (call it t1), and then call the profiler and it gets a timestamp
+  # (call it t2), that t2 >= t1 (and vice-versa).
+  #
+  # Just in case, we still expect any timestamp output by the profiler to very close to the system clock,
+  # which is why there's that extra expectation there. (To avoid us missing any bugs if the system clock code
+  # in the profiler is ever changed.)
+
+  def profiler_system_epoch_time_now_ns
+    result = described_class::Testing._native_system_epoch_time_now_ns(cpu_and_wall_time_collector)
+    ten_seconds_ns = 10 * 1e9
+    expect(result).to be_within(ten_seconds_ns).of(Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now))
+    result
   end
 
   # This method exists only so we can look for its name in the stack trace in a few tests
@@ -397,6 +428,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
         context "when thread has a tracer context, and a trace is in progress" do
           let(:root_span_type) { "not-web" }
+          let(:allow_invalid_ids) { false }
 
           let(:t1) do
             Thread.new(ready_queue) do |ready_queue|
@@ -414,8 +446,10 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
           end
 
           before do
-            expect(@t1_span_id.to_i).to be > 0
-            expect(@t1_local_root_span_id.to_i).to be > 0
+            unless allow_invalid_ids
+              expect(@t1_span_id.to_i).to be > 0
+              expect(@t1_local_root_span_id.to_i).to be > 0
+            end
           end
 
           it 'includes "local root span id" and "span id" labels in the samples' do
@@ -572,7 +606,15 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
             false
           end
 
-          context "when trace comes from otel sdk", if: otel_sdk_available? do
+          def self.otel_otlp_exporter_available?
+            require "opentelemetry-exporter-otlp"
+            true
+          rescue LoadError
+            false
+          end
+
+          # When opentelemetry-sdk is on the Gemfile, but not opentelemetry-exporter-otlp
+          context "when trace comes from otel sdk", if: otel_sdk_available? && !otel_otlp_exporter_available? do
             let(:otel_tracer) do
               require "datadog/opentelemetry"
 
@@ -604,6 +646,31 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
               sample
 
               expect(t1_sample.labels).to_not include("trace endpoint": anything)
+            end
+
+            describe 'accessing the current span' do
+              before do
+                allow(Datadog.logger).to receive(:error)
+
+                # initialize otel context reading
+                sample
+                # clear samples
+                recorder.serialize!
+              end
+
+              it 'does not try to hash the CURRENT_SPAN_KEY' do
+                inner_check_ran = false
+
+                otel_tracer.in_span("profiler.test") do |_span|
+                  expect(OpenTelemetry::Trace.const_get(:CURRENT_SPAN_KEY)).to_not receive(:hash)
+
+                  sample_allocation(weight: 1)
+
+                  inner_check_ran = true
+                end
+
+                expect(inner_check_ran).to be true
+              end
             end
 
             context "when there are multiple otel spans nested" do
@@ -705,9 +772,330 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
             end
           end
 
+          # When opentelemetry-sdk AND opentelemetry-exporter-otlp are on the Gemfile
+          context(
+            "when trace comes from otel sdk and the ddtrace otel support is not loaded",
+            if: otel_sdk_available? && otel_otlp_exporter_available?
+          ) do
+            let(:otel_tracer) do
+              if defined?(Datadog::OpenTelemetry::LOADED)
+                raise "This test should not be run with the ddtrace otel support loaded. " \
+                  "Make sure that no `require 'datadog/opentelemetry'` runs when testing this spec."
+              end
+
+              OpenTelemetry::SDK.configure
+              OpenTelemetry.tracer_provider.tracer("ddtrace-profiling-test")
+            end
+            let(:otel_context_enabled) { :both }
+            let(:t1) do
+              Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                otel_tracer.in_span("profiler.test") do |span|
+                  @t1_span_id = otel_span_id_to_i(span.context.span_id)
+                  @t1_local_root_span_id = @t1_span_id
+                  ready_queue << true
+                  sleep
+                end
+              end
+            end
+
+            after do
+              OpenTelemetry.tracer_provider.shutdown
+            end
+
+            def otel_span_id_to_i(span_id)
+              span_id.unpack1("Q>").to_i
+            end
+
+            it 'includes "local root span id" and "span id" labels in the samples' do
+              sample
+
+              expect(t1_sample.labels).to include(
+                "local root span id": @t1_local_root_span_id.to_i,
+                "span id": @t1_span_id.to_i,
+              )
+            end
+
+            it 'does not include the "trace endpoint" label' do
+              sample
+
+              expect(t1_sample.labels).to_not include("trace endpoint": anything)
+            end
+
+            describe 'reading CURRENT_SPAN_KEY into otel_current_span_key' do
+              let!(:ran_log) { [] }
+
+              let(:setup_failure) do
+                log = ran_log
+
+                stub_const(
+                  "OpenTelemetry::Trace",
+                  Module.new do
+                    define_singleton_method(:const_missing) do |_value|
+                      log << :ran_code
+                      raise "Simulated failure"
+                    end
+                  end
+                )
+              end
+
+              context 'when an exception is raised' do
+                before { setup_failure }
+                after { expect(ran_log).to eq [:ran_code] }
+
+                it 'does not leave the exception pending' do
+                  sample(allow_exception: true)
+
+                  expect($!).to be nil
+                end
+
+                it 'omits the "local root span id" and "span id" labels in the sample' do
+                  sample(allow_exception: true)
+
+                  expect(t1_sample.labels.keys).to_not include(:"local root span id", :"span id")
+                end
+              end
+
+              context 'during allocation sampling' do
+                it 'does not try to read the CURRENT_SPAN_KEY' do
+                  allow(OpenTelemetry.logger).to receive(:error)
+
+                  otel_tracer.in_span("profiler.test") do |_span|
+                    setup_failure
+
+                    sample_allocation(weight: 1)
+                  end
+
+                  expect(ran_log).to eq []
+                end
+              end
+            end
+
+            describe 'accessing the current span' do
+              before do
+                allow(OpenTelemetry.logger).to receive(:error)
+
+                # initialize otel context reading
+                sample
+                # clear samples
+                recorder.serialize!
+              end
+
+              it 'does not try to hash the CURRENT_SPAN_KEY' do
+                inner_check_ran = false
+
+                otel_tracer.in_span("profiler.test") do |_span|
+                  expect(OpenTelemetry::Trace.const_get(:CURRENT_SPAN_KEY)).to_not receive(:hash)
+
+                  sample_allocation(weight: 1)
+
+                  inner_check_ran = true
+                end
+
+                expect(inner_check_ran).to be true
+              end
+
+              context 'when there are more than MAX_SAFE_LOOKUP_SIZE entries in the otel context' do
+                let(:max_safe_lookup_size) { 16 } # Value of MAX_SAFE_LOOKUP_SIZE in C code
+
+                it 'does not try to look up the context' do
+                  otel_tracer.in_span("profiler.test") do |_span|
+                    current_size = OpenTelemetry::Context.current.instance_variable_get(:@entries).size
+
+                    OpenTelemetry::Context.with_values(
+                      Array.new((max_safe_lookup_size + 1 - current_size)) { |it| ["key_#{it}", it] }.to_h
+                    ) do
+                      sample_allocation(weight: 12)
+                    end
+
+                    OpenTelemetry::Context.with_values(
+                      Array.new((max_safe_lookup_size - current_size)) { |it| ["key_#{it}", it] }.to_h
+                    ) do
+                      sample_allocation(weight: 34)
+                    end
+                  end
+
+                  result = samples_for_thread(samples, Thread.current)
+
+                  expect(result.size).to be 2
+                  expect(result.find { |it| it.values.fetch(:"alloc-samples") == 12 }.labels.keys)
+                    .to_not include(:"local root span id", :"span id")
+                  expect(result.find { |it| it.values.fetch(:"alloc-samples") == 34 }.labels.keys)
+                    .to include(:"local root span id", :"span id")
+                end
+              end
+            end
+
+            context 'when otel_context_enabled is false' do
+              let(:otel_context_enabled) { false }
+
+              it 'does not include "local root span id" or "span id" labels in the samples' do
+                sample
+
+                expect(t1_sample.labels.keys).to_not include(:"local root span id", :"span id")
+              end
+            end
+
+            context "when there are multiple otel spans nested" do
+              let(:t1) do
+                Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                  otel_tracer.in_span("profiler.test") do |root_span|
+                    @t1_local_root_span_id = otel_span_id_to_i(root_span.context.span_id)
+                    otel_tracer.in_span("profiler.test.nested.1") do
+                      otel_tracer.in_span("profiler.test.nested.2") do
+                        otel_tracer.in_span("profiler.test.nested.3") do |leaf_span|
+                          @t1_span_id = otel_span_id_to_i(leaf_span.context.span_id)
+                          ready_queue << true
+                          sleep
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+
+              it 'includes "local root span id" and "span id" labels in the samples' do
+                sample
+
+                expect(t1_sample.labels).to include(
+                  "local root span id": @t1_local_root_span_id.to_i,
+                  "span id": @t1_span_id.to_i,
+                )
+              end
+            end
+
+            context "when the context storage contains spans related to multiple traces" do
+              let(:t1) do
+                Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                  otel_tracer.in_span("another.trace") do # <-- Is ignored
+                    OpenTelemetry::Trace.with_span(
+                      otel_tracer.start_span("profiler.test", with_parent: OpenTelemetry::Context.empty)
+                    ) do |root_span|
+                      @t1_local_root_span_id = otel_span_id_to_i(root_span.context.span_id)
+                      otel_tracer.in_span("profiler.test.nested.1") do |leaf_span|
+                        @t1_span_id = otel_span_id_to_i(leaf_span.context.span_id)
+                        ready_queue << true
+                        sleep
+                      end
+                    end
+                  end
+                end
+              end
+
+              it 'includes "local root span id" and "span id" labels in the samples' do
+                sample
+
+                expect(t1_sample.labels).to include(
+                  "local root span id": @t1_local_root_span_id.to_i,
+                  "span id": @t1_span_id.to_i,
+                )
+              end
+            end
+
+            context "when local root span kind is :server" do
+              let(:t1) do
+                Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                  otel_tracer.in_span("profiler.test", kind: :server) do |span|
+                    @t1_span_id = otel_span_id_to_i(span.context.span_id)
+                    @t1_local_root_span_id = @t1_span_id
+                    ready_queue << true
+                    sleep
+                  end
+                end
+              end
+
+              it 'includes the "trace endpoint" label' do
+                sample
+
+                expect(t1_sample.labels).to include("trace endpoint": "profiler.test")
+              end
+
+              context "when there are multiple otel spans nested" do
+                let(:t1) do
+                  Thread.new(ready_queue, otel_tracer) do |ready_queue, otel_tracer|
+                    otel_tracer.in_span("profiler.test", kind: :server) do |root_span|
+                      @t1_local_root_span_id = otel_span_id_to_i(root_span.context.span_id)
+                      otel_tracer.in_span("profiler.test.nested.1") do
+                        otel_tracer.in_span("profiler.test.nested.2") do
+                          otel_tracer.in_span("profiler.test.nested.3") do |leaf_span|
+                            @t1_span_id = otel_span_id_to_i(leaf_span.context.span_id)
+                            ready_queue << true
+                            sleep
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+
+                it 'includes the "trace endpoint" label set to the root span name' do
+                  sample
+
+                  expect(t1_sample.labels).to include("trace endpoint": "profiler.test")
+                end
+              end
+
+              context "when endpoint_collection_enabled is false" do
+                let(:endpoint_collection_enabled) { false }
+
+                it 'still includes "local root span id" and "span id" labels in the samples' do
+                  sample
+
+                  expect(t1_sample.labels).to include(
+                    "local root span id": @t1_local_root_span_id.to_i,
+                    "span id": @t1_span_id.to_i,
+                  )
+                end
+
+                it 'does not include the "trace endpoint" label' do
+                  sample
+
+                  expect(t1_sample.labels).to_not include("trace endpoint": anything)
+                end
+              end
+            end
+
+            context "when current span is invalid" do
+              let(:allow_invalid_ids) { true }
+
+              let(:t1) do
+                Thread.new(ready_queue, otel_tracer) do |ready_queue, _otel_tracer|
+                  OpenTelemetry::Trace.with_span(OpenTelemetry::Trace::Span::INVALID) do |span|
+                    @t1_span_id = otel_span_id_to_i(span.context.span_id)
+                    @t1_local_root_span_id = @t1_span_id
+                    ready_queue << true
+                    sleep
+                  end
+                end
+              end
+
+              before do
+                expect(@t1_span_id).to be 0
+              end
+
+              it 'does not include the "local root span id" and "span id" labels in the samples' do
+                sample
+
+                expect(t1_sample.labels).to_not include(
+                  "local root span id": anything,
+                  "span id": anything,
+                )
+              end
+            end
+          end
+
           context "when trace comes from otel sdk (warning)", unless: otel_sdk_available? do
             it "is not being tested" do
               skip "Skipping OpenTelemetry tests because `opentelemetry-sdk` gem is not available"
+            end
+          end
+
+          context "when trace comes from otel sdk (warning)", if: otel_sdk_available? do
+            not_being_tested = otel_otlp_exporter_available? ? "otel sdk WITH ddtrace" : "otel sdk WITHOUT ddtrace"
+
+            it "#{not_being_tested} is not being tested" do
+              skip "The tests for otel sdk WITH and WITHOUT ddtrace are mutually exclusive, because ddtrace monkey " \
+                "patches the otel sdk in a way that makes it hard to remove. To test both configurations, run this " \
+                "spec with and without `opentelemetry-exporter-otlp` on your Gemfile (hint: can be done using appraisals)."
             end
           end
         end
@@ -771,9 +1159,9 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         let(:timeline_enabled) { true }
 
         it "includes a end_timestamp_ns containing epoch time in every sample" do
-          time_before = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+          time_before = profiler_system_epoch_time_now_ns
           sample
-          time_after = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+          time_after = profiler_system_epoch_time_now_ns
 
           expect(samples.first.labels).to include(end_timestamp_ns: be_between(time_before, time_after))
         end
@@ -787,9 +1175,9 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
             @previous_sample_timestamp_ns = per_thread_context.dig(t1, :wall_time_at_previous_sample_ns)
 
-            @time_before_gvl_waiting = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+            @time_before_gvl_waiting = profiler_system_epoch_time_now_ns
             on_gvl_waiting(t1)
-            @time_after_gvl_waiting = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+            @time_after_gvl_waiting = profiler_system_epoch_time_now_ns
 
             @gvl_waiting_at = gvl_waiting_at_for(t1)
 
@@ -809,9 +1197,9 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
           end
 
           it "records a second sample to represent the time spent Waiting for GVL" do
-            time_before_sample = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+            time_before_sample = profiler_system_epoch_time_now_ns
             sample
-            time_after_sample = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+            time_after_sample = profiler_system_epoch_time_now_ns
 
             second_sample = samples_for_thread(samples, t1, expected_size: 2).last
 
@@ -835,7 +1223,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
               first_sample, second_sample = samples_for_thread(samples, t1, expected_size: 2)
 
-              expect(first_sample.values.fetch(:"cpu-time")).to be 12345
+              expect(first_sample.values.fetch(:"cpu-time")).to be >= 12345
               expect(second_sample.values.fetch(:"cpu-time")).to be 0
             end
           end
@@ -853,12 +1241,12 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
           def sample_and_check(expected_state:)
             monotonic_time_before_sample = per_thread_context.dig(t1, :wall_time_at_previous_sample_ns)
-            time_before_sample = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+            time_before_sample = profiler_system_epoch_time_now_ns
             monotonic_time_sanity_check = Datadog::Core::Utils::Time.get_time(:nanosecond)
 
             sample
 
-            time_after_sample = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+            time_after_sample = profiler_system_epoch_time_now_ns
             monotonic_time_after_sample = per_thread_context.dig(t1, :wall_time_at_previous_sample_ns)
 
             expect(monotonic_time_after_sample).to be >= monotonic_time_sanity_check
@@ -1156,7 +1544,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
     context "when called before on_gc_start/on_gc_finish" do
       it do
-        expect { sample_after_gc }.to raise_error(RuntimeError, /Unexpected call to sample_after_gc/)
+        expect { sample_after_gc(allow_exception: true) }.to raise_error(RuntimeError, /Unexpected call to sample_after_gc/)
       end
     end
 
@@ -1165,16 +1553,17 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
       before do
         on_gc_start
-        @time_before = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+        @time_before = profiler_system_epoch_time_now_ns
         on_gc_finish
-        @time_after = Datadog::Core::Utils::Time.as_utc_epoch_ns(Time.now)
+        @time_after = profiler_system_epoch_time_now_ns
       end
 
       context "when called more than once in a row" do
         it do
           sample_after_gc
 
-          expect { sample_after_gc }.to raise_error(RuntimeError, /Unexpected call to sample_after_gc/)
+          expect { sample_after_gc(allow_exception: true) }
+            .to raise_error(RuntimeError, /Unexpected call to sample_after_gc/)
         end
       end
 
@@ -1241,7 +1630,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         end
 
         it "creates a Garbage Collection sample using the timestamp set by on_gc_finish, converted to epoch ns" do
-          sample_after_gc(reset_monotonic_to_system_state: true)
+          sample_after_gc
 
           expect(gc_sample.labels.fetch(:end_timestamp_ns)).to be_between(@time_before, @time_after)
         end
@@ -1367,16 +1756,6 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
           expect(single_sample.labels.fetch(:"allocation class")).to eq klass
         end
-
-        context "when allocation_type_enabled is false" do
-          let(:allocation_type_enabled) { false }
-
-          it "does not record the correct class for the passed object" do
-            sample_allocation(weight: 123, new_object: object)
-
-            expect(single_sample.labels).to_not include("allocation class": anything)
-          end
-        end
       end
     end
 
@@ -1396,18 +1775,6 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
 
         expect(single_sample.labels.fetch(:"allocation class")).to eq "File"
       end
-
-      context "when allocation_type_enabled is false" do
-        let(:allocation_type_enabled) { false }
-
-        it "does not record the correct class for the passed object" do
-          File.open(__FILE__) do |file|
-            sample_allocation(weight: 123, new_object: file)
-          end
-
-          expect(single_sample.labels).to_not include("allocation class": anything)
-        end
-      end
     end
 
     context "when sampling a Struct" do
@@ -1425,16 +1792,6 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         sample_allocation(weight: 123, new_object: ThreadContextSpec::TestStruct.new)
 
         expect(single_sample.labels.fetch(:"allocation class")).to eq "ThreadContextSpec::TestStruct"
-      end
-
-      context "when allocation_type_enabled is false" do
-        let(:allocation_type_enabled) { false }
-
-        it "does not record the correct class for the passed object" do
-          sample_allocation(weight: 123, new_object: ThreadContextSpec::TestStruct.new)
-
-          expect(single_sample.labels).to_not include("allocation class": anything)
-        end
       end
     end
   end
@@ -1833,7 +2190,7 @@ RSpec.describe Datadog::Profiling::Collectors::ThreadContext do
         end
 
         context "on legacy Rubies" do
-          before { skip "Behavior does not apply to current Ruby version" if RUBY_VERSION >= "3.3." }
+          before { skip "Behavior does not apply to current Ruby version" if RUBY_VERSION >= "3.2." }
 
           it "is not set" do
             per_thread_context.each do |_thread, context|

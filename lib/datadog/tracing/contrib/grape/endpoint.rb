@@ -43,7 +43,17 @@ module Datadog
               # collect endpoint details
               endpoint = payload.fetch(:endpoint)
               env = payload.fetch(:env)
-              api_view = api_view(endpoint.options[:for])
+              ### BRAZE MODIFICATION
+              # OLD
+              # api_view = api_view(endpoint.options[:for])
+              # NEW
+              # The changes here https://github.com/ruby-grape/grape/issues/1825 don't work with the way we use grape
+              api = endpoint.options[:for]
+              api_view = api.to_s
+              if api_view.blank?
+                api_view = api_view(api)
+              end
+              ### END BRAZE MODIFICATION
               request_method = endpoint.options.fetch(:method).first
               path = endpoint_expand_path(endpoint)
               resource = "#{api_view} #{request_method} #{path}"
@@ -95,7 +105,17 @@ module Datadog
               begin
                 # collect endpoint details
                 endpoint = payload.fetch(:endpoint)
-                api_view = api_view(endpoint.options[:for])
+                ### BRAZE MODIFICATION
+                # OLD
+                # api_view = api_view(endpoint.options[:for])
+                # NEW
+                # The changes here https://github.com/ruby-grape/grape/issues/1825 don't work with the way we use grape
+                api = endpoint.options[:for]
+                api_view = api.to_s
+                if api_view.blank?
+                  api_view = api_view(api)
+                end
+                ### END BRAZE MODIFICATION
                 request_method = endpoint.options.fetch(:method).first
                 path = endpoint_expand_path(endpoint)
 
@@ -267,8 +287,11 @@ module Datadog
               route_path = endpoint.options[:path]
               namespace = endpoint.routes.first && endpoint.routes.first.namespace || ''
 
-              parts = (namespace.split('/') + route_path).reject { |p| p.blank? || p.eql?('/') }
-              parts.join('/').prepend('/')
+              path = (namespace.split('/') + route_path)
+                .reject { |p| p.blank? || p.eql?('/') }
+                .join('/')
+              path.prepend('/') if path[0] != '/'
+              path
             end
 
             def service_name

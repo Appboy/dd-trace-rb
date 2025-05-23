@@ -9,6 +9,11 @@ ignore:
   - Style/TrailingCommaInArguments
   - Style/TrailingCommaInArrayLiteral
   - Style/TrailingCommaInHashLiteral
+  - Style/StringLiterals
+  # These complain about strings that contain interpolation, demanding
+  # additional conversion to symbol which is extra overhead:
+  # https://github.com/rubocop/rubocop/issues/13955
+  - Performance/StringIdentifierArgument
 
 # This disables standardrb for the rest of dd-trace-rb (other than profiling)
 - .pryrc
@@ -37,7 +42,9 @@ ignore:
 - spec/datadog/appsec/**/**
 - spec/datadog/benchmark/**/**
 - spec/datadog/core/**/**
+- spec/datadog/di/integration/*_test_class*.rb
 - spec/datadog/kit/**/**
+- spec/datadog/opentelemetry/**/**
 - spec/datadog/tracing/**/**
 - spec/support/**/**
 - tasks/**/**

@@ -17,11 +17,17 @@ module Datadog
     #
     # @api private
     module ProbeBuilder
+      PROBE_TYPES = {
+        'LOG_PROBE' => :log,
+      }.freeze
+
       module_function def build_from_remote_config(config)
         # The validations here are not yet comprehensive.
+        type = config.fetch('type')
+        type_symbol = PROBE_TYPES[type] or raise ArgumentError, "Unrecognized probe type: #{type}"
         Probe.new(
           id: config.fetch("id"),
-          type: config.fetch("type"),
+          type: type_symbol,
           file: config["where"]&.[]("sourceFile"),
           # Sometimes lines are sometimes received as an array of nil
           # for some reason.
@@ -31,6 +37,7 @@ module Datadog
           template: config["template"],
           capture_snapshot: !!config["captureSnapshot"],
           max_capture_depth: config["capture"]&.[]("maxReferenceDepth"),
+          max_capture_attribute_count: config["capture"]&.[]("maxFieldCount"),
           rate_limit: config["sampling"]&.[]("snapshotsPerSecond"),
         )
       rescue KeyError => exc

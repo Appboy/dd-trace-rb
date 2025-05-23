@@ -7,7 +7,7 @@ require 'datadog/tracing/transport/http'
 require 'datadog/core/transport/http/adapters/net'
 
 RSpec.describe 'Adapters::Net tracing integration tests' do
-  before { skip('Skipping test as ENV["TEST_DATADOG_INTEGRATION"] is not set') unless ENV['TEST_DATADOG_INTEGRATION'] }
+  skip_unless_integration_testing_enabled
 
   subject(:adapter) { Datadog::Core::Transport::HTTP::Adapters::Net.new(agent_settings) }
 
@@ -67,8 +67,10 @@ RSpec.describe 'Adapters::Net tracing integration tests' do
   describe 'when sending traces through Net::HTTP adapter' do
     include_context 'HTTP server'
 
+    let(:logger) { logger_allowing_debug }
+
     let(:client) do
-      Datadog::Tracing::Transport::HTTP.default do |t|
+      Datadog::Tracing::Transport::HTTP.default(agent_settings: test_agent_settings, logger: logger) do |t|
         t.adapter adapter
       end
     end

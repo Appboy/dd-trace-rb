@@ -13,7 +13,7 @@
   #include RUBY_MJIT_HEADER
 #else
   // The MJIT header was introduced on 2.6 and removed on 3.3; for other Rubies we rely on
-  // the debase-ruby_core_source gem to get access to private VM headers.
+  // the datadog-ruby_core_source gem to get access to private VM headers.
 
   // We can't do anything about warnings in VM headers, so we just use this technique to suppress them.
   // See https://nelkinda.com/blog/suppress-warnings-in-gcc-and-clang/#d11e364 for details.
@@ -38,6 +38,13 @@
       #include <ractor_core.h>
     #pragma GCC diagnostic pop
   #endif
+#endif
+
+// This file can't include datadog_ruby_common.h so we replicate this here
+#ifdef __GNUC__
+  #define DDTRACE_UNUSED  __attribute__((unused))
+#else
+  #define DDTRACE_UNUSED
 #endif
 
 #define PRIVATE_VM_API_ACCESS_SKIP_RUBY_INCLUDES
@@ -158,7 +165,7 @@ bool is_current_thread_holding_the_gvl(void) {
     //
     // Thus an incorrect `is_current_thread_holding_the_gvl` result may lead to issues inside `rb_postponed_job_register_one`.
     //
-    // For this reason we currently do not enable the new Ruby profiler on Ruby 2.5 by default, and we print a
+    // For this reason we default to use the "no signals workaround" on Ruby 2.5 by default, and we print a
     // warning when customers force-enable it.
     bool gvl_acquired = vm->gvl.acquired != 0;
     rb_thread_t *current_owner = vm->running_thread;
@@ -305,6 +312,7 @@ VALUE thread_name_for(VALUE thread) {
 // to support our custom rb_profile_frames (see below)
 // Modifications:
 // * Support int first_lineno for Ruby 3.2.0+ (https://github.com/ruby/ruby/pull/6430)
+// * Validate iseq and pos before calling `rb_iseq_line_no` as a safety measure (see comment below for details)
 //
 // `node_id` gets used depending on Ruby VM compilation settings (USE_ISEQ_NODE_ID being defined).
 // To avoid getting false "unused argument" warnings in setups where it's not used, we need to do this weird dance
@@ -351,6 +359,13 @@ calc_pos(const rb_iseq_t *iseq, const VALUE *pc, int *lineno, int *node_id)
             __builtin_trap();
         }
 #endif
+
+        // In PROF-11475 we spotted a crash when calling `rb_iseq_line_no` from this method. We couldn't reproduce or
+        // figure out the root cause, but "just in case", we're validating that the iseq looks valid and that the
+        // `n` used for the position is also sane, and if they don't look good, we don't calculate the line, rather
+        // than potentially trigger any issues.
+        if (RB_UNLIKELY(!RB_TYPE_P((VALUE) iseq, T_IMEMO) || n < 0 || n > ISEQ_BODY(iseq)->iseq_size)) return 0;
+
         if (lineno) *lineno = rb_iseq_line_no(iseq, pos);
 #ifdef USE_ISEQ_NODE_ID
         if (node_id) *node_id = rb_iseq_node_id(iseq, pos);
@@ -587,15 +602,12 @@ int ddtrace_rb_profile_frames(VALUE thread, int start, int limit, frame_info *st
 // Taken from upstream vm_insnhelper.c at commit 5f10bd634fb6ae8f74a4ea730176233b0ca96954 (March 2022, Ruby 3.2 trunk)
 // Copyright (C) 2007 Koichi Sasada
 // to support our custom rb_profile_frames (see above)
-// Modifications: None
+// Modifications:
+// * Removed debug checks (they were ifdef'd out anyway)
 static rb_callable_method_entry_t *
 check_method_entry(VALUE obj, int can_be_svar)
 {
     if (obj == Qfalse) return NULL;
-
-#if VM_CHECK_MODE > 0
-    if (!RB_TYPE_P(obj, T_IMEMO)) rb_bug("check_method_entry: unknown type: %s", rb_obj_info(obj));
-#endif
 
     switch (imemo_type(obj)) {
       case imemo_ment:
@@ -608,9 +620,6 @@ check_method_entry(VALUE obj, int can_be_svar)
         }
         // fallthrough
       default:
-#if VM_CHECK_MODE > 0
-        rb_bug("check_method_entry: svar should not be there:");
-#endif
         return NULL;
     }
 }
@@ -754,4 +763,107 @@ static inline int ddtrace_imemo_type(VALUE imemo) {
   void *objspace_ptr_for_gc_finalize_deferred_workaround(void) {
     return GET_VM()->objspace;
   }
+#endif
+
+#ifdef USE_GVL_PROFILING_3_2_WORKAROUNDS // Ruby 3.2
+  #include "gvl_profiling_helper.h"
+
+  gvl_profiling_thread thread_from_thread_object(VALUE thread) {
+    return (gvl_profiling_thread) {.thread = thread_struct_from_object(thread)};
+  }
+
+  // Hack: In Ruby 3.3+ we attach gvl profiling state to Ruby threads using the
+  // rb_internal_thread_specific_* APIs. These APIs did not exist on Ruby 3.2. On Ruby 3.2 we instead store the
+  // needed data inside the `rb_thread_t` structure, specifically in `stat_insn_usage` as a Ruby FIXNUM.
+  //
+  // Why `stat_insn_usage`? We needed some per-thread storage, and while looking at the Ruby VM sources I noticed
+  // that `stat_insn_usage` has been in `rb_thread_t` for a long time, but is not used anywhere in the VM
+  // code. There's a comment attached to it "/* statistics data for profiler */" but other than marking this
+  // field for GC, I could not find any place in the VM commit history or on GitHub where this has ever been used.
+  //
+  // Thus, since this hack is only for 3.2, which presumably will never see this field either removed or used
+  // during its remaining maintenance release period we... kinda take it for our own usage. It's ugly, I know...
+  intptr_t gvl_profiling_state_get(gvl_profiling_thread thread) {
+    if (thread.thread == NULL) return 0;
+
+    VALUE current_value = ((rb_thread_t *)thread.thread)->stat_insn_usage;
+    intptr_t result = current_value == Qnil ? 0 : FIX2LONG(current_value);
+    return result;
+  }
+
+  void gvl_profiling_state_set(gvl_profiling_thread thread, intptr_t value) {
+    if (thread.thread == NULL) return;
+    ((rb_thread_t *)thread.thread)->stat_insn_usage = LONG2FIX(value);
+  }
+
+  // Because Ruby 3.2 does not give us the current thread when calling the RUBY_INTERNAL_THREAD_EVENT_READY and
+  // RUBY_INTERNAL_THREAD_EVENT_RESUMED APIs, we need to figure out this info ourselves.
+  //
+  // Specifically, this method was created to be called from a RUBY_INTERNAL_THREAD_EVENT_RESUMED callback --
+  // when it's triggered, we know the thread the code gets executed on is holding the GVL, so we use this
+  // opportunity to initialize our thread-local value.
+  gvl_profiling_thread gvl_profiling_state_maybe_initialize(void) {
+    gvl_profiling_thread current_thread = gvl_waiting_tls;
+
+    if (current_thread.thread == NULL) {
+      // threads.sched.running is the thread currently holding the GVL, which when this gets executed is the
+      // current thread!
+      current_thread = (gvl_profiling_thread) {.thread = (void *) rb_current_ractor()->threads.sched.running};
+      gvl_waiting_tls = current_thread;
+    }
+
+    return current_thread;
+  }
+#endif
+
+// Is the VM smack in the middle of raising an exception?
+bool is_raised_flag_set(VALUE thread) { return thread_struct_from_object(thread)->ec->raised_flag > 0; }
+
+#ifndef NO_CURRENT_FIBER_FOR
+  // The following three declarations are all
+  // taken from upstream cont.c at commit d97884a58be32e829fd03a80cd521f4733d65c79 (February 2025, master branch)
+  // (See the Ruby project copyright and license above)
+  // to enable building `current_fiber_for`.
+  //
+  // We needed to copy them because they aren't otherwise exposed in any VM APIs or headers.
+  // @ivoanjo: I manually checked the Ruby 3.1, 3.2, 3.3 and 3.4 branches + master, and the parts we care about in these
+  // structures have not changed in many years (in fact, last change I spotted was for 2.7).
+  enum context_type {
+      CONTINUATION_CONTEXT = 0,
+      FIBER_CONTEXT = 1
+  };
+
+  typedef struct rb_context_struct { // This declaration is incomplete -- only contains up to `self` which is the part we care about
+      enum context_type type;
+      int argc;
+      int kw_splat;
+      VALUE self;
+  } rb_context_t;
+
+  struct rb_fiber_struct { // This declaration is incomplete -- only contains the first entry which is the part we care about
+    rb_context_t cont;
+  };
+
+  VALUE current_fiber_for(VALUE thread) {
+    VALUE self = thread_struct_from_object(thread)->ec->fiber_ptr->cont.self;
+    return self == 0 ? Qnil : self;
+  }
+
+  void self_test_current_fiber_for(void) {
+    VALUE expected_current_fiber = current_fiber_for(rb_thread_current());
+    VALUE actual_current_fiber = rb_fiber_current();
+
+    if (expected_current_fiber == Qnil) {
+      // On purpose above we tried reading before calling `rb_fiber_current()` so the fiber may have not existed yet.
+      // But now it should be there.
+      expected_current_fiber = current_fiber_for(rb_thread_current());
+    }
+
+    if (expected_current_fiber != actual_current_fiber) rb_raise(rb_eRuntimeError, "current_fiber_for() self-test failed");
+  }
+#else
+  NORETURN(VALUE current_fiber_for(DDTRACE_UNUSED VALUE thread));
+
+  VALUE current_fiber_for(DDTRACE_UNUSED VALUE thread) { rb_raise(rb_eRuntimeError, "Not implemented for Ruby < 3.1"); }
+  void self_test_current_fiber_for(void) { } // Nothing to do
 #endif

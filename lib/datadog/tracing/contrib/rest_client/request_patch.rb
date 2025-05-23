@@ -25,7 +25,12 @@ module Datadog
               return super(&block) unless Tracing.enabled?
 
               datadog_trace_request(uri) do |_span, trace|
-                Contrib::HTTP.inject(trace, processed_headers) if datadog_configuration[:distributed_tracing]
+                if Tracing::Distributed::PropagationPolicy.enabled?(
+                  global_config: datadog_configuration,
+                  trace: trace
+                )
+                  Contrib::HTTP.inject(trace, processed_headers)
+                end
 
                 super(&block)
               end

@@ -2,6 +2,7 @@
 
 require "set"
 require "time"
+require "libdatadog"
 
 module Datadog
   module Profiling
@@ -30,6 +31,9 @@ module Datadog
         # Instead of trying to figure out real process start time by checking
         # /proc or some other complex/non-portable way, approximate start time
         # by time of requirement of this file.
+        #
+        # Note: this does not use Core::Utils::Time.now because this constant
+        # gets initialized before a user has a chance to configure the library.
         START_TIME = Time.now.utc.freeze
 
         def collect_platform_info
@@ -62,11 +66,19 @@ module Datadog
         def collect_profiler_info(settings)
           unless @profiler_info
             lib_datadog_gem = ::Gem.loaded_specs["libdatadog"]
+
+            libdatadog_version =
+              if lib_datadog_gem
+                "#{lib_datadog_gem.version}-#{lib_datadog_gem.platform}"
+              else
+                # In some cases, Gem.loaded_specs may not be available, as in
+                # https://github.com/DataDog/dd-trace-rb/pull/1506; let's use the version directly
+                "#{Libdatadog::VERSION}-(unknown)"
+              end
+
             @profiler_info = {
-              # TODO: If profiling is extracted and its version diverges from the datadog gem, this is inaccurate.
-              #       Update if this ever occurs.
               version: Datadog::Core::Environment::Identity.gem_datadog_version,
-              libdatadog: "#{lib_datadog_gem.version}-#{lib_datadog_gem.platform}",
+              libdatadog: libdatadog_version,
               settings: collect_settings_recursively(settings.profiling),
             }.freeze
           end

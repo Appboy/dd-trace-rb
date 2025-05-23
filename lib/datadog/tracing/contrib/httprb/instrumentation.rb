@@ -30,7 +30,13 @@ module Datadog
                   span.service = service_name(host, request_options, client_config)
                   span.type = Tracing::Metadata::Ext::HTTP::TYPE_OUTBOUND
 
-                  Contrib::HTTP.inject(trace, req) if Tracing.enabled? && !should_skip_distributed_tracing?(client_config)
+                  if Tracing::Distributed::PropagationPolicy.enabled?(
+                    pin_config: client_config,
+                    global_config: Datadog.configuration.tracing[:httprb],
+                    trace: trace
+                  )
+                    Contrib::HTTP.inject(trace, req)
+                  end
 
                   # Add additional request specific tags to the span.
                   annotate_span_with_request!(span, req, request_options)
@@ -129,12 +135,6 @@ module Datadog
 
             def logger
               Datadog.logger
-            end
-
-            def should_skip_distributed_tracing?(client_config)
-              return !client_config[:distributed_tracing] if client_config && client_config.key?(:distributed_tracing)
-
-              !Datadog.configuration.tracing[:httprb][:distributed_tracing]
             end
 
             def set_analytics_sample_rate(span, request_options)

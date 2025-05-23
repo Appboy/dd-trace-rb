@@ -58,10 +58,12 @@ RSpec.describe Datadog::Core::Environment::Execution do
 
       context 'when in an IRB session' do
         it 'returns true' do
-          _, err, = Bundler.with_clean_env do # Ruby 2.6 does not have irb by default in a bundle, but has it outside of it.
+          # Ruby 2.6 does not have irb by default in a bundle, but has it outside of it.
+          _, err, status = Bundler.with_unbundled_env do
             Open3.capture3('irb', '--noprompt', '--noverbose', '--noecho', stdin_data: repl_script)
           end
           expect(err).to end_with('ACTUAL:true')
+          expect(status.exitstatus).to eq(0)
         end
       end
 
@@ -172,7 +174,8 @@ RSpec.describe Datadog::Core::Environment::Execution do
 
             gemfile(true) do
               source 'https://rubygems.org'
-              gem 'cucumber', '>= 3'
+
+              gem 'cucumber', '>= 3', '<= 9.2.1'
             end
 
             load Gem.bin_path('cucumber', 'cucumber')
@@ -187,11 +190,12 @@ RSpec.describe Datadog::Core::Environment::Execution do
               # Add our script to `env.rb`, which is always run before any feature is executed.
               File.write('features/support/env.rb', repl_script)
 
-              _, err, = Bundler.with_clean_env do
+              _, err, status = Bundler.with_unbundled_env do
                 Open3.capture3('ruby', stdin_data: script)
               end
 
               expect(err).to include('ACTUAL:true')
+              expect(status.exitstatus).to eq(0)
             end
           end
         end
@@ -254,7 +258,7 @@ RSpec.describe Datadog::Core::Environment::Execution do
 
     context 'when given WebMock', skip: Gem::Version.new(Bundler::VERSION) < Gem::Version.new('2') do
       it do
-        out, = Bundler.with_clean_env do
+        out, _err, status = Bundler.with_unbundled_env do
           Open3.capture3('ruby', stdin_data: <<-RUBY
             require 'bundler/inline'
 
@@ -276,6 +280,7 @@ RSpec.describe Datadog::Core::Environment::Execution do
         end
 
         expect(out).to end_with('ACTUAL:true')
+        expect(status.exitstatus).to eq(0)
       end
     end
   end

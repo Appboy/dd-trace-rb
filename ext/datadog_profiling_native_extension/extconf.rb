@@ -131,9 +131,8 @@ end
 
 have_func "malloc_stats"
 
-# On older Rubies, there was no GVL instrumentation API and APIs created to support it
-# TODO: We can probably support Ruby 3.2 as well here, but we haven't done that work yet
-$defs << "-DNO_GVL_INSTRUMENTATION" if RUBY_VERSION < "3.3"
+# On Ruby 2.5 and 3.3, this symbol was not visible. It is on 2.6 to 3.2, as well as 3.4+
+$defs << "-DNO_RB_OBJ_INFO" if RUBY_VERSION.start_with?("2.5", "3.3")
 
 # On older Rubies, rb_postponed_job_preregister/rb_postponed_job_trigger did not exist
 $defs << "-DNO_POSTPONED_TRIGGER" if RUBY_VERSION < "3.3"
@@ -147,6 +146,12 @@ $defs << "-DNO_RACTOR_HEADER_INCLUDE" if RUBY_VERSION < "3.3"
 # On older Rubies, some of the Ractor internal APIs were directly accessible
 $defs << "-DUSE_RACTOR_INTERNAL_APIS_DIRECTLY" if RUBY_VERSION < "3.3"
 
+# On older Rubies, there was no GVL instrumentation API and APIs created to support it
+$defs << "-DNO_GVL_INSTRUMENTATION" if RUBY_VERSION < "3.2"
+
+# Supporting GVL instrumentation on 3.2 needs some workarounds
+$defs << "-DUSE_GVL_PROFILING_3_2_WORKAROUNDS" if RUBY_VERSION.start_with?("3.2")
+
 # On older Rubies, there was no struct rb_native_thread. See private_vm_api_acccess.c for details.
 $defs << "-DNO_RB_NATIVE_THREAD" if RUBY_VERSION < "3.2"
 
@@ -159,16 +164,15 @@ $defs << "-DNO_INT_FIRST_LINENO" if RUBY_VERSION < "3.2"
 # On older Rubies, "pop" was not a primitive operation
 $defs << "-DNO_PRIMITIVE_POP" if RUBY_VERSION < "3.2"
 
+# We could support this for older Rubies, but since this only gets used by the OTEL context extraction, and that
+# use-case is only for 3.1+, we didn't bother supporting it farther back yet.
+$defs << "-DNO_CURRENT_FIBER_FOR" if RUBY_VERSION < "3.1"
+
 # On older Rubies, there was no tid member in the internal thread structure
 $defs << "-DNO_THREAD_TID" if RUBY_VERSION < "3.1"
 
 # On older Rubies, there was no jit_return member on the rb_control_frame_t struct
 $defs << "-DNO_JIT_RETURN" if RUBY_VERSION < "3.1"
-
-# On older Rubies, rb_gc_force_recycle allowed to free objects in a way that
-# would be invisible to free tracepoints, finalizers and without cleaning
-# obj_to_id_tbl mappings.
-$defs << "-DHAVE_WORKING_RB_GC_FORCE_RECYCLE" if RUBY_VERSION < "3.1"
 
 # On older Rubies, there are no Ractors
 $defs << "-DNO_RACTORS" if RUBY_VERSION < "3"
@@ -178,9 +182,6 @@ $defs << "-DNO_IMEMO_NAME" if RUBY_VERSION < "3"
 
 # On older Rubies, objects would not move
 $defs << "-DNO_T_MOVED" if RUBY_VERSION < "2.7"
-
-# On older Rubies, there was no RUBY_SEEN_OBJ_ID flag
-$defs << "-DNO_SEEN_OBJ_ID_FLAG" if RUBY_VERSION < "2.7"
 
 # On older Rubies, rb_global_vm_lock_struct did not include the owner field
 $defs << "-DNO_GVL_OWNER" if RUBY_VERSION < "2.6"
@@ -254,21 +255,21 @@ if Datadog::Profiling::NativeExtensionHelpers::CAN_USE_MJIT_HEADER
   create_makefile EXTENSION_NAME
 else
   # The MJIT header was introduced on 2.6 and removed on 3.3; for other Rubies we rely on
-  # the debase-ruby_core_source gem to get access to private VM headers.
+  # the datadog-ruby_core_source gem to get access to private VM headers.
   # This gem ships source code copies of these VM headers for the different Ruby VM versions;
-  # see https://github.com/ruby-debug/debase-ruby_core_source for details
+  # see https://github.com/DataDog/datadog-ruby_core_source for details
 
   create_header
 
-  require "debase/ruby_core_source"
+  require "datadog/ruby_core_source"
   dir_config("ruby") # allow user to pass in non-standard core include directory
 
   # This is a workaround for a weird issue...
   #
-  # The mkmf tool defines a `with_cppflags` helper that debase-ruby_core_source uses. This helper temporarily
+  # The mkmf tool defines a `with_cppflags` helper that datadog-ruby_core_source uses. This helper temporarily
   # replaces `$CPPFLAGS` (aka the C pre-processor [not c++!] flags) with a different set when doing something.
   #
-  # The debase-ruby_core_source gem uses `with_cppflags` during makefile generation to inject extra headers into the
+  # The datadog-ruby_core_source gem uses `with_cppflags` during makefile generation to inject extra headers into the
   # path. But because `with_cppflags` replaces `$CPPFLAGS`, well, the default `$CPPFLAGS` are not included in the
   # makefile.
   #
@@ -279,12 +280,12 @@ else
   # `VM_CHECK_MODE=1` when building Ruby will trigger this issue (because somethings in structures the profiler reads
   # are ifdef'd out using this setting).
   #
-  # To workaround this issue, we override `with_cppflags` for debase-ruby_core_source to still include `$CPPFLAGS`.
-  Debase::RubyCoreSource.define_singleton_method(:with_cppflags) do |newflags, &block|
+  # To workaround this issue, we override `with_cppflags` for datadog-ruby_core_source to still include `$CPPFLAGS`.
+  Datadog::RubyCoreSource.define_singleton_method(:with_cppflags) do |newflags, &block|
     super("#{newflags} #{$CPPFLAGS}", &block)
   end
 
-  Debase::RubyCoreSource
+  Datadog::RubyCoreSource
     .create_makefile_with_core(
       proc do
         headers_available =

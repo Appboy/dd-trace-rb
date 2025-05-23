@@ -31,17 +31,17 @@ module Datadog
             return unless backtrace
             return if backtrace.empty?
 
-            stack_trace = +''
-            backtrace.each do |line|
-              stack_trace << if line.start_with?(GEM_ROOT)
-                               line[GEM_ROOT.length..-1] || ''
-                             else
-                               'REDACTED'
-                             end
-              stack_trace << ','
-            end
+            # vendored deps
+            vendored_deps = Gem.path.any? { |p| p.start_with?(GEM_ROOT) }
 
-            stack_trace.chomp(',')
+            backtrace.map do |line|
+              if !vendored_deps && line.start_with?(GEM_ROOT) ||
+                  vendored_deps && line.start_with?(GEM_ROOT) && Gem.path.none? { |p| line.start_with?(p) }
+                line[GEM_ROOT.length..-1] || ''
+              else
+                'REDACTED'
+              end
+            end.join("\n")
           end
         end
 
@@ -49,7 +49,7 @@ module Datadog
           # Annoymous exceptions to be logged as <Class:0x00007f8b1c0b3b40>
           message = +''
           message << (exception.class.name || exception.class.inspect)
-          message << ':' << description if description
+          message << ': ' << description if description
 
           event = Event::Log.new(
             message: message,

@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 
+require 'ostruct'
 require 'datadog/core/utils/base64'
 require 'datadog/core/remote/transport/http'
 require 'datadog/core/remote/transport/http/negotiation'
@@ -33,9 +34,10 @@ RSpec.describe Datadog::Core::Remote::Transport::HTTP do
   end
 
   let(:http_connection) { instance_double(::Net::HTTP) }
+  let(:logger) { logger_allowing_debug }
 
   describe '.root' do
-    subject(:transport) { described_class.root(&client_options) }
+    subject(:transport) { described_class.root(agent_settings: test_agent_settings, logger: logger, &client_options) }
 
     let(:client_options) { proc { |_client| } }
 
@@ -70,11 +72,19 @@ RSpec.describe Datadog::Core::Remote::Transport::HTTP do
       it { is_expected.to have_attributes(:version => '42') }
       it { is_expected.to have_attributes(:endpoints => ['/info', '/v0/path']) }
       it { is_expected.to have_attributes(:config => { max_request_bytes: '1234' }) }
+
+      it { expect(transport.client.api.headers).to_not include('Datadog-Client-Computed-Stats') }
+
+      context 'with APM disabled' do
+        before { expect(Datadog.configuration.apm.tracing).to receive(:enabled).and_return(false) }
+
+        it { expect(transport.client.api.headers['Datadog-Client-Computed-Stats']).to eq('yes') }
+      end
     end
   end
 
   describe '.v7' do
-    subject(:transport) { described_class.v7(&client_options) }
+    subject(:transport) { described_class.v7(agent_settings: test_agent_settings, logger: logger, &client_options) }
 
     let(:client_options) { proc { |_client| } }
 
@@ -202,11 +212,19 @@ RSpec.describe Datadog::Core::Remote::Transport::HTTP do
       it { is_expected.to have_attributes(:targets => be_a(Hash)) }
       it { is_expected.to have_attributes(:target_files => be_a(Array)) }
 
+      it { expect(transport.client.api.headers).to_not include('Datadog-Client-Computed-Stats') }
+
+      context 'with APM disabled' do
+        before { expect(Datadog.configuration.apm.tracing).to receive(:enabled).and_return(false) }
+
+        it { expect(transport.client.api.headers['Datadog-Client-Computed-Stats']).to eq('yes') }
+      end
+
       context 'with a network error' do
         it 'raises a transport error' do
           expect(http_connection).to receive(:request).and_raise(IOError)
 
-          expect(Datadog.logger).to receive(:debug).with(/IOError/)
+          expect(logger).to receive(:debug).with(/IOError/)
 
           expect(response).to have_attributes(internal_error?: true)
         end

@@ -1,5 +1,6 @@
 require 'datadog/tracing/contrib/support/spec_helper'
 require 'datadog/appsec/contrib/support/integration/shared_examples'
+require 'datadog/appsec/spec_helper'
 require 'rack/test'
 
 require 'securerandom'
@@ -18,8 +19,12 @@ require 'datadog/appsec'
 RSpec.describe 'Rack integration tests' do
   include Rack::Test::Methods
 
-  let(:appsec_enabled) { true }
   let(:tracing_enabled) { true }
+  let(:appsec_enabled) { true }
+
+  let(:instrument_http) { false }
+
+  let(:apm_tracing_enabled) { true }
   let(:remote_enabled) { false }
   let(:appsec_ip_passlist) { [] }
   let(:appsec_ip_denylist) { [] }
@@ -130,14 +135,39 @@ RSpec.describe 'Rack integration tests' do
   end
 
   before do
+    WebMock.enable!
+    stub_request(:get, 'http://localhost:3000/returnheaders')
+      .to_return do |request|
+        {
+          status: 200,
+          body: request.headers.to_json,
+          headers: { 'Content-Type' => 'application/json' }
+        }
+      end
+
+    # DEV: Would it be faster to do another stub for requests that don't match the headers
+    # rather than waiting for the TCP connection to fail?
+
+    # TODO: Mocked agent that matches a given body, then use it in the shared examples,
+    # That way it would be real integration tests
+
+    # We must format the trace to have the same result as the agent
+    # This is especially important for _sampling_priority_v1 metric
+
     unless remote_enabled
       Datadog.configure do |c|
+        c.apm.tracing.enabled = apm_tracing_enabled
+
         c.tracing.enabled = tracing_enabled
+
         c.tracing.instrument :rack
+        c.tracing.instrument :http if instrument_http
 
         c.appsec.enabled = appsec_enabled
-        c.appsec.waf_timeout = 10_000_000 # in us
+
         c.appsec.instrument :rack
+
+        c.appsec.waf_timeout = 10_000_000 # in us
         c.appsec.ip_passlist = appsec_ip_passlist
         c.appsec.ip_denylist = appsec_ip_denylist
         c.appsec.user_id_denylist = appsec_user_id_denylist
@@ -151,6 +181,9 @@ RSpec.describe 'Rack integration tests' do
   end
 
   after do
+    WebMock.reset!
+    WebMock.disable!
+
     Datadog.configuration.reset!
     Datadog.registry[:rack].reset_configuration!
   end
@@ -185,11 +218,12 @@ RSpec.describe 'Rack integration tests' do
     let(:client_ip) { remote_addr }
 
     let(:service_span) do
-      span = spans.find { |s| s.metrics.fetch('_dd.top_level', -1.0) > 0.0 }
+      spans.find { |s| s.metrics.fetch('_dd.top_level', -1.0) > 0.0 }
+    end
 
-      expect(span.name).to eq 'rack.request'
-
-      span
+    let(:span) do
+      Datadog::Tracing::Transport::TraceFormatter.format!(trace)
+      spans.find { |s| s.name == 'rack.request' }
     end
 
     context 'with remote configuration' do
@@ -484,7 +518,6 @@ RSpec.describe 'Rack integration tests' do
             allow(negotiation).to receive(:endpoint?).and_return(true)
             allow(worker).to receive(:call).and_call_original
             allow(client).to receive(:sync).and_raise(exception, 'test')
-            allow(Datadog.logger).to receive(:error).and_return(nil)
           end
 
           it 'has boot tags' do
@@ -571,7 +604,7 @@ RSpec.describe 'Rack integration tests' do
             run(
               proc do |env|
                 # When appsec is enabled we want to force the 404 to trigger a rule match
-                if env[Datadog::AppSec::Ext::SCOPE_KEY]
+                if env[Datadog::AppSec::Ext::CONTEXT_KEY]
                   [404, { 'Content-Type' => 'text/html' }, ['NOT FOUND']]
                 else
                   [200, { 'Content-Type' => 'text/html' }, ['OK']]
@@ -585,6 +618,24 @@ RSpec.describe 'Rack integration tests' do
               proc do |_env|
                 Datadog::Kit::Identity.set_user(Datadog::Tracing.active_trace, id: 'blocked-user-id')
                 [200, { 'Content-Type' => 'text/html' }, ['OK']]
+              end
+            )
+          end
+
+          map '/requestdownstream' do
+            run(
+              proc do |_env|
+                uri = URI('http://localhost:3000/returnheaders')
+                ext_request = nil
+                ext_response = nil
+
+                Net::HTTP.start(uri.host, uri.port) do |http|
+                  ext_request = Net::HTTP::Get.new(uri)
+
+                  ext_response = http.request(ext_request)
+                end
+
+                [200, { 'Content-Type' => 'application/json' }, [ext_response.body]]
               end
             )
           end
@@ -939,6 +990,276 @@ RSpec.describe 'Rack integration tests' do
             it_behaves_like 'a trace with AppSec tags'
             it_behaves_like 'a trace with AppSec events', { blocking: true }
             it_behaves_like 'a trace with AppSec api security tags'
+          end
+        end
+      end
+
+      describe 'ASM Standalone billing' do
+        let(:url) { '/requestdownstream' }
+        let(:params) { {} }
+        let(:headers) do
+          {
+            'HTTP_X_DATADOG_TRACE_ID' => headers_trace_id,
+            'HTTP_X_DATADOG_PARENT_ID' => headers_parent_id,
+            'HTTP_X_DATADOG_SAMPLING_PRIORITY' => headers_sampling_priority,
+            'HTTP_X_DATADOG_ORIGIN' => headers_origin,
+            'HTTP_X_DATADOG_TAGS' => headers_tags,
+            'HTTP_USER_AGENT' => user_agent
+          }
+        end
+        let(:env) { headers }
+
+        # Default values for headers
+        let(:headers_trace_id) { '1212121212121212121' }
+        let(:headers_parent_id) { '34343434' }
+        let(:headers_origin) { 'rum' }
+        let(:headers_sampling_priority) { '-1' }
+        let(:headers_tags) { '_dd.p.other=1' }
+        let(:user_agent) { nil }
+
+        # Overwrite tracer_helpers span method as in our case we also instrument http
+        let(:span) do
+          Datadog::Tracing::Transport::TraceFormatter.format!(traces.last)
+          spans.find { |s| s.name == 'rack.request' && s.get_tag('http.url') == '/requestdownstream' }
+        end
+
+        let(:apm_tracing_enabled) { false }
+        let(:instrument_http) { true }
+
+        context 'without appsec upstream without attack and trace is kept with priority 1' do
+          subject(:response) do
+            clear_traces!
+            # First trace to send appsec oneshot_tags ('_dd.appsec.event_rules.loaded'...)
+            get '/success/'
+            # Second trace is a heartbeat trace
+            get '/success/'
+            # Third trace should be sampled or force_kept if there is an appsec event
+            get url, params, env
+          end
+
+          context 'from -1 sampling priority' do
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                tag_other_propagation: '1',
+                tag_sampling_priority_condition: ->(x) { x <= 0 }
+              }
+            it_behaves_like 'a request sent without propagated headers'
+          end
+
+          context 'from 0 sampling priority' do
+            let(:headers_sampling_priority) { '0' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                tag_other_propagation: '1',
+                tag_sampling_priority_condition: ->(x) { x <= 0 }
+              }
+            it_behaves_like 'a request sent without propagated headers'
+          end
+
+          context 'from 1 sampling priority' do
+            let(:headers_sampling_priority) { '1' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                tag_other_propagation: '1',
+                tag_sampling_priority_condition: ->(x) { x <= 0 }
+              }
+            it_behaves_like 'a request sent without propagated headers'
+          end
+
+          context 'from 2 sampling priority' do
+            let(:headers_sampling_priority) { '2' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                tag_other_propagation: '1',
+                tag_sampling_priority_condition: ->(x) { x <= 0 }
+              }
+            it_behaves_like 'a request sent without propagated headers'
+          end
+        end
+
+        context 'without upstream appsec propagation with attack and trace is kept with priority 2' do
+          subject(:response) do
+            clear_traces!
+            # First trace to send appsec oneshot_tags ('_dd.appsec.event_rules.loaded'...)
+            get '/success/'
+            # Second trace is a heartbeat trace
+            get '/success/'
+            # Third trace should be sampled or force_kept if there is an appsec event
+            get url, params, env
+          end
+
+          let(:user_agent) { 'Arachni/v1' }
+
+          context 'from -1 sampling priority' do
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                appsec_bit_in_source: true,
+                tag_sampling_priority_condition: ->(x) { x == 2 }
+              }
+            it_behaves_like 'a request sent with propagated headers',
+              {
+                res_origin: 'rum',
+                res_parent_id_not_equal: '34343434',
+                res_tags: ['_dd.p.other=1', '_dd.p.ts=02'],
+                res_sampling_priority_condition: ->(x) { x == '2' },
+                res_trace_id: '1212121212121212121'
+              }
+          end
+
+          context 'from 0 sampling priority' do
+            let(:headers_sampling_priority) { '0' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                appsec_bit_in_source: true,
+                tag_sampling_priority_condition: ->(x) { x == 2 }
+              }
+            it_behaves_like 'a request sent with propagated headers',
+              {
+                res_origin: 'rum',
+                res_parent_id_not_equal: '34343434',
+                res_tags: ['_dd.p.other=1', '_dd.p.ts=02'],
+                res_sampling_priority_condition: ->(x) { x == '2' },
+                res_trace_id: '1212121212121212121'
+              }
+          end
+        end
+
+        context 'with upstream appsec propagation without attack and trace is propagated as is' do
+          subject(:response) do
+            clear_traces!
+            # First trace to send appsec oneshot_tags ('_dd.appsec.event_rules.loaded'...)
+            get '/success/'
+            # Second trace is a heartbeat trace
+            get '/success/'
+            # Third trace should be sampled or force_kept if there is an appsec event
+            get url, params, env
+          end
+
+          let(:headers_tags) { '_dd.p.ts=02' }
+
+          context 'from 0 sampling priority' do
+            let(:headers_sampling_priority) { '0' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                appsec_bit_in_source: true,
+                tag_sampling_priority_condition: ->(x) { x == 0 }
+              }
+            it_behaves_like 'a request sent with propagated headers',
+              {
+                res_origin: 'rum',
+                res_parent_id_not_equal: '34343434',
+                res_tags: ['_dd.p.ts=02'],
+                res_sampling_priority_condition: ->(x) { x == '0' },
+                res_trace_id: '1212121212121212121'
+              }
+          end
+
+          context 'from 1 sampling priority' do
+            let(:headers_sampling_priority) { '1' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                appsec_bit_in_source: true,
+                tag_sampling_priority_condition: ->(x) { [1, 2].include?(x) }
+              }
+            it_behaves_like 'a request sent with propagated headers',
+              {
+                res_origin: 'rum',
+                res_parent_id_not_equal: '34343434',
+                res_tags: ['_dd.p.ts=02'],
+                res_sampling_priority_condition: ->(x) { ['1', '2'].include?(x) },
+                res_trace_id: '1212121212121212121'
+              }
+          end
+
+          context 'from 2 sampling priority' do
+            let(:headers_sampling_priority) { '2' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                appsec_bit_in_source: true,
+                tag_sampling_priority_condition: ->(x) { x == 2 }
+              }
+            it_behaves_like 'a request sent with propagated headers',
+              {
+                res_origin: 'rum',
+                res_parent_id_not_equal: '34343434',
+                res_tags: ['_dd.p.ts=02'],
+                res_sampling_priority_condition: ->(x) { x == '2' },
+                res_trace_id: '1212121212121212121'
+              }
+          end
+        end
+
+        context 'with any upstream propagation with attack and raises trace priority to 2' do
+          subject(:response) do
+            clear_traces!
+            # First trace to send appsec oneshot_tags ('_dd.appsec.event_rules.loaded'...)
+            get '/success/'
+            # Second trace is a heartbeat trace
+            get '/success/'
+            # Third trace should be sampled or force_kept if there is an appsec event
+            get url, params, env
+          end
+
+          let(:user_agent) { 'Arachni/v1' }
+          let(:headers_tags) { nil }
+
+          context 'from -1 sampling priority' do
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                appsec_bit_in_source: true,
+                tag_sampling_priority_condition: ->(x) { x == 2 }
+              }
+            it_behaves_like 'a request sent with propagated headers',
+              {
+                res_origin: 'rum',
+                res_parent_id_not_equal: '34343434',
+                res_tags: ['_dd.p.ts=02'],
+                res_sampling_priority_condition: ->(x) { x == '2' },
+                res_trace_id: '1212121212121212121'
+              }
+          end
+
+          context 'from 0 sampling priority' do
+            let(:headers_sampling_priority) { '0' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                appsec_bit_in_source: true,
+                tag_sampling_priority_condition: ->(x) { x == 2 }
+              }
+            it_behaves_like 'a request sent with propagated headers',
+              {
+                res_origin: 'rum',
+                res_parent_id_not_equal: '34343434',
+                res_tags: ['_dd.p.ts=02'],
+                res_sampling_priority_condition: ->(x) { x == '2' },
+                res_trace_id: '1212121212121212121'
+              }
+          end
+
+          context 'from 1 sampling priority' do
+            let(:headers_sampling_priority) { '1' }
+
+            it_behaves_like 'a trace with ASM Standalone tags',
+              {
+                appsec_bit_in_source: true,
+                tag_sampling_priority_condition: ->(x) { x == 2 }
+              }
+            it_behaves_like 'a request sent with propagated headers',
+              {
+                res_origin: 'rum',
+                res_parent_id_not_equal: '34343434',
+                res_tags: ['_dd.p.ts=02'],
+                res_sampling_priority_condition: ->(x) { x == '2' },
+                res_trace_id: '1212121212121212121'
+              }
           end
         end
       end

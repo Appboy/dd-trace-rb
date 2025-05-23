@@ -30,7 +30,12 @@ module Datadog
                 trace = Tracing.active_trace
                 datum[:datadog_span] = span
                 annotate!(span, datum)
-                propagate!(trace, span, datum) if distributed_tracing?
+                if Tracing::Distributed::PropagationPolicy.enabled?(
+                  global_config: @options,
+                  trace: trace
+                )
+                  propagate!(trace, span, datum)
+                end
 
                 span
               end

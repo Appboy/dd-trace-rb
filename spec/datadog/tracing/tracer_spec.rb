@@ -126,6 +126,48 @@ RSpec.describe Datadog::Tracing::Tracer do
             expect(span.get_tag('my')).to eq('tag')
           end
 
+          context 'contains version and the span service name' do
+            let(:tracer_options) do
+              { default_service: 'global-service', tags: { Datadog::Core::Environment::Ext::TAG_VERSION => '1.1.0' } }
+            end
+            let(:options) { { service: service } }
+
+            context 'is nil' do
+              let(:service) { nil }
+
+              it 'sets version' do
+                expect(tracer.default_service).to eq('global-service')
+                expect(span.service).to eq('global-service')
+
+                expect(tracer.tags).to include('version' => '1.1.0')
+                expect(span.tags).to include('version' => '1.1.0')
+              end
+            end
+
+            context 'is equal to the default tracer service' do
+              let(:service) { 'global-service' }
+
+              it 'sets version' do
+                expect(tracer.default_service).to eq('global-service')
+                expect(span.service).to eq('global-service')
+
+                expect(tracer.tags).to include('version' => '1.1.0')
+                expect(span.tags).to include('version' => '1.1.0')
+              end
+            end
+
+            context 'is not equal to the default tracer service' do
+              let(:service) { 'local-service' }
+              it 'does not set version' do
+                expect(tracer.default_service).to eq('global-service')
+                expect(span.service).to eq('local-service')
+
+                expect(tracer.tags).to include('version' => '1.1.0')
+                expect(span.tags).not_to include('version' => '1.1.0')
+              end
+            end
+          end
+
           context 'and default tags are set on the tracer' do
             let(:tracer_options) { { tags: default_tags } }
 
@@ -708,7 +750,7 @@ RSpec.describe Datadog::Tracing::Tracer do
       it 'produces an Identifier with data' do
         is_expected.to be_a_kind_of(Datadog::Tracing::Correlation::Identifier)
         expect(active_correlation.trace_id)
-          .to eq(low_order_trace_id(span.trace_id).to_s)
+          .to eq(format_for_correlation(span.trace_id))
         expect(active_correlation.span_id).to eq(span.id.to_s)
       end
     end
@@ -750,7 +792,7 @@ RSpec.describe Datadog::Tracing::Tracer do
         tracer.trace('operation') do |span, trace|
           expect(trace).to have_attributes(
             origin: nil,
-            sampling_priority: 1
+            sampling_priority: nil
           )
 
           expect(span).to have_attributes(
@@ -793,7 +835,7 @@ RSpec.describe Datadog::Tracing::Tracer do
         tracer.trace('operation') do |span, trace|
           expect(trace).to have_attributes(
             origin: nil,
-            sampling_priority: 1
+            sampling_priority: nil
           )
 
           expect(span).to have_attributes(
@@ -874,7 +916,7 @@ RSpec.describe Datadog::Tracing::Tracer do
         tracer.trace('second') do |span, trace|
           expect(trace).to have_attributes(
             origin: nil,
-            sampling_priority: 1
+            sampling_priority: nil
           )
 
           expect(span.trace_id).to_not eq(digest.trace_id)
@@ -914,7 +956,7 @@ RSpec.describe Datadog::Tracing::Tracer do
         tracer.trace('operation') do |span, trace|
           expect(trace).to have_attributes(
             origin: nil,
-            sampling_priority: 1
+            sampling_priority: nil
           )
 
           expect(span).to have_attributes(
@@ -1016,6 +1058,36 @@ RSpec.describe Datadog::Tracing::Tracer do
         shutdown!
       end
     end
+  end
+
+  describe '#baggage_tracing_interactions' do
+    it 'baggage set before active trace creates active trace' do
+      Datadog::Tracing.baggage['key'] = 'value'
+      Datadog::Tracing.trace('operation') do |_span, trace|
+        expect(trace.to_digest.baggage).to eq('key' => 'value')
+      end
+    end
+
+    it 'baggage set after trace finish creates new traceoperation with baggage value' do
+      Datadog::Tracing.trace('operation') do |_span, _trace|
+        expect(Datadog::Tracing.baggage).to be_empty
+      end
+      Datadog::Tracing.baggage['key'] = 'value'
+      expect(Datadog::Tracing.active_trace.to_digest.baggage).to eq('key' => 'value')
+    end
+  end
+
+  it 'baggage value is overridden inside an active trace' do
+    Datadog::Tracing.trace('operation') do |_span, trace|
+      Datadog::Tracing.baggage['key'] = 'value'
+      expect(trace.to_digest.baggage).to eq('key' => 'value')
+    end
+  end
+
+  it 'incoming headers overrides existing baggage' do
+    Datadog::Tracing.baggage['key'] = 'value'
+    Datadog::Tracing.continue_trace!(Datadog::Tracing::TraceDigest.new(baggage: { 'key1' => 'value1' }))
+    expect(Datadog::Tracing.active_trace.to_digest.baggage).to eq('key1' => 'value1')
   end
 end
 

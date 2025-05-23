@@ -1,8 +1,8 @@
 dependencies:
   - Gemfile
-  - Appraisals
+  - '*.gemfile'
   - datadog.gemspec
-  - tasks/appraisal.rake
+  - tasks/dependency.rake
   - .github/workflows/lock-dependency.yml
   - lib/datadog/version.rb
   - appraisal/**

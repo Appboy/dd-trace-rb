@@ -110,7 +110,10 @@ module Datadog
 
               datadog_tag_request
 
-              if datadog_configuration[:distributed_tracing]
+              if Tracing::Distributed::PropagationPolicy.enabled?(
+                global_config: datadog_configuration,
+                trace: datadog_trace
+              )
                 @datadog_original_headers ||= {}
                 Contrib::HTTP.inject(datadog_trace, @datadog_original_headers)
                 self.headers = @datadog_original_headers

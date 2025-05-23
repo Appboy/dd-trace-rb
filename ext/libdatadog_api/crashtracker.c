@@ -54,25 +54,28 @@ static VALUE _native_start_or_update_on_fork(int argc, VALUE *argv, DDTRACE_UNUS
   // Tags and endpoint are heap-allocated, so after here we can't raise exceptions otherwise we'll leak this memory
   // Start of exception-free zone to prevent leaks {{
   ddog_Endpoint *endpoint = ddog_endpoint_from_url(char_slice_from_ruby_string(agent_base_url));
+  if (endpoint == NULL) {
+    rb_raise(rb_eRuntimeError, "Failed to create endpoint from agent_base_url: %"PRIsVALUE, agent_base_url);
+  }
   ddog_Vec_Tag tags = convert_tags(tags_as_array);
 
   ddog_crasht_Config config = {
     .additional_files = {},
-    // The Ruby VM already uses an alt stack to detect stack overflows so the crash handler must not overwrite it.
+    // @ivoanjo: The Ruby VM already uses an alt stack to detect stack overflows.
     //
-    // @ivoanjo: Specifically, with `create_alt_stack = true` I saw a segfault, such as Ruby 2.6's bug with
+    // In libdatadog < 14 with `create_alt_stack = true` I saw a segfault, such as Ruby 2.6's bug with
     // "Process.detach(fork { exit! }).instance_variable_get(:@foo)" being turned into a
     // "-e:1:in `instance_variable_get': stack level too deep (SystemStackError)" by Ruby.
-    //
     // The Ruby crash handler also seems to get confused when this option is enabled and
     // "Process.kill('SEGV', Process.pid)" gets run.
+    //
+    // This actually changed in libdatadog 14, so I could see no issues with `create_alt_stack = true`, but not
+    // overridding what Ruby set up seems a saner default to keep anyway.
     .create_alt_stack = false,
+    .use_alt_stack = true,
     .endpoint = endpoint,
     .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_SYMBOLS_IN_RECEIVER,
-    .timeout_secs = FIX2INT(upload_timeout_seconds),
-    // Waits for crash tracker to finish reporting the issue before letting the Ruby process die; see
-    // https://github.com/DataDog/libdatadog/pull/477 for details
-    .wait_for_receiver = true,
+    .timeout_ms = FIX2INT(upload_timeout_seconds) * 1000,
   };
 
   ddog_crasht_Metadata metadata = {
@@ -95,9 +98,9 @@ static VALUE _native_start_or_update_on_fork(int argc, VALUE *argv, DDTRACE_UNUS
     .optional_stdout_filename = {},
   };
 
-  ddog_crasht_Result result =
+  ddog_VoidResult result =
     action == start_action ?
-      ddog_crasht_init_with_receiver(config, receiver_config, metadata) :
+      ddog_crasht_init(config, receiver_config, metadata) :
       ddog_crasht_update_on_fork(config, receiver_config, metadata);
 
   // Clean up before potentially raising any exceptions
@@ -105,7 +108,7 @@ static VALUE _native_start_or_update_on_fork(int argc, VALUE *argv, DDTRACE_UNUS
   ddog_endpoint_drop(endpoint);
   // }} End of exception-free zone to prevent leaks
 
-  if (result.tag == DDOG_CRASHT_RESULT_ERR) {
+  if (result.tag == DDOG_VOID_RESULT_ERR) {
     rb_raise(rb_eRuntimeError, "Failed to start/update the crash tracker: %"PRIsVALUE, get_error_details_and_drop(&result.err));
   }
 
@@ -113,9 +116,9 @@ static VALUE _native_start_or_update_on_fork(int argc, VALUE *argv, DDTRACE_UNUS
 }
 
 static VALUE _native_stop(DDTRACE_UNUSED VALUE _self) {
-  ddog_crasht_Result result = ddog_crasht_shutdown();
+  ddog_VoidResult result = ddog_crasht_shutdown();
 
-  if (result.tag == DDOG_CRASHT_RESULT_ERR) {
+  if (result.tag == DDOG_VOID_RESULT_ERR) {
     rb_raise(rb_eRuntimeError, "Failed to stop the crash tracker: %"PRIsVALUE, get_error_details_and_drop(&result.err));
   }
 

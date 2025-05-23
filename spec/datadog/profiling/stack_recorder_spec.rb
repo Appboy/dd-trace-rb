@@ -13,6 +13,7 @@ RSpec.describe Datadog::Profiling::StackRecorder do
   let(:heap_size_enabled) { false }
   let(:heap_sample_every) { 1 }
   let(:timeline_enabled) { true }
+  let(:heap_clean_after_gc_enabled) { true }
 
   subject(:stack_recorder) do
     described_class.new(
@@ -22,6 +23,7 @@ RSpec.describe Datadog::Profiling::StackRecorder do
       heap_size_enabled: heap_size_enabled,
       heap_sample_every: heap_sample_every,
       timeline_enabled: timeline_enabled,
+      heap_clean_after_gc_enabled: heap_clean_after_gc_enabled,
     )
   end
 
@@ -38,6 +40,14 @@ RSpec.describe Datadog::Profiling::StackRecorder do
 
   def slot_two_mutex_locked?
     described_class::Testing._native_slot_two_mutex_locked?(stack_recorder)
+  end
+
+  def is_object_recorded?(obj_id)
+    described_class::Testing._native_is_object_recorded?(stack_recorder, obj_id)
+  end
+
+  def recorder_after_gc_step
+    described_class::Testing._native_recorder_after_gc_step(stack_recorder)
   end
 
   describe "#initialize" do
@@ -226,6 +236,21 @@ RSpec.describe Datadog::Profiling::StackRecorder do
           period: 0,
           comment: [],
         )
+      end
+
+      context "when requesting multiple serializations of empty profiles" do
+        it "correctly sets the profile start timestamp in libdatadog" do
+          # The `start` timestamp returned is tracked locally by us. This test validates that the actual profile
+          # matches it, e.g. that we're passing it along correctly to libdatadog.
+          start_timestamps = []
+          4.times do
+            start, _, profile = stack_recorder.serialize
+            expect(decode_profile(profile).time_nanos).to eq(Datadog::Core::Utils::Time.as_utc_epoch_ns(start))
+
+            start_timestamps << start
+          end
+          expect(start_timestamps.sort).to eq(start_timestamps) # No later timestamp should come before an earlier one
+        end
       end
 
       it "returns stats reporting no recorded samples" do
@@ -656,136 +681,6 @@ RSpec.describe Datadog::Profiling::StackRecorder do
           end
         end
 
-        context "on Rubies supporting rb_gc_force_recycle" do
-          before do
-            skip "rb_gc_force_recycle is a no-op in current Ruby version" if RUBY_VERSION >= "3.1"
-            @recycled_sample_allocation_line = 0
-          end
-
-          def has_seen_id_flag(obj)
-            described_class::Testing._native_has_seen_id_flag(obj)
-          end
-
-          # This method attempts to allocate an object on a recycled heap slot.
-          #
-          # Heap slot recycling was a troublesome feature that has been removed from Rubies >= 3.1
-          # in which an object could be freed through a fast-path that bypassed a lot of runtime
-          # machinery such as finalizers or object id tracking and thus introduced a fair amount
-          # of buggy behaviour. Some of this buggy behaviour manifests when a recycled slot gets
-          # re-used by a new live object: the new live object id will be the same as the id of
-          # the object that was recycled, violating a core constraint of Ruby objects: object ids
-          # are unique and non-repeatable.
-          #
-          # Recycling an object slot is easy (accomplished by a rb_gc_force_recycle native method call).
-          # More difficult is allocating an object on a recycled slot. Ruby gives us no control on
-          # where to allocate an object so we have to play a probability game. This method attempts to
-          # maximize our chances of quickly getting an object in a recycled slot by:
-          # 1. Force recycling 1000 objects.
-          # 2. Repeatedly allocating 1000 objects and keeping references to them, thus preventing GC
-          #    from reclaiming their slots.
-          # 3. Checking if any of the ids of the 1000 recycled objects now map to a live object. If
-          #    that happens, then we know that live object was allocated on a recycled slot and we
-          #    can return it.
-          def create_obj_in_recycled_slot(should_sample_original: false)
-            # Force-recycle 1000 objects.
-            # NOTE: In theory, a single force recycle would suffice but the more recycled slots
-            #       there are to use the more probable it is for a new allocation to use it.
-            recycled_obj_ids = []
-            1000.times do
-              obj = Object.new
-              sample_allocation(obj) if should_sample_original
-              @recycled_sample_allocation_line = __LINE__ - 1
-
-              # Get the id of the object we're about to recycle
-              recycled_obj_ids << obj.object_id
-
-              # Force recycle the given object
-              described_class::Testing._native_gc_force_recycle(obj)
-            end
-
-            # Repeatedly allocate objects until we find one that resolves to the id of one of
-            # the force recycled objects
-            objs = []
-            100.times do
-              # Instead of doing this one at a time which would be slow given id2ref will
-              # raise on failure, allocate a ton of objects each time, increasing the
-              # probability of getting a hit on each iteration
-              # NOTE: We keep the object references around to prevent GCs from constantly
-              #       freeing up slots from the previous iteration. Thus each consecutive
-              #       iteration should get one step closer to re-using one of the recycled
-              #       slots. This should not lead to OOMs since we know there are 1000
-              #       free recycled slots available (we recycled them above). At the very
-              #       limit we'd expect the Ruby VM to prefer to re-use those slots rather
-              #       than expand heap pages and when that happens we'd stop iterating.
-              1000.times { objs << Object.new }
-              recycled_obj_ids.each do |obj_id|
-                return ObjectSpace._id2ref(obj_id)
-              rescue RangeError # rubocop:disable Lint/SuppressedException
-              end
-            end
-            raise "could not allocate an object in a recycled slot"
-          end
-
-          it "enforces seen id flag on objects on recycled slots that get sampled" do
-            recycled_obj = create_obj_in_recycled_slot
-
-            expect(has_seen_id_flag(recycled_obj)).to be false
-
-            sample_allocation(recycled_obj)
-
-            expect(has_seen_id_flag(recycled_obj)).to be true
-          end
-
-          it "enforces seen id flag on untracked objects that replace tracked recycled objects" do
-            recycled_obj = create_obj_in_recycled_slot(should_sample_original: true)
-
-            expect(has_seen_id_flag(recycled_obj)).to be false
-
-            serialize
-
-            expect(has_seen_id_flag(recycled_obj)).to be true
-          end
-
-          it "correctly handles lifecycle of objects on recycled slots that get sampled" do
-            recycled_obj = create_obj_in_recycled_slot
-
-            sample_allocation(recycled_obj)
-            sample_line = __LINE__ - 1
-
-            GC.start # Ensure recycled sample has age > 0 so it shows up in serialized profile
-
-            recycled_sample = heap_samples.find { |s| s.has_location?(path: __FILE__, line: sample_line) }
-            expect(recycled_sample).not_to be nil
-          end
-
-          it "supports allocation samples with duplicate ids due to force recycling" do
-            recycled_obj = create_obj_in_recycled_slot(should_sample_original: true)
-
-            expect { sample_allocation(recycled_obj) }.not_to raise_error
-          end
-
-          it "raises on allocation samples with duplicate ids that are not due to force recycling" do
-            obj = Object.new
-
-            sample_allocation(obj)
-
-            expect { sample_allocation(obj) }.to raise_error(/supposed to be unique/)
-          end
-
-          it "can detect implicit frees due to slot recycling" do
-            live_objects = []
-            live_objects << create_obj_in_recycled_slot(should_sample_original: true)
-
-            # If we act on implicit frees, then we assume that even though there's a live object
-            # in the same slot as the original one we were tracking, we'll be able to detect this
-            # recycling, clean up that record and not include it in the final heap samples
-            relevant_sample = heap_samples.find do |s|
-              s.has_location?(path: __FILE__, line: @recycled_sample_allocation_line)
-            end
-            expect(relevant_sample).to be nil
-          end
-        end
-
         # NOTE: This is a regression test that exceptions in end_heap_allocation_recording_with_rb_protect are safely
         # handled by the stack_recorder.
         context "when the heap sampler raises an exception during _native_sample" do
@@ -812,12 +707,114 @@ RSpec.describe Datadog::Profiling::StackRecorder do
             expect(slot_two_mutex_locked?).to be true
           end
         end
+
+        describe "#recorder_after_gc_step" do
+          def sample_and_clear
+            test_object = Object.new
+            test_object_id = test_object.object_id
+            sample_allocation(test_object)
+            # Let's replace the test_object reference with another object, so that the original one can be GC'd
+            test_object = Object.new # rubocop:disable Lint/UselessAssignment
+            GC.start
+            test_object_id
+          end
+
+          before do
+            GC.disable
+
+            @object_ids = Array.new(4) { sample_and_clear }
+          end
+
+          after { GC.enable }
+
+          context 'when heap_clean_after_gc_enabled is true' do
+            let(:heap_clean_after_gc_enabled) { true }
+
+            it "clears young dead objects with age 1 and 2, but not older objects" do
+              # Every object is still being tracked at this point
+              expect(@object_ids.map { |it| is_object_recorded?(it) }).to eq [true, true, true, true]
+
+              recorder_after_gc_step
+
+              # Young objects should no longer be tracked, but older objects are still kept
+              expect(@object_ids.map { |it| is_object_recorded?(it) }).to eq [true, true, false, false]
+
+              stack_recorder.serialize
+
+              # Older objects are only cleared at serialization time
+              expect(@object_ids.map { |it| is_object_recorded?(it) }).to eq [false, false, false, false]
+            end
+
+            context "when there's a heap serialization ongoing" do
+              it "does nothing" do
+                described_class::Testing._native_start_fake_slow_heap_serialization(stack_recorder)
+
+                test_object_id = sample_and_clear
+
+                expect do
+                  described_class::Testing._native_heap_recorder_reset_last_update(stack_recorder)
+                  recorder_after_gc_step
+                end.to_not change { is_object_recorded?(test_object_id) }.from(true)
+
+                described_class::Testing._native_end_fake_slow_heap_serialization(stack_recorder)
+
+                # Sanity: after serialization finishes, we can finally clear it
+                expect do
+                  described_class::Testing._native_heap_recorder_reset_last_update(stack_recorder)
+                  recorder_after_gc_step
+                end.to change { is_object_recorded?(test_object_id) }.from(true).to(false)
+              end
+            end
+
+            it "enforces a minimum time between heap updates" do
+              test_object_id_1 = sample_and_clear
+
+              expect { recorder_after_gc_step }.to change { is_object_recorded?(test_object_id_1) }.from(true).to(false)
+
+              test_object_id_2 = sample_and_clear
+
+              expect { recorder_after_gc_step }.to_not change { is_object_recorded?(test_object_id_2) }.from(true)
+            end
+
+            it "does not apply the minimum time between heap updates when serializing" do
+              test_object_id_1 = sample_and_clear
+
+              expect { recorder_after_gc_step }.to change { is_object_recorded?(test_object_id_1) }.from(true).to(false)
+
+              test_object_id_2 = sample_and_clear
+
+              expect { recorder_after_gc_step }.to_not change { is_object_recorded?(test_object_id_2) }.from(true)
+
+              expect { serialize }.to change { is_object_recorded?(test_object_id_2) }.from(true).to(false)
+            end
+          end
+
+          context 'when heap_clean_after_gc_enabled is false' do
+            let(:heap_clean_after_gc_enabled) { false }
+
+            it "does nothing" do
+              # Every object is still being tracked at this point
+              expect(@object_ids.map { |it| is_object_recorded?(it) }).to eq [true, true, true, true]
+
+              recorder_after_gc_step
+
+              # No change -- all objects are still being tracked
+              expect(@object_ids.map { |it| is_object_recorded?(it) }).to eq [true, true, true, true]
+
+              stack_recorder.serialize
+
+              # All objects are finally cleared
+              expect(@object_ids.map { |it| is_object_recorded?(it) }).to eq [false, false, false, false]
+            end
+          end
+        end
       end
     end
 
     context "when there is a failure during serialization" do
       before do
         allow(Datadog.logger).to receive(:error)
+        allow(Datadog::Core::Telemetry::Logger).to receive(:error)
 
         # Real failures in serialization are hard to trigger, so we're using a mock failure instead
         expect(described_class).to receive(:_native_serialize).and_return([:error, "test error message"])
@@ -869,11 +866,14 @@ RSpec.describe Datadog::Profiling::StackRecorder do
     subject(:serialize!) { stack_recorder.serialize! }
 
     context "when serialization succeeds" do
+      let(:encoded_profile) { instance_double(Datadog::Profiling::EncodedProfile, _native_bytes: "serialized-data") }
+
       before do
-        expect(described_class).to receive(:_native_serialize).and_return([:ok, %w[start finish serialized-data]])
+        expect(described_class)
+          .to receive(:_native_serialize).and_return([:ok, [:dummy_start, :dummy_finish, encoded_profile]])
       end
 
-      it { is_expected.to eq("serialized-data") }
+      it { is_expected.to be encoded_profile }
     end
 
     context "when serialization fails" do
