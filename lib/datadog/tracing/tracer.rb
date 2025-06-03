@@ -455,10 +455,14 @@ module Datadog
                         # Use provided tags or default tags if none.
                         tags || @tags.dup
                       end
+        ### BRAZE MODIFICATION
+        # We need to keep the version tag
+        #
         # Remove version tag if service is not the default service
-        if merged_tags.key?(Core::Environment::Ext::TAG_VERSION) && service && service != @default_service
-          merged_tags.delete(Core::Environment::Ext::TAG_VERSION)
-        end
+        # if merged_tags.key?(Core::Environment::Ext::TAG_VERSION) && service && service != @default_service
+        #   merged_tags.delete(Core::Environment::Ext::TAG_VERSION)
+        # end
+        ### END BRAZE MODIFICATION
         merged_tags
       end
 
