@@ -53,12 +53,13 @@ module Datadog
                 span.set_tag(Contrib::Ext::DB::TAG_SYSTEM, Ext::TAG_SYSTEM)
 
                 if datadog_configuration[:command_enabled]
-                  cmd = Quantize.format_command(op, args)
+                  # BEGIN BRAZE MODIFICATION
+                  cmd, q_cmd, length = Quantize.format_command(op, args)
                   span.set_tag(Ext::TAG_COMMAND, cmd)
+                  span.set_tag(Ext::TAG_QUANTIZED_COMMAND, q_cmd)
+                  span.set_tag(Ext::TAG_LENGTH, length)
+                  # END BRAZE MODIFICATION
                 end
-                # BEGIN BRAZE MODIFICATION
-                span.set_tag(Ext::TAG_LENGTH, Core::Utils.utf8_encode([op, *args].join(' ').strip, binary: true).length)
-                # END BRAZE MODIFICATION
 
                 Contrib::SpanAttributeSchema.set_peer_service!(span, Ext::PEER_SERVICE_SOURCES)
                 super
