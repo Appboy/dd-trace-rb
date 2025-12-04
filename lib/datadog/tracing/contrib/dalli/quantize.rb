@@ -9,14 +9,13 @@ module Datadog
         # Quantize contains dalli-specic quantization tools.
         module Quantize
           # BEGIN BRAZE MODIFICATION
-          GUID_ID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
-          BSON_ID_REGEX = /[0-9a-f]{24}/i
-          XXHASH_REGEX = /[0-9a-f]{16}/
-          INTEGER_ID_REGEX = /\d\d+/ # 2 or more digits (to exclude things like ":v2")
+          # Combined regex for quantizing IDs - order matters (most specific first)
+          # GUID > BSON (24 hex) > XXHASH (16 hex) > INTEGER (2+ digits)
+          QUANTIZE_ID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{24}|[0-9a-f]{16}|\d{2,}/
           # END BRAZE MODIFICATION
           module_function
 
-          def format_command(operation, args, truncate = true)
+          def format_command(operation, args)
             placeholder = "#{operation} BLOB (OMITTED)"
             # BEGIN BRAZE MODIFICATION
             if operation == :send_multiget
@@ -29,11 +28,7 @@ module Datadog
 
             command = Core::Utils.utf8_encode(command, binary: true, placeholder: placeholder)
             # BEGIN BRAZE MODIFICATION
-            quantized_command = command.gsub(GUID_ID_REGEX, "GUID")
-            quantized_command = quantized_command.gsub(BSON_ID_REGEX, "BSON")
-            quantized_command = quantized_command.gsub(XXHASH_REGEX, "XXHASH")
-            quantized_command = quantized_command.gsub(INTEGER_ID_REGEX, "INTEGER")
-
+            quantized_command = command.gsub(QUANTIZE_ID_REGEX, "#")
             [
               Core::Utils.truncate(command, Ext::QUANTIZE_MAX_CMD_LENGTH),
               Core::Utils.truncate(quantized_command, Ext::QUANTIZE_MAX_CMD_LENGTH),
