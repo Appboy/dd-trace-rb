@@ -10,6 +10,10 @@ module Datadog
     #
     # @api private
     class Error < StandardError
+      # Internal Dynamic Instrumentation error ("should never happen").
+      class InternalError < Error
+      end
+
       # Probe does not contain a line number (i.e., is not a line probe).
       class MissingLineNumber < Error
       end
@@ -38,6 +42,11 @@ module Datadog
       class ProbePreviouslyFailed < Error
       end
 
+      # Raised when trying to instrument a probe when there is existing
+      # instrumentation for the same probe id.
+      class AlreadyInstrumented < Error
+      end
+
       # Raised when installing a line probe and multiple files match the
       # specified path suffix.
       # A probe must be installed into one file only, since UI only
@@ -47,6 +56,31 @@ module Datadog
       # user intended. Instrumentation will fail when multiple files match
       # and the user will need to make their suffix more precise.
       class MultiplePathsMatch < Error
+      end
+
+      # Base class for exceptions arising during expression language AST
+      # compilation into Ruby code.
+      #
+      # Expression language does not specify behavior in all cases,
+      # leaving some choices to the language implementation in the tracers.
+      # It is therefore possible that some technically valid expressions are
+      # prohibited by our implementation.
+      #
+      # It is also possible that the sanitizers/validators prohibit some
+      # esoteric constructs that are technically valid in Ruby,
+      # for example if instance variable name rules are relaxed to allow
+      # arbitrary characters in them as permitted in method names.
+      class InvalidExpression < Error
+      end
+
+      # Variable name with invalid characters in an expression language
+      # expression.
+      class BadVariableName < InvalidExpression
+      end
+
+      # Base class for exceptions arising when evaluating expression language
+      # expressions.
+      class ExpressionEvaluationError < Error
       end
     end
   end

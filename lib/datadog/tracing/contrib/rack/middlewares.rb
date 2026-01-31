@@ -13,6 +13,7 @@ require_relative 'ext'
 require_relative 'header_collection'
 require_relative 'header_tagging'
 require_relative 'request_queue'
+require_relative 'route_inference'
 require_relative 'trace_proxy_middleware'
 
 module Datadog
@@ -47,7 +48,7 @@ module Datadog
             end
 
             TraceProxyMiddleware.call(env, configuration) do
-              trace_options = { type: Tracing::Metadata::Ext::HTTP::TYPE_INBOUND }
+              trace_options = {type: Tracing::Metadata::Ext::HTTP::TYPE_INBOUND}
               trace_options[:service] = configuration[:service_name] if configuration[:service_name]
 
               # start a new request span and attach it to the current Rack environment;
@@ -80,7 +81,7 @@ module Datadog
               # catch exceptions that may be raised in the middleware chain
               # Note: if a middleware catches an Exception without re raising,
               # the Exception cannot be recorded here.
-              request_span.set_error(e) unless request_span.nil?
+              request_span&.set_error(e)
               raise e
             ensure
               env[Ext::RACK_ENV_REQUEST_SPAN] = previous_request_span if previous_request_span
@@ -123,7 +124,7 @@ module Datadog
             # 4. Fallback with verb + status, eq `GET 200`
             request_span.resource ||=
               if configuration[:middleware_names] && env['RESPONSE_MIDDLEWARE']
-                "#{env['RESPONSE_MIDDLEWARE']}##{original_request_method}"
+                "#{env["RESPONSE_MIDDLEWARE"]}##{original_request_method}"
               elsif trace.resource_override?
                 trace.resource
               else
@@ -138,28 +139,7 @@ module Datadog
             request_span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_REQUEST)
             request_span.set_tag(Tracing::Metadata::Ext::TAG_KIND, Tracing::Metadata::Ext::SpanKind::TAG_SERVER)
 
-            if status != 404 && (last_route = trace.get_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE))
-              last_script_name = trace.get_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE_PATH) || ''
-
-              # If the last_script_name is empty but the env['SCRIPT_NAME'] is NOT empty
-              # then the current rack request was not routed and must be accounted for
-              # which only happens in pure nested rack requests i.e /rack/rack/hello/world
-              #
-              # To account for the unaccounted nested rack requests of /rack/hello/world,
-              # we use 'PATH_INFO knowing that rack cannot have named parameters
-              if last_script_name == '' && env['SCRIPT_NAME'] && env['SCRIPT_NAME'] != ''
-                last_script_name = last_route
-                last_route = env['PATH_INFO']
-              end
-
-              # Clear the route and route path tags from the request trace to avoid possibility of misplacement
-              trace.clear_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE)
-              trace.clear_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE_PATH)
-
-              # Ensure tags are placed in rack.request span as desired
-              request_span.set_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE, last_script_name + last_route)
-              request_span.clear_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE_PATH)
-            end
+            set_route_and_endpoint_tags(trace: trace, request_span: request_span, status: status, env: env)
 
             # Set analytics sample rate
             if Contrib::Analytics.enabled?(configuration[:analytics_enabled])
@@ -218,16 +198,14 @@ module Datadog
               request_span.set_tag(Tracing::Metadata::Ext::HTTP::TAG_USER_AGENT, user_agent)
             end
 
-            if request_span.get_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE).nil? && status != 404
-              request_span.set_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE, env['PATH_INFO'])
-            end
-
             HeaderTagging.tag_request_headers(request_span, request_header_collection, configuration)
             HeaderTagging.tag_response_headers(request_span, headers, configuration) if headers
 
             # detect if the status code is a 5xx and flag the request span as an error
             # unless it has been already set by the underlying framework
-            request_span.status = 1 if status.to_s.start_with?('5') && request_span.status.zero?
+            if request_span.status.zero? && Datadog.configuration.tracing.http_error_statuses.server.include?(status)
+              request_span.status = Tracing::Metadata::Ext::Errors::STATUS
+            end
           end
           # rubocop:enable Metrics/AbcSize
           # rubocop:enable Metrics/CyclomaticComplexity
@@ -240,16 +218,72 @@ module Datadog
             Datadog.configuration.tracing[:rack]
           end
 
+          # rubocop:disable Metrics/AbcSize
+          # rubocop:disable Metrics/MethodLength
+          # rubocop:disable Metrics/CyclomaticComplexity
+          # rubocop:disable Metrics/PerceivedComplexity
+          def set_route_and_endpoint_tags(trace:, request_span:, status:, env:)
+            return if status == 404
+
+            if (last_route = trace.get_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE))
+              last_script_name = trace.get_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE_PATH) || ''
+
+              # This happens when processing requests to a nested rack application,
+              # when parent app is instrumented, and the nested app is not instrumented
+              #
+              # When resource_renaming.always_simplified_endpoint is set to true,
+              # we infer the route from the full request path.
+              if last_script_name == '' && env['SCRIPT_NAME'] != '' &&
+                  !Datadog.configuration.tracing.resource_renaming.always_simplified_endpoint &&
+                  (inferred_route = RouteInference.infer(env['PATH_INFO']))
+                set_endpoint_tag(request_span, last_route + inferred_route)
+              end
+
+              # Clear the route and route path tags from the request trace to avoid possibility of misplacement
+              trace.clear_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE)
+              trace.clear_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE_PATH)
+
+              # Ensure tags are placed in rack.request span as desired
+              request_span.set_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE, last_script_name + last_route)
+              request_span.clear_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE_PATH)
+            end
+
+            if Datadog.configuration.tracing.resource_renaming.always_simplified_endpoint ||
+                request_span.get_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE).nil?
+              if (inferred_route = RouteInference.read_or_infer(env))
+                set_endpoint_tag(request_span, inferred_route) if inferred_route
+              end
+            elsif !request_span.get_tag(Tracing::Metadata::Ext::HTTP::TAG_ENDPOINT)
+              set_endpoint_tag(request_span, request_span.get_tag(Tracing::Metadata::Ext::HTTP::TAG_ROUTE))
+            end
+          end
+          # rubocop:enable Metrics/AbcSize
+          # rubocop:enable Metrics/MethodLength
+          # rubocop:enable Metrics/CyclomaticComplexity
+          # rubocop:enable Metrics/PerceivedComplexity
+
+          def set_endpoint_tag(request_span, value)
+            # In the first iteration, http.endpoint must be reported in 2 cases:
+            #   1. resource renaming is enabled
+            #   2. AppSec is enabled and resource renaming is disabled (by default, not explicitly)
+            if Datadog.configuration.tracing.resource_renaming.enabled ||
+                Datadog.configuration.appsec.enabled && Datadog.configuration.tracing.resource_renaming.options[:enabled].default_precedence?
+              request_span.set_tag(Tracing::Metadata::Ext::HTTP::TAG_ENDPOINT, value)
+            end
+          end
+
+          # rubocop:disable Metrics/AbcSize
+          # rubocop:disable Metrics/MethodLength
           def parse_url(env, original_env)
             request_obj = ::Rack::Request.new(env)
 
             # scheme, host, and port
             base_url = if request_obj.respond_to?(:base_url)
-                         request_obj.base_url
-                       else
-                         # Compatibility for older Rack versions
-                         request_obj.url.chomp(request_obj.fullpath)
-                       end
+              request_obj.base_url
+            else
+              # Compatibility for older Rack versions
+              request_obj.url.chomp(request_obj.fullpath)
+            end
 
             # https://github.com/rack/rack/blob/main/SPEC.rdoc
             #
@@ -269,18 +303,20 @@ module Datadog
             # prepended to PATH_INFO to reflect the correct user visible path.
             request_uri = env['REQUEST_URI'].to_s
             fullpath = if request_uri.empty?
-                         query_string = original_env['QUERY_STRING'].to_s
-                         path = original_env['SCRIPT_NAME'].to_s + original_env['PATH_INFO'].to_s
+              query_string = original_env['QUERY_STRING'].to_s
+              path = original_env['SCRIPT_NAME'].to_s + original_env['PATH_INFO'].to_s
 
-                         query_string.empty? ? path : "#{path}?#{query_string}"
-                       else
-                         # normally REQUEST_URI starts at the path, but it
-                         # might contain the full URL in some cases (e.g WEBrick)
-                         request_uri.delete_prefix(base_url)
-                       end
+              query_string.empty? ? path : "#{path}?#{query_string}"
+            else
+              # normally REQUEST_URI starts at the path, but it
+              # might contain the full URL in some cases (e.g WEBrick)
+              request_uri.delete_prefix(base_url)
+            end
 
             base_url + fullpath
           end
+          # rubocop:enable Metrics/AbcSize
+          # rubocop:enable Metrics/MethodLength
 
           def parse_user_agent_header(headers)
             headers.get(Tracing::Metadata::Ext::HTTP::HEADER_USER_AGENT)

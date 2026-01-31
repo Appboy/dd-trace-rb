@@ -1,13 +1,15 @@
 require 'fileutils'
 
-namespace :rbs do  # rubocop:disable Metrics/BlockLength
+namespace :rbs do
   task :stale do |_task, args|
-    glob = args.to_a.map { |g| g =~ /\.rbs$/ ? g : "#{g}/**/*.rbs" }
+    glob = args.to_a.map { |g| /\.rbs$/.match?(g) ? g : "#{g}/**/*.rbs" }
     glob = ['sig/**/*.rbs'] if glob.empty?
 
     stale = Dir[*glob].reject do |sig|
-      next if sig !~ /^sig\// # rubocop:disable Style/RegexpLiteral
-      next if sig !~ /\.rbs$/
+      next true if /^sig\/helpers\//.match?(sig)
+
+      next if !/^sig\//.match?(sig)
+      next if !/\.rbs$/.match?(sig)
 
       lib = sig.sub(/^sig/, 'lib').sub(/\.rbs$/, '.rb')
 
@@ -42,12 +44,12 @@ namespace :rbs do  # rubocop:disable Metrics/BlockLength
   end
 
   task :missing do |_task, args|
-    glob = args.to_a.map { |g| g =~ /\.rb$/ ? g : "#{g}/**/*.rb" }
+    glob = args.to_a.map { |g| /\.rb$/.match?(g) ? g : "#{g}/**/*.rb" }
     glob = ['lib/**/*.rb'] if glob.empty?
 
     missing = Dir[*glob].reject do |lib|
-      next if lib !~ /^lib\// # rubocop:disable Style/RegexpLiteral
-      next if lib !~ /\.rb$/
+      next if !/^lib\//.match?(lib)
+      next if !/\.rb$/.match?(lib)
 
       sig = lib.sub(/^lib/, 'sig').sub(/\.rb$/, '.rbs')
 
@@ -62,7 +64,7 @@ namespace :rbs do  # rubocop:disable Metrics/BlockLength
         | **Hello there, fellow contributor who just triggered a type signature error**|
         |                                                                              |
         | It looks like you created a file in `lib/` that has no matching signature    |
-        | file in `sig/`. You can automatically generate missing signature files with:  
+        | file in `sig/`. You can automatically generate missing signature files with:
         |                                                                              |
         |   bundle exec rake rbs:prototype                                             |
         |                                                                              |
@@ -81,12 +83,12 @@ namespace :rbs do  # rubocop:disable Metrics/BlockLength
   end
 
   task :clean do |_task, args|
-    glob = args.to_a.map { |g| g =~ /\.rbs$/ ? g : "#{g}/**/*.rbs" }
+    glob = args.to_a.map { |g| /\.rbs$/.match?(g) ? g : "#{g}/**/*.rbs" }
     glob = ['sig/**/*.rbs'] if glob.empty?
 
     stale = Dir[*glob].reject do |sig|
-      next if sig !~ /^sig\// # rubocop:disable Style/RegexpLiteral
-      next if sig !~ /\.rbs$/
+      next if !/^sig\//.match?(sig)
+      next if !/\.rbs$/.match?(sig)
 
       lib = sig.sub(/^sig/, 'lib').sub(/\.rbs$/, '.rb')
 
@@ -111,12 +113,12 @@ namespace :rbs do  # rubocop:disable Metrics/BlockLength
 
     force = a.shift if a.first == 'force'
 
-    glob = a.map { |g| g =~ /\.rb$/ ? g : "#{g}/**/*.rb" }
+    glob = a.map { |g| /\.rb$/.match?(g) ? g : "#{g}/**/*.rb" }
     glob = ['lib/**/*.rb'] if glob.empty?
 
     Dir[*glob].each do |lib|
-      next if lib !~ /^lib\// # rubocop:disable Style/RegexpLiteral
-      next if lib !~ /\.rb$/
+      next if !/^lib\//.match?(lib)
+      next if !/\.rb$/.match?(lib)
 
       sig = lib.sub(/^lib/, 'sig').sub(/\.rb$/, '.rbs')
 

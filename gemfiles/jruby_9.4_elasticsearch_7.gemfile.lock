@@ -1,10 +1,11 @@
 PATH
   remote: ..
   specs:
-    datadog (2.15.0)
-      datadog-ruby_core_source (~> 3.4)
-      libdatadog (~> 16.0.1.1.0)
-      libddwaf (~> 1.22.0.0.2)
+    datadog (2.27.0)
+      cgi
+      datadog-ruby_core_source (~> 3.5, >= 3.5.1)
+      libdatadog (~> 25.0.0.1.0)
+      libddwaf (~> 1.30.0.0.0)
       logger
       msgpack
 
@@ -13,16 +14,17 @@ GEM
   specs:
     addressable (2.8.5)
       public_suffix (>= 2.0.2, < 6.0)
-    base64 (0.2.0)
+    base64 (0.3.0)
     benchmark-ips (2.12.0)
     benchmark-memory (0.1.2)
       memory_profiler (~> 0.9)
+    cgi (0.5.1-java)
     climate_control (1.2.0)
     coderay (1.1.3)
     concurrent-ruby (1.2.2)
     crack (0.4.5)
       rexml
-    datadog-ruby_core_source (3.4.0)
+    datadog-ruby_core_source (3.5.1)
     diff-lcs (1.5.0)
     docile (1.4.1)
     dogstatsd-ruby (5.6.1)
@@ -35,27 +37,27 @@ GEM
       base64
       faraday (>= 1, < 3)
       multi_json
-    faraday (2.13.0)
+    faraday (2.14.0)
       faraday-net_http (>= 2.0, < 3.5)
       json
       logger
-    faraday-net_http (3.4.0)
-      net-http (>= 0.5.0)
-    ffi (1.17.1-java)
+    faraday-net_http (3.4.2)
+      net-http (~> 0.5)
+    ffi (1.17.3-java)
     hashdiff (1.0.1)
-    json (2.10.2-java)
+    json (2.18.0-java)
     json-schema (2.8.1)
       addressable (>= 2.4)
-    libdatadog (16.0.1.1.0)
-    libddwaf (1.22.0.0.2-java)
+    libdatadog (25.0.0.1.0)
+    libddwaf (1.30.0.0.0)
       ffi (~> 1.0)
     logger (1.7.0)
     memory_profiler (0.9.14)
     method_source (1.0.0)
     msgpack (1.8.0-java)
-    multi_json (1.15.0)
-    net-http (0.6.0)
-      uri
+    multi_json (1.19.1)
+    net-http (0.9.1)
+      uri (>= 0.11.1)
     os (1.1.4)
     pry (0.14.2-java)
       coderay (~> 1.1)
@@ -94,15 +96,12 @@ GEM
       docile (~> 1.1)
       simplecov-html (~> 0.11)
       simplecov_json_formatter (~> 0.1)
-    simplecov-cobertura (2.1.0)
-      rexml
-      simplecov (~> 0.19)
     simplecov-html (0.13.1)
     simplecov_json_formatter (0.1.4)
     spoon (0.0.6)
       ffi
     strscan (3.1.0-java)
-    uri (1.0.3)
+    uri (1.1.1)
     warning (1.3.0)
     webmock (3.19.1)
       addressable (>= 2.8.0)
@@ -133,10 +132,9 @@ DEPENDENCIES
   rspec-wait (~> 0)
   rspec_junit_formatter (>= 0.5.1)
   simplecov (~> 0.22.0)
-  simplecov-cobertura (~> 2.1.0)
   warning (~> 1)
   webmock (>= 3.10.0)
   webrick (>= 1.7.0)
 
 BUNDLED WITH
-   2.5.21
+   2.6.9

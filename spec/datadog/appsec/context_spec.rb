@@ -1,22 +1,31 @@
 # frozen_string_literal: true
 
+require 'libddwaf'
+
 require 'datadog/appsec/spec_helper'
-require 'datadog/appsec/processor'
 require 'datadog/appsec/processor/rule_loader'
-require 'datadog/appsec/processor/rule_merger'
 
 RSpec.describe Datadog::AppSec::Context do
   let(:span) { instance_double(Datadog::Tracing::SpanOperation) }
   let(:trace) { instance_double(Datadog::Tracing::TraceOperation) }
   let(:telemetry) { instance_double(Datadog::Core::Telemetry::Component) }
+  let(:settings) do
+    Datadog::Core::Configuration::Settings.new.tap do |settings|
+      settings.appsec.enabled = true
+    end
+  end
+  let(:security_engine) do
+    Datadog::AppSec::SecurityEngine::Engine.new(appsec_settings: settings.appsec, telemetry: telemetry)
+  end
+  let(:waf_runner) { security_engine.new_runner }
+  let(:context) { described_class.new(trace, span, waf_runner) }
 
-  let(:ruleset) { Datadog::AppSec::Processor::RuleLoader.load_rules(ruleset: :recommended, telemetry: telemetry) }
-  let(:processor) { Datadog::AppSec::Processor.new(ruleset: ruleset, telemetry: telemetry) }
-  let(:context) { described_class.new(trace, span, processor) }
+  before do
+    allow(Datadog::AppSec).to receive(:telemetry).and_return(telemetry)
+  end
 
   after do
     described_class.deactivate
-    processor.finalize
   end
 
   describe '.active' do
@@ -41,7 +50,7 @@ RSpec.describe Datadog::AppSec::Context do
     context 'when active context is already set' do
       before { described_class.activate(context) }
 
-      subject(:activate_context) { described_class.activate(described_class.new(trace, span, processor)) }
+      subject(:activate_context) { described_class.activate(described_class.new(trace, span, waf_runner)) }
 
       it 'raises an error and does not change the active context' do
         expect { activate_context }.to raise_error(Datadog::AppSec::Context::ActiveContextError)
@@ -60,7 +69,7 @@ RSpec.describe Datadog::AppSec::Context do
     context 'when active context is set' do
       before do
         described_class.activate(context)
-        expect(context).to receive(:finalize).and_call_original
+        expect(context).to receive(:finalize!).and_call_original
       end
 
       it 'unsets the active context' do
@@ -71,7 +80,7 @@ RSpec.describe Datadog::AppSec::Context do
     context 'when error happen during deactivation' do
       before do
         described_class.activate(context)
-        expect(context).to receive(:finalize).and_raise(RuntimeError.new('Ooops'))
+        expect(context).to receive(:finalize!).and_raise(RuntimeError.new('Ooops'))
       end
 
       it 'raises underlying exception and unsets the active context' do
@@ -85,7 +94,7 @@ RSpec.describe Datadog::AppSec::Context do
     context 'when multiple same matching runs were made within a single context' do
       let!(:run_results) do
         persistent_data = {
-          'server.request.headers.no_cookies' => { 'user-agent' => 'Nessus SOAP' }
+          'server.request.headers.no_cookies' => {'user-agent' => 'Nessus SOAP'}
         }
 
         Array.new(3) { context.run_waf(persistent_data, {}, 1_000_000) }
@@ -104,9 +113,9 @@ RSpec.describe Datadog::AppSec::Context do
 
     context 'when multiple different matching runs were made within a single context' do
       let!(:run_results) do
-        persistent_data_1 = { 'server.request.query' => { 'q' => '1 OR 1;' } }
+        persistent_data_1 = {'server.request.query' => {'q' => '1 OR 1;'}}
         persistent_data_2 = {
-          'server.request.headers.no_cookies' => { 'user-agent' => 'Nessus SOAP' }
+          'server.request.headers.no_cookies' => {'user-agent' => 'Nessus SOAP'}
         }
 
         [
@@ -131,7 +140,7 @@ RSpec.describe Datadog::AppSec::Context do
       before { allow(Datadog::AppSec).to receive(:telemetry).and_return(telemetry) }
 
       let(:persistent_data) do
-        { 'server.request.query' => { 'q' => "1' OR 1=1;" } }
+        {'server.request.query' => {'q' => "1' OR 1=1;"}}
       end
       let(:ephemeral_data) do
         {
@@ -157,10 +166,10 @@ RSpec.describe Datadog::AppSec::Context do
       end
 
       let(:run_result) do
-        Datadog::AppSec::SecurityEngine::Result::Error.new(duration_ext_ns: 0)
+        Datadog::AppSec::SecurityEngine::Result::Error.new(duration_ext_ns: 0, input_truncated: false)
       end
       let(:persistent_data) do
-        { 'server.request.query' => { 'q' => "1' OR 1=1;" } }
+        {'server.request.query' => {'q' => "1' OR 1=1;"}}
       end
       let(:ephemeral_data) do
         {
@@ -180,7 +189,7 @@ RSpec.describe Datadog::AppSec::Context do
   describe '#extract_schema' do
     it 'calls the waf runner with specific addresses' do
       expect_any_instance_of(Datadog::AppSec::SecurityEngine::Runner).to receive(:run)
-        .with({ 'waf.context.processor' => { 'extract-schema' => true } }, {})
+        .with({'waf.context.processor' => {'extract-schema' => true}}, {})
         .and_call_original
 
       expect(context.extract_schema).to be_instance_of(Datadog::AppSec::SecurityEngine::Result::Ok)
@@ -189,7 +198,7 @@ RSpec.describe Datadog::AppSec::Context do
 
   describe '#export_metrics' do
     context 'when span is not present' do
-      let(:context) { described_class.new(trace, nil, processor) }
+      let(:context) { described_class.new(trace, nil, waf_runner) }
 
       it 'does not export metrics' do
         expect(Datadog::AppSec::Metrics::Exporter).not_to receive(:export_waf_metrics)
@@ -205,6 +214,36 @@ RSpec.describe Datadog::AppSec::Context do
         expect(Datadog::AppSec::Metrics::Exporter).to receive(:export_rasp_metrics)
 
         context.export_metrics
+      end
+    end
+  end
+
+  describe '#mark_as_interrupted!, #interrupted?' do
+    it 'returns false when not interrupted' do
+      expect(context.interrupted?).to be false
+    end
+
+    it 'returns true when interrupted' do
+      context.mark_as_interrupted!
+
+      expect(context.interrupted?).to be true
+    end
+  end
+
+  describe '#export_request_telemetry' do
+    it 'calls telemetry exporter' do
+      expect(Datadog::AppSec::Metrics::TelemetryExporter).to receive(:export_waf_request_metrics).with(anything, context)
+
+      context.export_request_telemetry
+    end
+
+    context 'when trace is not present' do
+      let(:context) { described_class.new(nil, span, waf_runner) }
+
+      it 'does not call telemetry exporter' do
+        expect(Datadog::AppSec::Metrics::TelemetryExporter).not_to receive(:export_waf_request_metrics)
+
+        context.export_request_telemetry
       end
     end
   end

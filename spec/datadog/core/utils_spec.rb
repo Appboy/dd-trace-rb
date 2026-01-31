@@ -81,7 +81,7 @@ RSpec.describe Datadog::Core::Utils do
       end
 
       context 'with a placeholder' do
-        let(:options) { { placeholder: '_?_' } }
+        let(:options) { {placeholder: '_?_'} }
 
         it 'returns the placeholder' do
           is_expected.to eq('_?_')
@@ -89,11 +89,27 @@ RSpec.describe Datadog::Core::Utils do
       end
 
       context 'in binary mode' do
-        let(:options) { { binary: true } }
+        let(:options) { {binary: true} }
 
         it 'keeps the valid part' do
           is_expected.to eq('valid part')
         end
+      end
+    end
+
+    context 'with valid and invalid characters in the string' do
+      let(:str) { "test\x99\x8faaa".force_encoding(Encoding::ASCII_8BIT) }
+
+      it 'returns an empty string' do
+        is_expected.to eq(Datadog::Core::Utils::EMPTY_STRING)
+      end
+    end
+
+    context 'with Unicode characters' do
+      let(:str) { 'ünicöde' }
+
+      it 'preserves the original string' do
+        is_expected.to eq(str)
       end
     end
   end

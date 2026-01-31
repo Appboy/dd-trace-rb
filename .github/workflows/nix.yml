@@ -18,11 +18,8 @@ jobs:
       matrix:
         platform:
           - os: darwin
-            cpu: x86_64
-            base: macos-13 # always x86_64-darwin
-          - os: darwin
             cpu: arm64
-            base: macos-14 # always arm64-darwin
+            base: macos-15 # always arm64-darwin
           - os: linux
             cpu: x86_64
             base: ubuntu-24.04 # always x86_64-linux-gnu
@@ -48,10 +45,10 @@ jobs:
       - name: Check CPU arch
         run: |
           test "$(uname -m)" = "${{ matrix.platform.cpu }}"
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           persist-credentials: false
-      - uses: DeterminateSystems/nix-installer-action@17a3ce76e01f3e740f8011a70e0d79f9720fc942 # main
+      - uses: DeterminateSystems/nix-installer-action@c5a866b6ab867e88becbed4467b93592bce69f8a # main
       - name: Print ruby version
         run: |
           nix develop --command which ruby

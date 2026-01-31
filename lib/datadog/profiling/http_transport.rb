@@ -13,7 +13,10 @@ module Datadog
       def initialize(agent_settings:, site:, api_key:, upload_timeout_seconds:)
         @upload_timeout_milliseconds = (upload_timeout_seconds * 1_000).to_i
 
-        @exporter_configuration =
+        # Steep: multiple issues here
+        # first https://github.com/soutaro/steep/issues/363
+        # then https://github.com/soutaro/steep/issues/1603 (remove the .freeze to see it)
+        @exporter_configuration = # steep:ignore IncompatibleAssignment
           if agentless?(site, api_key)
             [:agentless, site, api_key].freeze
           else
@@ -29,12 +32,7 @@ module Datadog
         status, result = self.class._native_do_export(
           exporter_configuration,
           @upload_timeout_milliseconds,
-          flush,
-          # TODO: This is going to be removed once we move to libdatadog 17
-          flush.start.tv_sec,
-          flush.start.tv_nsec,
-          flush.finish.tv_sec,
-          flush.finish.tv_nsec,
+          flush
         )
 
         if status == :ok
@@ -42,7 +40,7 @@ module Datadog
             Datadog.logger.debug("Successfully reported profiling data")
             true
           else
-            Datadog.logger.error(
+            Datadog.logger.warn(
               "Failed to report profiling data (#{config_without_api_key}): " \
               "server returned unexpected HTTP #{result} status code"
             )
@@ -52,7 +50,7 @@ module Datadog
             false
           end
         else
-          Datadog.logger.error("Failed to report profiling data (#{config_without_api_key}): #{result}")
+          Datadog.logger.warn("Failed to report profiling data (#{config_without_api_key}): #{result}")
           Datadog::Core::Telemetry::Logger.error("Failed to report profiling data")
           false
         end
@@ -61,7 +59,7 @@ module Datadog
       private
 
       def agentless?(site, api_key)
-        site && api_key && Core::Environment::VariableHelpers.env_to_bool(Profiling::Ext::ENV_AGENTLESS, false)
+        site && api_key && %w[1 true].include?(ENV[Profiling::Ext::ENV_AGENTLESS] || '') # rubocop:disable CustomCops/EnvUsageCop
       end
 
       def config_without_api_key

@@ -27,22 +27,22 @@ module LogHelpers
   RSpec::Matchers.define :have_lazy_debug_logged do |expected|
     match do |actual|
       expect(actual).to have_received(:debug) do |*_args, &block|
-        result =  case expected
-                  when String
-                    begin
-                      expect(block.call).to include(expected)
-                    rescue RSpec::Expectations::ExpectationNotMetError
-                      false
-                    end
-                  when Regexp
-                    begin
-                      expect(block.call).to match(expected)
-                    rescue RSpec::Expectations::ExpectationNotMetError
-                      false
-                    end
-                  else
-                    raise "Don't know how to match '#{expected}'."
-                  end
+        result = case expected
+        when String
+          begin
+            expect(block.call).to include(expected)
+          rescue RSpec::Expectations::ExpectationNotMetError
+            false
+          end
+        when Regexp
+          begin
+            expect(block.call).to match(expected)
+          rescue RSpec::Expectations::ExpectationNotMetError
+            false
+          end
+        else
+          raise "Don't know how to match '#{expected}'."
+        end
 
         return true if result
       end
@@ -76,10 +76,10 @@ module LogHelpers
       captured_log_entries = []
       allow(Datadog.logger).to receive(:warn) do |arg, &block|
         captured_log_entries << if block
-                                  block.call
-                                else
-                                  arg
-                                end
+          block.call
+        else
+          arg
+        end
       end
 
       actual.call
@@ -94,11 +94,11 @@ module LogHelpers
     end
 
     def failure_message
-      "expected Datadog.logger.warn output #{description_of @actual} to #{description}".dup
+      +"expected Datadog.logger.warn output #{description_of @actual} to #{description}"
     end
 
     def failure_message_when_negated
-      "expected Datadog.logger.warn output #{description_of @actual} not to #{description}".dup
+      +"expected Datadog.logger.warn output #{description_of @actual} not to #{description}"
     end
 
     diffable
@@ -114,5 +114,59 @@ module LogHelpers
     instance_double(Datadog::Core::Logger).tap do |logger|
       allow(logger).to receive(:debug)
     end
+  end
+
+  def expect_lazy_log(logger, meth, expected_msg)
+    expect(logger).to receive(meth) do |*_args, &block|
+      expect(block).not_to be nil
+      if expected_msg.is_a?(String)
+        expect(block.call).to eq(expected_msg)
+      else
+        expect(block.call).to match(expected_msg)
+      end
+    end
+  end
+
+  def expect_lazy_log_many(logger, meth, *expectations)
+    raise ArgumentError, 'Must have at least one expectation' if expectations.empty?
+
+    expect(logger).to receive(meth).exactly(expectations.length).times do |&block|
+      expected_msg = expectations.shift
+      case expected_msg
+      when String
+        expect(block.call).to eq(expected_msg)
+      when Regexp
+        expect(block.call).to match(expected_msg)
+      when nil
+        value = block.call
+        raise "Logger #{logger} #{meth} called without an expectation set: #{value}"
+      end
+    end
+  end
+
+  def expect_lazy_log_at_least(logger, meth, *expectations)
+    raise ArgumentError, 'Must have at least one expectation' if expectations.empty?
+
+    invocations = []
+    expect(logger).to receive(meth).at_least(expectations.length).times do |*args, &block|
+      invocations << (block ? block.call : args.first)
+    end
+
+    yield
+
+    expectations.each do |expected_msg|
+      case expected_msg
+      when String
+        expect(invocations).to include(expected_msg)
+      when Regexp
+        expect(invocations.any? { |msg| msg =~ expected_msg }).to be true
+      else
+        raise "Missing or bogus expectation: #{expected_msg}"
+      end
+    end
+  end
+
+  def logger_stderr
+    Logger.new($stderr, level: :debug)
   end
 end

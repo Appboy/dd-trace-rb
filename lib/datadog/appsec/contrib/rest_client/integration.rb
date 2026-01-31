@@ -20,7 +20,7 @@ module Datadog
           end
 
           def self.version
-            Gem.loaded_specs['rest-client'] && Gem.loaded_specs['rest-client'].version
+            Gem.loaded_specs['rest-client']&.version
           end
 
           def self.loaded?
@@ -28,7 +28,7 @@ module Datadog
           end
 
           def self.compatible?
-            super && version >= MINIMUM_VERSION
+            super && !!(version&.>= MINIMUM_VERSION)
           end
 
           def self.auto_instrument?

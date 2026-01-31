@@ -11,7 +11,7 @@ module Datadog
           # Custom settings for the MongoDB integration
           # @public_api
           class Settings < Contrib::Configuration::Settings
-            DEFAULT_QUANTIZE = { show: [:collection, :database, :operation] }.freeze
+            DEFAULT_QUANTIZE = {show: [:collection, :database, :operation]}.freeze
 
             option :enabled do |o|
               o.type :bool
@@ -47,6 +47,14 @@ module Datadog
             option :peer_service do |o|
               o.type :string, nilable: true
               o.env Ext::ENV_PEER_SERVICE
+            end
+
+            # Serializes the command to JSON format, which is the desired format for the agent and Datadog UI.
+            # Setting this to false is deprecated and does not have any advantages.
+            option :json_command do |o|
+              o.type :bool
+              o.env Ext::ENV_JSON_COMMAND
+              o.default false
             end
           end
         end

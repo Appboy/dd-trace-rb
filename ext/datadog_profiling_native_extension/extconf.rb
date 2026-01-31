@@ -131,8 +131,23 @@ end
 
 have_func "malloc_stats"
 
-# On Ruby 2.5 and 3.3, this symbol was not visible. It is on 2.6 to 3.2, as well as 3.4+
-$defs << "-DNO_RB_OBJ_INFO" if RUBY_VERSION.start_with?("2.5", "3.3")
+# Used to get native filenames (dladdr1 is preferred, so we only check for the other if not available)
+# Note it's possible none are available
+if have_header("dlfcn.h")
+  (have_struct_member("struct link_map", "l_name", "link.h") && have_func("dladdr1")) ||
+    have_func("dladdr")
+end
+
+# On older Rubies, there was no primitive mutex and condition variable implemented in `thread_sync.rb` (internal)
+$defs << "-DNO_PRIMITIVE_MUTEX_AND_CONDITION_VARIABLE" if RUBY_VERSION < "4"
+
+# On Ruby 4, we can't ask the object_id from IMEMOs (https://github.com/ruby/ruby/pull/13347)
+$defs << "-DNO_IMEMO_OBJECT_ID" unless RUBY_VERSION < "4"
+
+# This symbol is exclusively visible on certain Ruby versions: 2.6 to 3.2, as well as 3.4 (but not 4.0+)
+# It's only used to get extra information about an object when a failure happens, so it's a "very nice to have" but not
+# actually required for correct behavior of the profiler.
+$defs << "-DNO_RB_OBJ_INFO" if RUBY_VERSION.start_with?("2.5", "3.3", "4.")
 
 # On older Rubies, rb_postponed_job_preregister/rb_postponed_job_trigger did not exist
 $defs << "-DNO_POSTPONED_TRIGGER" if RUBY_VERSION < "3.3"

@@ -2,9 +2,12 @@ module Datadog
   module Core
     module Environment
       class AgentInfo
-        attr_reader agent_settings: Configuration::AgentSettingsResolver::AgentSettings
+        attr_reader agent_settings: Configuration::AgentSettings
+        attr_reader logger: Core::Logger
 
-        def initialize: (Configuration::AgentSettingsResolver::AgentSettings agent_settings, logger: Core::Logger) -> void
+        @client: Datadog::Core::Remote::Transport::Negotiation::Transport
+
+        def initialize: (Configuration::AgentSettings agent_settings, ?logger: Core::Logger) -> void
 
         def fetch: -> Remote::Transport::HTTP::Negotiation::Response?
       end

@@ -29,7 +29,7 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
         'os_name' => (include('x86_64').or include('i686').or include('aarch64').or include('arm')),
         'version' => Datadog::VERSION::STRING,
         'lang' => 'ruby',
-        'lang_version' => match(/[23]\./),
+        'lang_version' => match(/^\d+\.\d+\.\d+$/),
         'env' => nil,
         'service' => be_a(String),
         'dd_version' => nil,
@@ -89,7 +89,7 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
     end
 
     context 'when extra fields are provided' do
-      let(:extra_fields) { { hello: 123, world: '456' } }
+      let(:extra_fields) { {hello: 123, world: '456'} }
 
       subject(:collect_and_log!) { env_logger.collect_and_log!(extra_fields) }
 
@@ -126,7 +126,7 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
           os_name: (include('x86_64').or include('i686').or include('aarch64').or include('arm')),
           version: Datadog::VERSION::STRING,
           lang: 'ruby',
-          lang_version: match(/[23]\./),
+          lang_version: match(/^\d+\.\d+\.\d+$/),
           env: nil,
           service: be_a(String),
           dd_version: nil,
@@ -172,7 +172,7 @@ RSpec.describe Datadog::Core::Diagnostics::EnvironmentLogger do
       end
 
       context 'with tags configured' do
-        before { expect(Datadog.configuration).to receive(:tags).and_return({ 'k1' => 'v1', 'k2' => 'v2' }) }
+        before { expect(Datadog.configuration).to receive(:tags).and_return({'k1' => 'v1', 'k2' => 'v2'}) }
 
         it { is_expected.to include tags: 'k1:v1,k2:v2' }
       end

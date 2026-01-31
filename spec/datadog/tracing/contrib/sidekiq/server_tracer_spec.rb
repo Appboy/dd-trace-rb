@@ -26,7 +26,7 @@ RSpec.describe 'Server tracer' do
     expect(span.service).to eq(tracer.default_service)
     expect(span.resource).to eq('EmptyWorker')
     expect(span.get_tag('sidekiq.job.queue')).to eq('default')
-    expect(span.get_tag('sidekiq.job.delay')).to_not be_nil
+    expect(span.get_tag('sidekiq.job.delay')).to be_positive
     expect(span.status).to eq(0)
     expect(span).to be_root_span
     expect(span.get_tag('sidekiq.job.args')).to be_nil
@@ -61,7 +61,7 @@ RSpec.describe 'Server tracer' do
       expect(span.service).to eq(tracer.default_service)
       expect(span.resource).to eq('ErrorWorker')
       expect(span.get_tag('sidekiq.job.queue')).to eq('default')
-      expect(span.get_tag('sidekiq.job.delay')).to_not be_nil
+      expect(span.get_tag('sidekiq.job.delay')).to be_positive
       expect(span.status).to eq(1)
       expect(span.get_tag(Datadog::Tracing::Metadata::Ext::Errors::TAG_MSG)).to eq('job error')
       expect(span.get_tag(Datadog::Tracing::Metadata::Ext::Errors::TAG_TYPE)).to eq('ZeroDivisionError')
@@ -80,7 +80,8 @@ RSpec.describe 'Server tracer' do
         Class.new do
           include Sidekiq::Worker
 
-          def perform(id) end
+          def perform(id)
+          end
         end
       )
     end
@@ -96,7 +97,7 @@ RSpec.describe 'Server tracer' do
       expect(empty.service).to eq(tracer.default_service)
       expect(empty.resource).to eq('EmptyWorker')
       expect(empty.get_tag('sidekiq.job.queue')).to eq('default')
-      expect(empty.get_tag('sidekiq.job.delay')).to_not be_nil
+      expect(empty.get_tag('sidekiq.job.delay')).to be_positive
       expect(empty.status).to eq(0)
       expect(empty).to be_root_span
       expect(empty.get_metric('_dd.measured')).to eq(1.0)
@@ -114,7 +115,7 @@ RSpec.describe 'Server tracer' do
     end
 
     context 'with default quantization' do
-      let(:sidekiq_options) { { service_name: 'sidekiq-slow', quantize: {} } }
+      let(:sidekiq_options) { {service_name: 'sidekiq-slow', quantize: {}} }
 
       it 'hides tag values' do
         perform_async
@@ -129,7 +130,7 @@ RSpec.describe 'Server tracer' do
     end
 
     context 'with quantization showing all' do
-      let(:sidekiq_options) { { service_name: 'sidekiq-slow', quantize: { args: { show: :all } } } }
+      let(:sidekiq_options) { {service_name: 'sidekiq-slow', quantize: {args: {show: :all}}} }
 
       it 'records tag values' do
         perform_async
@@ -141,7 +142,7 @@ RSpec.describe 'Server tracer' do
 
         expect(empty.resource).to eq('EmptyWorker')
         expect(empty.get_tag('sidekiq.job.queue')).to eq('default')
-        expect(empty.get_tag('sidekiq.job.delay')).to_not be_nil
+        expect(empty.get_tag('sidekiq.job.delay')).to be_positive
         expect(empty.status).to eq(0)
         expect(empty).to be_root_span
         expect(empty.get_metric('_dd.measured')).to eq(1.0)
@@ -162,7 +163,7 @@ RSpec.describe 'Server tracer' do
   end
 
   context 'with delayed extensions',
-    skip: Sidekiq::VERSION >= '7' ? 'Delayed extensions were disabled in Sidekiq 5 and removed in Sidekiq 7.' : nil do
+    skip: (Sidekiq::VERSION >= '7') ? 'Delayed extensions were disabled in Sidekiq 5 and removed in Sidekiq 7.' : nil do
       subject(:do_work) { DelayableClass.delay.do_work }
 
       before do

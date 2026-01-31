@@ -76,7 +76,7 @@ module Datadog
               ### END BRAZE MODIFICATION
 
               Contrib::SpanAttributeSchema.set_peer_service!(span, Ext::PEER_SERVICE_SOURCES)
-            rescue StandardError => e
+            rescue => e
               Datadog.logger.error(e.message)
               Datadog::Core::Telemetry::Logger.report(e)
             end

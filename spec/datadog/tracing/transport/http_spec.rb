@@ -19,17 +19,17 @@ RSpec.describe Datadog::Tracing::Transport::HTTP do
     # ensures that we are matching the default environment settings.
     it 'returns a transport with default configuration' do
       is_expected.to be_a_kind_of(Datadog::Tracing::Transport::Traces::Transport)
-      expect(default.current_api_id).to eq(Datadog::Tracing::Transport::HTTP::API::V4)
+      expect(default.current_api_id).to eq('v0.4')
 
       expect(default.apis.keys).to eq(
         [
-          Datadog::Tracing::Transport::HTTP::API::V4,
-          Datadog::Tracing::Transport::HTTP::API::V3,
+          'v0.4',
+          'v0.3',
         ]
       )
 
       default.apis.each_value do |api|
-        expect(api).to be_a_kind_of(Datadog::Tracing::Transport::HTTP::Traces::API::Instance)
+        expect(api).to be_a_kind_of(Datadog::Core::Transport::HTTP::API::Instance)
         expect(api.headers).to include(Datadog::Core::Transport::HTTP.default_headers)
 
         case default_agent_settings.adapter
@@ -60,7 +60,7 @@ RSpec.describe Datadog::Tracing::Transport::HTTP do
       let(:timeout_seconds) { nil }
 
       let(:agent_settings) do
-        Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings.new(
+        Datadog::Core::Configuration::AgentSettings.new(
           adapter: adapter,
           ssl: ssl,
           hostname: hostname,
@@ -91,25 +91,9 @@ RSpec.describe Datadog::Tracing::Transport::HTTP do
     context 'when given options' do
       subject(:default) { described_class.default(agent_settings: default_agent_settings, logger: logger, **options) }
 
-      context 'that specify an API version' do
-        let(:options) { { api_version: api_version } }
-
-        context 'that is defined' do
-          let(:api_version) { Datadog::Tracing::Transport::HTTP::API::V4 }
-
-          it { expect(default.current_api_id).to eq(api_version) }
-        end
-
-        context 'that is not defined' do
-          let(:api_version) { double('non-existent API') }
-
-          it { expect { default }.to raise_error(Datadog::Core::Transport::HTTP::Builder::UnknownApiError) }
-        end
-      end
-
       context 'that specify headers' do
-        let(:options) { { headers: headers } }
-        let(:headers) { { 'Test-Header' => 'foo' } }
+        let(:options) { {headers: headers} }
+        let(:headers) { {'Test-Header' => 'foo'} }
 
         it do
           default.apis.each_value do |api|

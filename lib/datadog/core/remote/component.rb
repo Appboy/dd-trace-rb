@@ -11,9 +11,11 @@ module Datadog
   module Core
     module Remote
       # Configures the HTTP transport to communicate with the agent
-      # to fetch and sync the remote configuration
+      # to fetch and sync the remote configuration.
+      #
+      # @api private
       class Component
-        attr_reader :logger, :client, :healthy
+        attr_reader :logger, :client, :healthy, :worker
 
         def initialize(settings, capabilities, agent_settings, logger:)
           @logger = logger
@@ -23,7 +25,7 @@ module Datadog
 
           @barrier = Barrier.new(settings.remote.boot_timeout_seconds)
 
-          @client = Client.new(transport_v7, capabilities, logger: logger)
+          @client = Client.new(transport_v7, capabilities, settings: settings, logger: logger)
           @healthy = false
           logger.debug { "new remote configuration client: #{@client.id}" }
 
@@ -42,7 +44,7 @@ module Datadog
               logger.error do
                 "remote worker client sync error: #{e.message} location: #{Array(e.backtrace).first}. skipping sync"
               end
-            rescue StandardError => e
+            rescue => e
               # In case of unexpected errors, reset the negotiation object
               # given external conditions have changed and the negotiation
               # negotiation object stores error logging state that should be reset.
@@ -50,12 +52,12 @@ module Datadog
 
               # Transient errors due to network or agent. Logged the error but not via telemetry
               logger.error do
-                "remote worker error: #{e.class.name} #{e.message} location: #{Array(e.backtrace).first}. "\
-                'reseting client state'
+                "remote worker error: #{e.class.name} #{e.message} location: #{Array(e.backtrace).first}. " \
+                'resetting client state'
               end
 
               # client state is unknown, state might be corrupted
-              @client = Client.new(transport_v7, capabilities, logger: logger)
+              @client = Client.new(transport_v7, capabilities, settings: settings, logger: logger)
               @healthy = false
               logger.debug { "new remote configuration client: #{@client.id}" }
 
@@ -135,13 +137,11 @@ module Datadog
 
           # Release all current waiters
           def lift
-            @mutex.lock
+            @mutex.synchronize do
+              @once ||= true
 
-            @once ||= true
-
-            @condition.broadcast
-          ensure
-            @mutex.unlock
+              @condition.broadcast
+            end
           end
         end
 

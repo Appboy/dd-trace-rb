@@ -94,6 +94,19 @@ module Datadog
       # matches.
       def add_probe(probe)
         @lock.synchronize do
+          if @installed_probes[probe.id]
+            # Either this probe was already installed, or another probe was
+            # installed with the same id (previous version perhaps?).
+            # Since our state tracking is keyed by probe id, we cannot
+            # install this probe since we won't have a way of removing the
+            # instrumentation for the probe with the same id which is already
+            # installed.
+            #
+            # The exception raised here will be caught below and logged and
+            # reported to telemetry.
+            raise Error::AlreadyInstrumented, "Probe with id #{probe.id} is already in installed probes"
+          end
+
           # Probe failed to install previously, do not try to install it again.
           if msg = @failed_probes[probe.id]
             # TODO test this path
@@ -101,7 +114,7 @@ module Datadog
           end
 
           begin
-            instrumenter.hook(probe, &method(:probe_executed_callback))
+            instrumenter.hook(probe, self)
 
             @installed_probes[probe.id] = probe
             payload = probe_notification_builder.build_installed(probe)
@@ -134,38 +147,30 @@ module Datadog
         end
       end
 
-      # Removes probes with ids other than in the specified list.
-      #
-      # This method is meant to be invoked from remote config processor.
-      # Remote config contains the list of currently defined probes; any
-      # probes not in that list have been removed by user and should be
-      # de-instrumented from the application.
-      def remove_other_probes(probe_ids)
+      # Removes probe with specified id. The probe could be pending or
+      # installed. Does nothing if there is no probe with the specified id.
+      def remove_probe(probe_id)
         @lock.synchronize do
-          @pending_probes.values.each do |probe|
-            unless probe_ids.include?(probe.id)
-              @pending_probes.delete(probe.id)
-            end
-          end
-          @installed_probes.values.each do |probe|
-            unless probe_ids.include?(probe.id)
-              begin
-                instrumenter.unhook(probe)
-                # Only remove the probe from installed list if it was
-                # successfully de-instrumented. Active probes do incur overhead
-                # for the running application, and if the error is ephemeral
-                # we want to try removing the probe again at the next opportunity.
-                #
-                # TODO give up after some time?
-                @installed_probes.delete(probe.id)
-              rescue => exc
-                raise if settings.dynamic_instrumentation.internal.propagate_all_exceptions
-                # Silence all exceptions?
-                # TODO should we propagate here and rescue upstream?
-                logger.debug { "di: error removing #{probe.type} probe at #{probe.location} (#{probe.id}): #{exc.class}: #{exc}" }
-                telemetry&.report(exc, description: "Error removing probe")
-              end
-            end
+          @pending_probes.delete(probe_id)
+        end
+
+        # Do not delete the probe from the registry here in case
+        # deinstrumentation fails - though I don't know why deinstrumentation
+        # would fail and how we could recover if it does.
+        # I plan on tracking the number of outstanding (instrumented) probes
+        # in the future, and if deinstrumentation fails I would want to
+        # keep that probe as "installed" for the count, so that we can
+        # investigate the situation.
+        if probe = @installed_probes[probe_id]
+          begin
+            instrumenter.unhook(probe)
+            @installed_probes.delete(probe_id)
+          rescue => exc
+            raise if settings.dynamic_instrumentation.internal.propagate_all_exceptions
+            # Silence all exceptions?
+            # TODO should we propagate here and rescue upstream?
+            logger.debug { "di: error removing #{probe.type} probe at #{probe.location} (#{probe.id}): #{exc.class}: #{exc}" }
+            telemetry&.report(exc, description: "Error removing probe")
           end
         end
       end
@@ -184,7 +189,8 @@ module Datadog
                 begin
                   # TODO is it OK to hook from trace point handler?
                   # TODO the class is now defined, but can hooking still fail?
-                  instrumenter.hook(probe, &method(:probe_executed_callback))
+                  instrumenter.hook(probe, self)
+                  @installed_probes[probe.id] = probe
                   @pending_probes.delete(probe.id)
                   break
                 rescue Error::DITargetNotDefined
@@ -229,7 +235,8 @@ module Datadog
       # This method is responsible for queueing probe status to be sent to the
       # backend (once per the probe's lifetime) and a snapshot corresponding
       # to the current invocation.
-      def probe_executed_callback(probe:, **opts)
+      def probe_executed_callback(context)
+        probe = context.probe
         logger.trace { "di: executed #{probe.type} probe at #{probe.location} (#{probe.id})" }
         unless probe.emitting_notified?
           payload = probe_notification_builder.build_emitting(probe)
@@ -237,8 +244,16 @@ module Datadog
           probe.emitting_notified = true
         end
 
-        payload = probe_notification_builder.build_executed(probe, **opts)
+        payload = probe_notification_builder.build_executed(context)
         probe_notifier_worker.add_snapshot(payload)
+      end
+
+      def probe_condition_evaluation_failed_callback(context, expr, exc)
+        probe = context.probe
+        if probe.condition_evaluation_failed_rate_limiter&.allow?
+          payload = probe_notification_builder.build_condition_evaluation_failed(context, expr, exc)
+          probe_notifier_worker.add_snapshot(payload)
+        end
       end
 
       # Class/module definition trace point (:end type).

@@ -235,6 +235,7 @@ build_coverage_matrix('rack', 1..2, meta: { 'rack-contrib' => nil, 'rack-test' =
 [2, 3].each do |n|
   appraise "sinatra-#{n}" do
     gem 'sinatra', "~> #{n}"
+    gem 'sinatra-contrib', "~> #{n}"
     gem 'rack-contrib'
     gem 'rack-test' # Dev dependencies for testing rack-based code
   end
@@ -255,4 +256,11 @@ end
 
 appraise 'core-old' do
   gem 'dogstatsd-ruby', '~> 4'
+end
+
+appraise 'environment' do
+  gem 'spring', '>= 2.0.2'
+  gem 'cucumber', '>= 3'
+  gem 'logger'
+  gem 'minitest'
 end

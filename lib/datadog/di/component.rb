@@ -29,22 +29,6 @@ module Datadog
           end
         end
 
-        def build!(settings, agent_settings, logger, telemetry: nil)
-          unless settings.respond_to?(:dynamic_instrumentation) && settings.dynamic_instrumentation.enabled
-            raise "Requested DI component but DI is not enabled in settings"
-          end
-
-          unless settings.respond_to?(:remote) && settings.remote.enabled
-            raise "Requested DI component but remote config is not enabled in settings"
-          end
-
-          unless environment_supported?(settings, logger)
-            raise "DI does not support the environment (development or Ruby version too low or not MRI)"
-          end
-
-          new(settings, agent_settings, logger, code_tracker: DI.code_tracker, telemetry: telemetry)
-        end
-
         # Checks whether the runtime environment is supported by
         # dynamic instrumentation. Currently we only require that, if Rails
         # is used, that Rails environment is not development because
@@ -111,6 +95,27 @@ module Datadog
         probe_manager.clear_hooks
         probe_manager.close
         probe_notifier_worker.stop
+      end
+
+      def parse_probe_spec_and_notify(probe_spec)
+        probe = ProbeBuilder.build_from_remote_config(probe_spec)
+      rescue => exc
+        begin
+          probe = Struct.new(:id).new(
+            probe_spec['id'],
+          )
+          payload = probe_notification_builder.build_errored(probe, exc)
+          probe_notifier_worker.add_status(payload)
+        rescue # standard:disable Lint/UselessRescue
+          # TODO report via instrumentation telemetry?
+          raise
+        end
+
+        raise
+      else
+        payload = probe_notification_builder.build_received(probe)
+        probe_notifier_worker.add_status(payload)
+        probe
       end
     end
   end

@@ -21,6 +21,8 @@ module Datadog
           :transport,
           :agent_settings
 
+        # DEV-3.0: change to keyword arguments
+        #
         # rubocop:disable Lint/MissingSuper
         def initialize(options = {})
           @logger = options[:logger] || Datadog.logger
@@ -45,7 +47,7 @@ module Datadog
         def write_traces(traces)
           traces = process_traces(traces)
           flush_traces(traces)
-        rescue StandardError => e
+        rescue => e
           logger.warn(
             "Error while writing traces: dropped #{traces.length} items. Cause: #{e} Location: #{Array(e.backtrace).first}"
           )
@@ -119,7 +121,7 @@ module Datadog
         # WARNING: This method breaks the Liskov Substitution Principle -- TraceWriter#perform is spec'd to return the
         # result from the writer, whereas this method always returns nil.
         def perform(traces)
-          super(traces).tap do |responses|
+          super.tap do |responses|
             loop_back_off! if responses.find(&:server_error?)
           end
 
@@ -143,6 +145,9 @@ module Datadog
 
         # Are there more traces to be processed next?
         def work_pending?
+          # This is the same implementation as in Queue, but it was
+          # overwritten by IntervalLoop on its way to this worker class.
+          # See the comments in those two methods for more info.
           !buffer.empty?
         end
 
@@ -152,16 +157,16 @@ module Datadog
 
         def fork_policy=(policy)
           # Translate to Workers::Async::Thread policy
-          thread_fork_policy =  case policy
-                                when Core::Workers::Async::Thread::FORK_POLICY_STOP
-                                  policy
-                                when FORK_POLICY_SYNC
-                                  # Stop the async thread because the writer
-                                  # will bypass and run synchronously.
-                                  Core::Workers::Async::Thread::FORK_POLICY_STOP
-                                else
-                                  Core::Workers::Async::Thread::FORK_POLICY_RESTART
-                                end
+          thread_fork_policy = case policy
+          when Core::Workers::Async::Thread::FORK_POLICY_STOP
+            policy
+          when FORK_POLICY_SYNC
+            # Stop the async thread because the writer
+            # will bypass and run synchronously.
+            Core::Workers::Async::Thread::FORK_POLICY_STOP
+          else
+            Core::Workers::Async::Thread::FORK_POLICY_RESTART
+          end
 
           # Update thread fork policy
           super(thread_fork_policy)

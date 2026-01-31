@@ -2,7 +2,7 @@ require 'datadog/tracing/contrib/integration_examples'
 require 'datadog/tracing/contrib/rails/rails_helper'
 require 'datadog/tracing/contrib/analytics_examples'
 
-RSpec.describe 'Rails database' do
+RSpec.describe 'Rails database', execute_in_fork: Rails.version.to_i >= 8 do
   include_context 'Rails test application'
 
   let(:database_service) { adapter_name }
@@ -24,7 +24,7 @@ RSpec.describe 'Rails database' do
     rescue ActiveRecord::StatementInvalid
       ActiveRecord::Schema.define(version: 20161003090450) do
         create_table 'articles', force: :cascade do |t|
-          t.string   'title'
+          t.string 'title'
           t.datetime 'created_at', null: false
           t.datetime 'updated_at', null: false
         end
@@ -65,6 +65,7 @@ RSpec.describe 'Rails database' do
   context 'on record creation' do
     before do
       Article.create(title: 'Instantiation test')
+      Article.all.load
       clear_traces!
     end
 

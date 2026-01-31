@@ -12,7 +12,7 @@ require 'datadog/tracing/transport/trace_formatter'
 
 RSpec.describe Datadog::Tracing::Transport::TraceFormatter do
   subject(:trace_formatter) { described_class.new(trace) }
-  let(:trace_options) { { id: trace_id } }
+  let(:trace_options) { {id: trace_id} }
   let(:trace_id) { 0xa3efc9f3333333334d39dacf84ab3fe }
 
   shared_context 'trace metadata' do
@@ -188,7 +188,7 @@ RSpec.describe Datadog::Tracing::Transport::TraceFormatter do
         context 'metrics' do
           it 'sets root span tags from trace tags' do
             format!
-            expect(root_span.metrics).to include({ 'baz' => 42 })
+            expect(root_span.metrics).to include({'baz' => 42})
           end
         end
 
@@ -234,6 +234,35 @@ RSpec.describe Datadog::Tracing::Transport::TraceFormatter do
               '_dd.git.commit.sha' => git_commit_sha
             }
           )
+        end
+      end
+
+      shared_examples 'spans with process tags' do
+        it 'the first span has process tags' do
+          format!
+          expect(first_span.meta).to include(Datadog::Core::Environment::Ext::TAG_PROCESS_TAGS)
+          expect(first_span.meta[Datadog::Core::Environment::Ext::TAG_PROCESS_TAGS]).to eq(Datadog::Core::Environment::Process.serialized)
+        end
+
+        it 'does not add process tags to non first spans' do
+          format!
+          trace.spans.each_with_index do |span, index|
+            if index == 0
+              expect(span.meta).to include(Datadog::Core::Environment::Ext::TAG_PROCESS_TAGS)
+              expect(span.meta[Datadog::Core::Environment::Ext::TAG_PROCESS_TAGS]).to eq(Datadog::Core::Environment::Process.serialized)
+            else
+              expect(span.meta).to_not include(Datadog::Core::Environment::Ext::TAG_PROCESS_TAGS)
+            end
+          end
+        end
+      end
+
+      shared_examples 'spans without process tags' do
+        it 'does not add process tags to any spans' do
+          format!
+          trace.spans.each do |span|
+            expect(span.meta).to_not include(Datadog::Core::Environment::Ext::TAG_PROCESS_TAGS)
+          end
         end
       end
 
@@ -284,6 +313,18 @@ RSpec.describe Datadog::Tracing::Transport::TraceFormatter do
           include_context 'no git metadata'
           it_behaves_like 'first span with no git metadata'
         end
+
+        context 'with process tags enabled' do
+          before do
+            allow(Datadog.configuration).to receive(:experimental_propagate_process_tags_enabled).and_return(true)
+          end
+          it_behaves_like 'spans with process tags'
+        end
+
+        context 'without process tags enabled' do
+          # default is false
+          it_behaves_like 'spans without process tags'
+        end
       end
 
       context 'with missing root span' do
@@ -332,6 +373,18 @@ RSpec.describe Datadog::Tracing::Transport::TraceFormatter do
         context 'without git metadata' do
           include_context 'no git metadata'
           it_behaves_like 'first span with no git metadata'
+        end
+
+        context 'with process tags enabled' do
+          before do
+            allow(Datadog.configuration).to receive(:experimental_propagate_process_tags_enabled).and_return(true)
+          end
+          it_behaves_like 'spans with process tags'
+        end
+
+        context 'without process tags enabled' do
+          # default is false
+          it_behaves_like 'spans without process tags'
         end
       end
 
@@ -383,6 +436,18 @@ RSpec.describe Datadog::Tracing::Transport::TraceFormatter do
         context 'without git metadata' do
           include_context 'no git metadata'
           it_behaves_like 'first span with no git metadata'
+        end
+
+        context 'with process tags enabled' do
+          before do
+            allow(Datadog.configuration).to receive(:experimental_propagate_process_tags_enabled).and_return(true)
+          end
+          it_behaves_like 'spans with process tags'
+        end
+
+        context 'without process tags enabled' do
+          # default is false
+          it_behaves_like 'spans without process tags'
         end
       end
     end

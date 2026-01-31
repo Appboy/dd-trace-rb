@@ -4,9 +4,6 @@ module Datadog
   module Profiling
     # Responsible for wiring up the Profiler for execution
     module Component
-      ALLOCATION_WITH_RACTORS_ONLY_ONCE = Datadog::Core::Utils::OnlyOnce.new
-      private_constant :ALLOCATION_WITH_RACTORS_ONLY_ONCE
-
       # Passing in a `nil` tracer is supported and will disable the following profiling features:
       # * Profiling in the trace viewer, as well as scoping a profile down to a span
       # * Endpoint aggregation in the profiler UX, including normalization (resource per endpoint call)
@@ -67,6 +64,7 @@ module Datadog
           allocation_profiling_enabled: allocation_profiling_enabled,
           allocation_counting_enabled: settings.profiling.advanced.allocation_counting_enabled,
           gvl_profiling_enabled: enable_gvl_profiling?(settings, logger),
+          sighandler_sampling_enabled: settings.profiling.advanced.sighandler_sampling_enabled,
         )
 
         internal_metadata = {
@@ -84,6 +82,10 @@ module Datadog
           Datadog::Profiling::Ext::DirMonkeyPatches.apply!
         end
 
+        if can_apply_exec_monkey_patch?(settings)
+          Datadog::Profiling::Ext::ExecMonkeyPatch.apply!
+        end
+
         [profiler, {profiling_enabled: true}]
       end
 
@@ -96,6 +98,7 @@ module Datadog
           timeline_enabled: timeline_enabled,
           waiting_for_gvl_threshold_ns: settings.profiling.advanced.waiting_for_gvl_threshold_ns,
           otel_context_enabled: settings.profiling.advanced.preview_otel_context_enabled,
+          native_filenames_enabled: settings.profiling.advanced.native_filenames_enabled,
         )
       end
 
@@ -143,7 +146,7 @@ module Datadog
           logger.debug(
             "Using Ractors may result in GC profiling unexpectedly " \
             "stopping (https://bugs.ruby-lang.org/issues/19112). Note that this stop has no impact in your " \
-            "application stability or performance. This does not happen if Ractors are not used."
+            "application stability or performance. This issue is fixed on Ruby 4."
           )
         end
 
@@ -193,13 +196,11 @@ module Datadog
         # On all known versions of Ruby 3.x, due to https://bugs.ruby-lang.org/issues/19112, when a ractor gets
         # garbage collected, Ruby will disable all active tracepoints, which this feature internally relies on.
         elsif RUBY_VERSION.start_with?("3.")
-          ALLOCATION_WITH_RACTORS_ONLY_ONCE.run do
-            logger.info(
-              "Using Ractors may result in allocation profiling " \
-              "stopping (https://bugs.ruby-lang.org/issues/19112). Note that this stop has no impact in your " \
-              "application stability or performance. This does not happen if Ractors are not used."
-            )
-          end
+          logger.debug(
+            "Using Ractors may result in allocation profiling " \
+            "stopping (https://bugs.ruby-lang.org/issues/19112). Note that this stop has no impact in your " \
+            "application stability or performance. This issue is fixed on Ruby 4."
+          )
         end
 
         logger.debug("Enabled allocation profiling")
@@ -218,16 +219,23 @@ module Datadog
             "Please upgrade to Ruby >= 3.1 in order to use this feature. Heap profiling has been disabled."
           )
           return false
+        elsif RUBY_VERSION.start_with?("4.")
+          logger.warn(
+            "Datadog Ruby heap profiler is currently incompatible with Ruby 4. " \
+            "Heap profiling has been disabled."
+          )
+          return false
         end
 
         unless allocation_profiling_enabled
-          raise ArgumentError, "Heap profiling requires allocation profiling to be enabled"
+          logger.warn(
+            "Heap profiling was requested but allocation profiling is not enabled. " \
+            "Heap profiling has been disabled."
+          )
+          return false
         end
 
-        logger.warn(
-          "Enabled experimental heap profiling: heap_sample_rate=#{heap_sample_rate}. This is experimental, not " \
-          "recommended, and will increase overhead!"
-        )
+        logger.debug("Enabled heap profiling: heap_sample_rate=#{heap_sample_rate}")
 
         true
       end
@@ -236,10 +244,6 @@ module Datadog
         heap_size_profiling_enabled = settings.profiling.advanced.experimental_heap_size_enabled
 
         return false unless heap_profiling_enabled && heap_size_profiling_enabled
-
-        logger.warn(
-          "Enabled experimental heap size profiling. This is experimental, not recommended, and will increase overhead!"
-        )
 
         true
       end
@@ -432,6 +436,15 @@ module Datadog
         return false if no_signals_workaround_enabled || RUBY_VERSION >= "3.4"
 
         settings.profiling.advanced.dir_interruption_workaround_enabled
+      end
+
+      private_class_method def self.can_apply_exec_monkey_patch?(settings)
+        return false if RUBY_VERSION < "2.7"
+
+        # This file is 2.7+ only so we only require it here once we've checked the Ruby version
+        require "datadog/profiling/ext/exec_monkey_patch"
+
+        settings.profiling.advanced.shutdown_on_exec_enabled
       end
 
       private_class_method def self.enable_gvl_profiling?(settings, logger)

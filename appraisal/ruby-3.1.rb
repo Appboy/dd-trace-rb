@@ -98,7 +98,9 @@ build_coverage_matrix('rest-client')
 build_coverage_matrix('mongo', min: '2.1.0')
 build_coverage_matrix('dalli', [2])
 build_coverage_matrix('karafka', min: '2.3.0')
+build_coverage_matrix('waterdrop', min: '2.8.8.rc1')
 build_coverage_matrix('devise', min: '3.2.1')
+build_coverage_matrix('openfeature', min: '0.3.1', gem: 'openfeature-sdk')
 
 appraise 'relational_db' do
   gem 'activerecord', '~> 7'
@@ -159,6 +161,7 @@ build_coverage_matrix('rack', 1..2, meta: { 'rack-contrib' => nil, 'rack-test' =
 [2, 3, 4].each do |n|
   appraise "sinatra-#{n}" do
     gem 'sinatra', "~> #{n}"
+    gem 'sinatra-contrib', "~> #{n}"
     gem 'rack-contrib'
     gem 'rack-test' # Dev dependencies for testing rack-based code
   end
@@ -166,6 +169,8 @@ end
 
 appraise 'opentelemetry' do
   gem 'opentelemetry-sdk', '~> 1.1'
+  gem 'opentelemetry-metrics-sdk', '>= 0.8'
+  gem 'opentelemetry-exporter-otlp-metrics', '>= 0.4'
 end
 
 appraise 'opentelemetry_otlp' do
@@ -186,4 +191,11 @@ end
 
 appraise 'core-old' do
   gem 'dogstatsd-ruby', '~> 4'
+end
+
+appraise 'environment' do
+  gem 'spring', '>= 2.0.2'
+  gem 'cucumber', '>= 3'
+  gem 'logger'
+  gem 'minitest'
 end

@@ -2,6 +2,48 @@ module Datadog
   module AppSec
     # rubocop:disable Metrics/ModuleLength
     module WAF
+      type known_addresses = ::Array[::String]
+      type diagnostics = ::Hash[::String, untyped]
+      type input = nil | bool | ::String | ::Symbol | ::Integer | ::Float | ::Array[input] | ::Hash[input, input]
+      type result = {
+        "keep" => bool,
+        "events" => events,
+        "actions" => actions,
+        "attributes" => attributes,
+        "timeout" => bool,
+        # NOTE: Schema defines it as a `number`, but we alway get it as `Integer`
+        #       That will be fixed in the libddwaf specs
+        "duration" => ::Integer
+      }
+      type events = ::Array[event]
+      type event = {"rule" => rule, "rule_matches" => ::Array[rule_match]}
+      type rule = {
+        "id" => ::String,
+        "name" => ::String,
+        "tags" => {
+          "type" => ::String,
+          # optional key
+          "category" => ::String?
+        },
+        # optional key
+        "on_match" => ::Array[::String]?
+      }
+      type rule_match = {
+        "operator" => ::String,
+        "operator_value" => ::String,
+        "parameters" => ::Array[rule_match_parameter]
+      }
+      type rule_match_parameter = {
+        "address" => ::String,
+        "key_path" => ::Array[::String | ::Integer],
+        "value" => ::String,
+        "highlight" => ::Array[::String]
+      }
+      type actions = ::Hash[::String, action]
+      type action = ::Hash[::String, ::String]
+      type attributes = ::Hash[::String, opaque]
+      type opaque = nil | bool | ::String | ::Integer | ::Float | ::Array[opaque] | ::Hash[::String, opaque]
+
       # retain logging proc if set properly
       self.@log_callback: untyped
 
@@ -23,114 +65,131 @@ module Datadog
       RESULT_CODE: { ddwaf_err_internal: :err_internal, ddwaf_err_invalid_object: :err_invalid_object, ddwaf_err_invalid_argument: :err_invalid_argument, ddwaf_ok: :ok, ddwaf_match: :match }
 
       module LibDDWAF
-        class Error < StandardError
-          @diagnostics: untyped
-
-          attr_reader diagnostics: untyped
-
-          def initialize: (untyped msg, ?diagnostics: untyped?) -> void
-        end
-
         class Object
         end
 
         DDWAF_RUN_TIMEOUT: untyped
       end
 
-      class Handle
-        @config: untyped
+      class Error < StandardError
+      end
 
-        @handle_obj: untyped
+      class InstanceFinalizedError < Error
+      end
 
-        @diagnostics: untyped
+      class ConversionError < Error
+      end
 
-        @valid: untyped
-
-        attr_reader handle_obj: untyped
-
+      class LibDDWAFError < Error
         attr_reader diagnostics: untyped
 
-        attr_reader config: untyped
+        def initialize: (::String msg, ?diagnostics: untyped?) -> void
+      end
 
-        def initialize: (untyped rule, ?limits: ::Hash[untyped, untyped], ?obfuscator: ::Hash[untyped, untyped]) -> void
+      class HandleBuilder
+        @builder_ptr: ::FFI::Pointer
 
-        def finalize: () -> untyped
+        def initialize: (?limits: ::Hash[::Symbol, ::Integer], ?obfuscator: ::Hash[::Symbol, ::String]) -> void
 
-        def required_addresses: () -> (::Array[untyped] | untyped)
+        def finalize!: () -> void
 
-        def merge: (untyped data) -> untyped
+        def build_handle: () -> Handle
+
+        def add_or_update_config: (untyped config, path: ::String) -> untyped
+
+        def remove_config_at_path: (::String path) -> bool
 
         private
 
-        def new_from_handle: (untyped handle_object, untyped diagnostics, untyped config) -> untyped
+        def ensure_pointer_presence!: () -> void
+      end
 
-        def validate!: () -> untyped
+      class Handle
+        @handle_ptr: ::FFI::Pointer
 
-        def invalidate!: () -> untyped
+        def initialize: (::FFI::Pointer handle_ptr) -> void
 
-        def valid?: () -> untyped
+        def finalize!: () -> void
 
-        def valid!: () -> (nil | untyped)
+        def build_context: () -> Context
+
+        def known_addresses: () -> WAF::known_addresses
+
+        private
+
+        def ensure_pointer_presence!: () -> void
       end
 
       class Result
-        @status: untyped
+        @status: ::Symbol
 
-        @events: untyped
+        @events: WAF::events
 
-        @total_runtime: untyped
+        @actions: WAF::actions
 
-        @timeout: untyped
+        @attributes: WAF::attributes
 
-        @actions: untyped
+        @duration: ::Integer
 
-        @derivatives: untyped
+        @timeout: bool
 
-        attr_reader status: untyped
+        @keep: bool
 
-        attr_reader events: untyped
+        @input_truncated: bool
 
-        attr_reader total_runtime: untyped
+        attr_reader status: ::Symbol
 
-        attr_reader timeout: untyped
+        attr_reader events: WAF::events
 
-        attr_reader actions: untyped
+        attr_reader actions: WAF::actions
 
-        attr_reader derivatives: untyped
+        attr_reader attributes: WAF::attributes
 
-        def initialize: (untyped status, untyped events, untyped total_runtime, untyped timeout, untyped actions, untyped derivatives) -> void
+        attr_reader duration: ::Integer
+
+        def initialize: (
+          status: ::Symbol,
+          events: WAF::events,
+          actions: WAF::actions,
+          attributes: WAF::attributes,
+          duration: ::Integer,
+          timeout: bool,
+          keep: bool
+        ) -> void
+
+        def mark_input_truncated!: () -> bool
+
+        def timeout?: () -> bool
+
+        def keep?: () -> bool
+
+        def input_truncated?: () -> bool
+
+        def to_h: () -> ::Hash[::Symbol, (::Symbol | WAF::opaque)]
       end
 
       class Context
-        @context_obj: untyped
+        @context_ptr: ::FFI::Pointer
 
-        @valid: untyped
+        @retained: Array[untyped]
 
-        @retained: untyped
+        RESULT_CODE: ::Hash[::Symbol, ::Symbol]
 
-        attr_reader context_obj: untyped
+        def initialize: (::FFI::Pointer context_ptr) -> void
 
-        def initialize: (untyped handle) -> void
+        def finalize!: () -> void
 
-        def finalize: () -> untyped
-
-        def run: (untyped persistent_data, untyped ephemeral_data, ?untyped timeout) -> untyped
+        def run: (WAF::input persistent_data, WAF::input ephemeral_data, ?::Integer timeout) -> Result
 
         private
 
-        def validate!: () -> untyped
+        def ensure_pointer_presence!: () -> void
 
-        def invalidate!: () -> untyped
+        def retained: () -> Array[untyped]
 
-        def valid?: () -> untyped
+        def retain: (top object) -> void
 
-        def valid!: () -> (nil | untyped)
-
-        def retained: () -> untyped
-
-        def retain: (untyped object) -> untyped
-
-        def release: (untyped object) -> untyped
+        def release: (top object) -> void
       end
     end
   end

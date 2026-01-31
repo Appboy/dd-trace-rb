@@ -8,6 +8,11 @@ module Datadog
       module Async
         # Adds threading behavior to workers
         # to run tasks asynchronously.
+        #
+        # This module is included in Polling module, and has no other
+        # direct users.
+        #
+        # @api private
         module Thread
           FORK_POLICY_STOP = :stop
           FORK_POLICY_RESTART = :restart
@@ -24,7 +29,11 @@ module Datadog
           # Methods that must be prepended
           module PrependedMethods
             def perform(*args)
-              start_async { self.result = super(*args) } unless started?
+              unless started?
+                start_async do
+                  self.result = super(*args)
+                end
+              end
             end
           end
 
@@ -47,6 +56,14 @@ module Datadog
             @run_async = false
             Datadog.logger.debug { "Forcibly terminating worker thread for: #{self}" }
             worker.terminate
+            # Wait for the worker thread to end
+            begin
+              Timeout.timeout(SHUTDOWN_TIMEOUT) do
+                worker.join
+              end
+            rescue Timeout::Error
+              Datadog.logger.debug { "Worker thread did not end after #{SHUTDOWN_TIMEOUT} seconds: #{self}" }
+            end
             true
           end
 
@@ -112,23 +129,33 @@ module Datadog
             @worker ||= nil
           end
 
+          # Returns true if worker thread is successfully started,
+          # false if it is not started. Reasons for not starting the worker
+          # thread: it is already running, or the process forked and fork
+          # policy is to stop the workers on fork (which means they are
+          # not started in children, really).
           def start_async(&block)
             mutex.synchronize do
-              return if running?
+              return false if running?
 
               if forked?
                 case fork_policy
                 when FORK_POLICY_STOP
                   stop_fork
+                  false
                 when FORK_POLICY_RESTART
+                  # restart_after_fork should return true
                   restart_after_fork(&block)
                 end
               elsif !run_async?
+                # start_worker should return true
                 start_worker(&block)
               end
             end
           end
 
+          # Returns true if worker thread is successfully started,
+          # which should generally be always.
           def start_worker
             @run_async = true
             @pid = Process.pid
@@ -136,22 +163,21 @@ module Datadog
             Datadog.logger.debug { "Starting thread for: #{self}" }
 
             @worker = ::Thread.new do
-              begin
-                yield
-              # rubocop:disable Lint/RescueException
-              rescue Exception => e
-                @error = e
-                Datadog.logger.debug(
-                  "Worker thread error. Cause: #{e.class.name} #{e.message} Location: #{Array(e.backtrace).first}"
-                )
-                raise
-              end
+              yield
+            # rubocop:disable Lint/RescueException
+            rescue Exception => e
+              @error = e
+              Datadog.logger.debug(
+                "Worker thread error. Cause: #{e.class.name} #{e.message} Location: #{Array(e.backtrace).first}"
+              )
+              raise
+
               # rubocop:enable Lint/RescueException
             end
             @worker.name = self.class.name
             @worker.thread_variable_set(:fork_safe, true)
 
-            nil
+            true
           end
 
           def stop_fork

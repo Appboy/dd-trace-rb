@@ -35,6 +35,18 @@ module Datadog
             span.type = Tracing::Metadata::Ext::HTTP::TYPE_OUTBOUND
             span.name = Ext::SPAN_COMMAND
             span.resource = context.safely(:resource)
+
+            # DEV-3.0: This was previously checking against a 500..599 range.
+            # To not introduce breaking change, this was changed to use `http_error_statuses.server`,
+            # but `aws` is a client library, this check should use `http_error_statuses.client` instead.
+            if Datadog.configuration.tracing.http_error_statuses.server.include?(context.safely(:status_code))
+              # At this point we do not have any additional diagnostics
+              # besides the HTTP status code which is recorded in the span tags
+              # later in this method.
+              # Just set the span as errored.
+              span.set_error(nil)
+            end
+
             aws_service = span.resource.split('.')[0]
             span.set_tag(Ext::TAG_AWS_SERVICE, aws_service)
             params = context.safely(:params)
@@ -77,7 +89,7 @@ module Datadog
             span.set_tag(Tracing::Metadata::Ext::HTTP::TAG_STATUS_CODE, context.safely(:status_code))
 
             Contrib::SpanAttributeSchema.set_peer_service!(span, Ext::PEER_SERVICE_SOURCES)
-          rescue StandardError => e
+          rescue => e
             Datadog.logger.error(e.message)
             Datadog::Core::Telemetry::Logger.report(e)
           end
@@ -113,7 +125,7 @@ module Datadog
               request.handlers.remove(Handler)
             end
 
-            super(*args, &block)
+            super
           end
 
           ruby2_keywords :sign_but_dont_send if respond_to?(:ruby2_keywords, true)

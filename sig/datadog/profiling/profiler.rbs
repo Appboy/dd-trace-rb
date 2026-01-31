@@ -15,9 +15,11 @@ module Datadog
         scheduler: Datadog::Profiling::Scheduler
       ) -> void
 
+      def enabled?: () -> bool
+
       def start: () -> void
 
-      def shutdown!: () -> void
+      def shutdown!: (?report_last_profile: bool) -> void
 
       private
 

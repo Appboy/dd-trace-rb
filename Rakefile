@@ -22,6 +22,23 @@ Dir.glob('tasks/*.rake').each { |r| import r }
 
 TEST_METADATA = eval(File.read('Matrixfile')).freeze # rubocop:disable Security/Eval
 
+CORE_WITH_LIBDATADOG_API = [
+  'spec/datadog/core/crashtracking/**/*_spec.rb',
+  'spec/datadog/core/process_discovery_spec.rb',
+  'spec/datadog/core/configuration/stable_config_spec.rb',
+  'spec/datadog/core/feature_flags_spec.rb',
+  'spec/datadog/core/ddsketch_spec.rb',
+  'spec/datadog/data_streams/**/*_spec.rb',
+  'spec/datadog/open_feature_spec.rb',
+].freeze
+
+# Data Streams Monitoring (DSM) requires libdatadog_api for DDSketch
+# Add new instrumentation libraries here as they gain DSM support
+DSM_ENABLED_LIBRARIES = [
+  :kafka,
+  :karafka
+].freeze
+
 # rubocop:disable Metrics/BlockLength
 namespace :test do
   desc 'Run all tests'
@@ -40,11 +57,11 @@ namespace :test do
 
       candidates.each_key do |group|
         env = if group.empty?
-                {}
-              else
-                gemfile = AppraisalConversion.to_bundle_gemfile(group)
-                { 'BUNDLE_GEMFILE' => gemfile }
-              end
+          {}
+        else
+          gemfile = AppraisalConversion.to_bundle_gemfile(group)
+          {'BUNDLE_GEMFILE' => gemfile}
+        end
         command = "bundle check || bundle install && bundle exec rake #{spec_task}"
         command += "'[#{spec_arguments}]'" if spec_arguments
 
@@ -66,22 +83,29 @@ end
 desc 'Run RSpec'
 namespace :spec do
   # REMINDER: If adding a new task here, make sure also add it to the `Matrixfile`
-  task all: [:main, :benchmark,
-             :graphql, :graphql_unified_trace_patcher, :graphql_trace_patcher, :graphql_tracing_patcher,
-             :rails, :railsredis, :railsredis_activesupport, :railsactivejob,
-             :elasticsearch, :http, :redis, :sidekiq, :sinatra, :hanami, :hanami_autoinstrument,
-             :profiling, :crashtracking]
+  task all: [:main, :benchmark, :custom_cop,
+    :graphql, :graphql_unified_trace_patcher, :graphql_trace_patcher, :graphql_tracing_patcher,
+    :rails, :railsredis, :railsredis_activesupport, :railsactivejob,
+    :elasticsearch, :http, :redis, :sidekiq, :sinatra, :hanami, :hanami_autoinstrument,
+    :profiling, :core_with_libdatadog_api, :error_tracking, :open_feature, :core_with_rails, :environment, :ai_guard]
 
   desc '' # "Explicitly hiding from `rake -T`"
   RSpec::Core::RakeTask.new(:main) do |t, args|
     t.pattern = 'spec/**/*_spec.rb'
-    t.exclude_pattern = 'spec/**/{contrib,benchmark,redis,auto_instrument,opentelemetry,profiling,crashtracking}/**/*_spec.rb,'\
-                        ' spec/**/{auto_instrument,opentelemetry}_spec.rb, spec/datadog/gem_packaging_spec.rb'
+    t.exclude_pattern = 'spec/**/{appsec/integration,contrib,benchmark,redis,auto_instrument,opentelemetry,open_feature,profiling,crashtracking,error_tracking,rubocop,data_streams,ai_guard}/**/*_spec.rb,' \
+                        ' spec/**/{auto_instrument,opentelemetry,process_discovery,stable_config,ddsketch,open_feature,feature_flags,process,ai_guard}_spec.rb,' \
+                        ' spec/datadog/core/environment/execution_spec.rb,' \
+                        ' spec/datadog/gem_packaging_spec.rb'
     t.rspec_opts = args.to_a.join(' ')
   end
 
   RSpec::Core::RakeTask.new(:benchmark) do |t, args|
     t.pattern = 'spec/datadog/benchmark/**/*_spec.rb'
+    t.rspec_opts = args.to_a.join(' ')
+  end
+
+  RSpec::Core::RakeTask.new(:custom_cop) do |t, args|
+    t.pattern = 'spec/rubocop/**/*_spec.rb'
     t.rspec_opts = args.to_a.join(' ')
   end
 
@@ -113,9 +137,21 @@ namespace :spec do
   end
 
   desc '' # "Explicitly hiding from `rake -T`"
+  RSpec::Core::RakeTask.new(:open_feature) do |t, args|
+    t.pattern = 'spec/datadog/open_feature/**/*_spec.rb'
+    t.rspec_opts = args.to_a.join(' ')
+  end
+
+  desc '' # "Explicitly hiding from `rake -T`"
+  RSpec::Core::RakeTask.new(:ai_guard) do |t, args|
+    t.pattern = 'spec/datadog/ai_guard/**/*_spec.rb,spec/datadog/ai_guard_spec.rb'
+    t.rspec_opts = args.to_a.join(' ')
+  end
+
+  desc '' # "Explicitly hiding from `rake -T`"
   RSpec::Core::RakeTask.new(:rails) do |t, args|
     t.pattern = 'spec/datadog/tracing/contrib/rails/**/*_spec.rb'
-    t.exclude_pattern = 'spec/datadog/tracing/contrib/rails/**/*{active_job,disable_env,redis_cache,auto_instrument,'\
+    t.exclude_pattern = 'spec/datadog/tracing/contrib/rails/**/*{active_job,disable_env,redis_cache,auto_instrument,' \
                         'semantic_logger}*_spec.rb'
     t.rspec_opts = args.to_a.join(' ')
   end
@@ -197,13 +233,38 @@ namespace :spec do
   end
 
   # rubocop:disable Style/MultilineBlockChain
-  RSpec::Core::RakeTask.new(:crashtracking) do |t, args|
-    t.pattern = 'spec/datadog/core/crashtracking/**/*_spec.rb'
+  RSpec::Core::RakeTask.new(:core_with_libdatadog_api) do |t, args|
+    t.pattern = CORE_WITH_LIBDATADOG_API.join(', ')
     t.rspec_opts = args.to_a.join(' ')
   end.tap do |t|
-    Rake::Task[t.name].enhance(["compile:libdatadog_api.#{RUBY_VERSION[/\d+.\d+/]}_#{RUBY_PLATFORM}"])
+    # Core with libdatadog is dependent on profiling because crashtracking runtime stacks logic
+    # lives in the profiling extension (they share same logic accessing Ruby internals)
+    Rake::Task[t.name].enhance(
+      [
+        "compile:libdatadog_api.#{RUBY_VERSION[/\d+.\d+/]}_#{RUBY_PLATFORM}",
+        "compile:datadog_profiling_native_extension.#{RUBY_VERSION}_#{RUBY_PLATFORM}"
+      ]
+    )
   end
   # rubocop:enable Style/MultilineBlockChain
+
+  desc '' # "Explicitly hiding from `rake -T`"
+  RSpec::Core::RakeTask.new(:core_with_rails) do |t, args|
+    t.pattern = 'spec/datadog/core/environment/process_spec.rb'
+    t.rspec_opts = args.to_a.join(' ')
+  end
+
+  desc '' # "Explicitly hiding from `rake -T`"
+  RSpec::Core::RakeTask.new(:environment) do |t, args|
+    t.pattern = 'spec/datadog/core/environment/execution_spec.rb'
+    t.rspec_opts = args.to_a.join(' ')
+  end
+
+  desc '' # "Explicitly hiding from `rake -T`"
+  RSpec::Core::RakeTask.new(:error_tracking) do |t, args|
+    t.pattern = 'spec/datadog/error_tracking/**/*_spec.rb'
+    t.rspec_opts = args.to_a.join(' ')
+  end
 
   desc '' # "Explicitly hiding from `rake -T`"
   RSpec::Core::RakeTask.new(:contrib) do |t, args|
@@ -267,12 +328,29 @@ namespace :spec do
     :stripe,
     :sucker_punch,
     :suite,
-    :trilogy
+    :trilogy,
+    :waterdrop
   ].each do |contrib|
     desc '' # "Explicitly hiding from `rake -T`"
     RSpec::Core::RakeTask.new(contrib) do |t, args|
       t.pattern = "spec/datadog/tracing/contrib/#{contrib}/**/*_spec.rb"
       t.rspec_opts = args.to_a.join(' ')
+    end
+  end
+
+  # Ensure DSM-enabled contrib tests compile libdatadog_api before running (MRI Ruby only)
+  # If compilation fails (e.g., new Ruby version without prebuilt extension), tests will skip via DDSketch.supported?
+  unless RUBY_PLATFORM == 'java'
+    task :compile_libdatadog_for_dsm do
+      Rake::Task["compile:libdatadog_api.#{RUBY_VERSION[/\d+.\d+/]}_#{RUBY_PLATFORM}"].invoke
+    rescue => e
+      # Compilation failed (likely unsupported Ruby version) - tests will skip gracefully
+      puts "Warning: libdatadog_api compilation failed: #{e.class}: #{e}"
+      puts 'DSM tests will be skipped for this Ruby version'
+    end
+
+    DSM_ENABLED_LIBRARIES.each do |task_name|
+      Rake::Task["spec:#{task_name}"].enhance([:compile_libdatadog_for_dsm])
     end
   end
 
@@ -295,15 +373,15 @@ namespace :spec do
     desc '' # "Explicitly hiding from `rake -T`"
     RSpec::Core::RakeTask.new(:main) do |t, args|
       t.pattern = 'spec/datadog/appsec/**/*_spec.rb'
-      t.exclude_pattern = 'spec/datadog/appsec/**/{contrib,auto_instrument}/**/*_spec.rb,'\
+      t.exclude_pattern = 'spec/datadog/appsec/**/{integration,contrib,auto_instrument}/**/*_spec.rb,' \
                           ' spec/datadog/appsec/**/{auto_instrument,autoload}_spec.rb'
       t.rspec_opts = args.to_a.join(' ')
     end
 
-    # Datadog AppSec integration specs
+    # Datadog AppSec integration specs (syntetic rails application)
     desc '' # "Explicitly hiding from `rake -T`"
     RSpec::Core::RakeTask.new(:integration) do |t, args|
-      t.pattern = 'spec/datadog/appsec/contrib/integration/**/*_spec.rb'
+      t.pattern = 'spec/datadog/appsec/integration/**/*_spec.rb'
       t.rspec_opts = args.to_a.join(' ')
     end
 
@@ -327,13 +405,19 @@ namespace :spec do
     end
   end
 
-  task appsec: [:'appsec:all']
+  task appsec: [:"appsec:all"]
 
   namespace :di do
-    desc '' # "Explicitly hiding from `rake -T`"
-    RSpec::Core::RakeTask.new(:active_record) do |t, args|
-      t.pattern = 'spec/datadog/di/contrib/active_record/**/*_spec.rb'
-      t.rspec_opts = args.to_a.join(' ')
+    # Datadog DI integrations
+    [
+      :active_record,
+      :rails,
+    ].each do |contrib|
+      desc '' # "Explicitly hiding from `rake -T`"
+      RSpec::Core::RakeTask.new(contrib) do |t, args|
+        t.pattern = "spec/datadog/di/contrib/#{contrib}/**/*_spec.rb"
+        t.rspec_opts = args.to_a.join(' ')
+      end
     end
   end
 
@@ -388,7 +472,7 @@ namespace :spec do
     Rake::Task[:all].prerequisite_tasks.each { |t| t.enhance([:compile_native_extensions]) }
   end
 
-  task profiling: [:'profiling:all']
+  task profiling: [:"profiling:all"]
 end
 
 if defined?(RuboCop::RakeTask)
@@ -405,20 +489,12 @@ namespace :coverage do
   task :report do
     require 'simplecov'
 
-    resultset_files = Dir["#{ENV.fetch('COVERAGE_DIR', 'coverage')}/.resultset.json"] +
-      Dir["#{ENV.fetch('COVERAGE_DIR', 'coverage')}/versions/**/.resultset.json"]
+    resultset_files = Dir["#{ENV.fetch("COVERAGE_DIR", "coverage")}/.resultset.json"] +
+      Dir["#{ENV.fetch("COVERAGE_DIR", "coverage")}/versions/**/.resultset.json"]
 
     SimpleCov.collate resultset_files do
-      coverage_dir "#{ENV.fetch('COVERAGE_DIR', 'coverage')}/report"
-      if ENV['CI'] == 'true'
-        require 'simplecov-cobertura'
-        formatter SimpleCov::Formatter::MultiFormatter.new(
-          [SimpleCov::Formatter::HTMLFormatter,
-           SimpleCov::Formatter::CoberturaFormatter] # Used by codecov
-        )
-      else
-        formatter SimpleCov::Formatter::HTMLFormatter
-      end
+      coverage_dir "#{ENV.fetch("COVERAGE_DIR", "coverage")}/report"
+      formatter SimpleCov::Formatter::HTMLFormatter
     end
   end
 
@@ -427,11 +503,11 @@ namespace :coverage do
     require 'simplecov'
     require_relative 'spec/support/simplecov_fix'
 
-    versions = Dir["#{ENV.fetch('COVERAGE_DIR', 'coverage')}/versions/*"].map { |f| File.basename(f) }
+    versions = Dir["#{ENV.fetch("COVERAGE_DIR", "coverage")}/versions/*"].map { |f| File.basename(f) }
     versions.map do |version|
       puts "Generating report for: #{version}"
-      SimpleCov.collate Dir["#{ENV.fetch('COVERAGE_DIR', 'coverage')}/versions/#{version}/**/.resultset.json"] do
-        coverage_dir "#{ENV.fetch('COVERAGE_DIR', 'coverage')}/report/versions/#{version}"
+      SimpleCov.collate Dir["#{ENV.fetch("COVERAGE_DIR", "coverage")}/versions/#{version}/**/.resultset.json"] do
+        coverage_dir "#{ENV.fetch("COVERAGE_DIR", "coverage")}/report/versions/#{version}"
         formatter SimpleCov::Formatter::HTMLFormatter
       end
     end
@@ -447,13 +523,13 @@ namespace :changelog do
 end
 
 NATIVE_EXTS = [
+  Rake::ExtensionTask.new("libdatadog_api.#{RUBY_VERSION[/\d+.\d+/]}_#{RUBY_PLATFORM}") do |ext|
+    ext.ext_dir = 'ext/libdatadog_api'
+  end,
+
   Rake::ExtensionTask.new("datadog_profiling_native_extension.#{RUBY_VERSION}_#{RUBY_PLATFORM}") do |ext|
     ext.ext_dir = 'ext/datadog_profiling_native_extension'
   end,
-
-  Rake::ExtensionTask.new("libdatadog_api.#{RUBY_VERSION[/\d+.\d+/]}_#{RUBY_PLATFORM}") do |ext|
-    ext.ext_dir = 'ext/libdatadog_api'
-  end
 ].freeze
 
 NATIVE_CLEAN = ::Rake::FileList[]
@@ -487,7 +563,7 @@ namespace :native_dev do
 end
 
 desc 'Runs rubocop + main test suite'
-task default: ['rubocop', 'standard', 'typecheck', 'spec:main']
+task default: ['lint:all', 'rubocop', 'standard', 'typecheck', 'spec:main']
 
 desc 'Runs the default task in parallel'
-multitask fastdefault: ['rubocop', 'standard', 'typecheck', 'spec:main']
+multitask fastdefault: ['lint:all', 'rubocop', 'standard', 'typecheck', 'spec:main']

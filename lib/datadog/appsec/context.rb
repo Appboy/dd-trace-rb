@@ -7,8 +7,10 @@ module Datadog
     # This class accumulates the context over the request life-cycle and exposes
     # interface sufficient for instrumentation to perform threat detection.
     class Context
-      ActiveContextError = Class.new(StandardError)
+      # Steep: https://github.com/soutaro/steep/issues/1880
+      ActiveContextError = Class.new(StandardError) # steep:ignore IncompatibleAssignment
 
+      # TODO: add delegators for active trace span
       attr_reader :trace, :span, :events
 
       class << self
@@ -20,7 +22,7 @@ module Datadog
         end
 
         def deactivate
-          active&.finalize
+          active&.finalize!
         ensure
           Thread.current[Ext::ACTIVE_CONTEXT_KEY] = nil
         end
@@ -30,13 +32,13 @@ module Datadog
         end
       end
 
-      def initialize(trace, span, security_engine)
+      def initialize(trace, span, waf_runner)
         @trace = trace
         @span = span
         @events = []
-        @security_engine = security_engine
-        @waf_runner = security_engine.new_runner
+        @waf_runner = waf_runner
         @metrics = Metrics::Collector.new
+        @interrupted = false
       end
 
       def run_waf(persistent_data, ephemeral_data, timeout = WAF::LibDDWAF::DDWAF_RUN_TIMEOUT)
@@ -46,17 +48,33 @@ module Datadog
         result
       end
 
-      def run_rasp(type, persistent_data, ephemeral_data, timeout = WAF::LibDDWAF::DDWAF_RUN_TIMEOUT)
+      def run_rasp(type, persistent_data, ephemeral_data, timeout = WAF::LibDDWAF::DDWAF_RUN_TIMEOUT, phase: nil)
         result = @waf_runner.run(persistent_data, ephemeral_data, timeout)
 
-        Metrics::Telemetry.report_rasp(type, result)
-        @metrics.record_rasp(result)
+        Metrics::Telemetry.report_rasp(type, result, phase: phase)
+        @metrics.record_rasp(result, type: type, phase: phase)
 
         result
       end
 
+      def mark_as_interrupted!
+        @interrupted = true
+      end
+
+      def interrupted?
+        @interrupted
+      end
+
+      def waf_runner_ruleset_version
+        @waf_runner.ruleset_version
+      end
+
+      def waf_runner_known_addresses
+        @waf_runner.waf_addresses
+      end
+
       def extract_schema
-        @waf_runner.run({ 'waf.context.processor' => { 'extract-schema' => true } }, {})
+        @waf_runner.run({'waf.context.processor' => {'extract-schema' => true}}, {})
       end
 
       def export_metrics
@@ -66,8 +84,14 @@ module Datadog
         Metrics::Exporter.export_rasp_metrics(@metrics.rasp, @span)
       end
 
-      def finalize
-        @waf_runner.finalize
+      def export_request_telemetry
+        return if @trace.nil?
+
+        Metrics::TelemetryExporter.export_waf_request_metrics(@metrics.waf, self)
+      end
+
+      def finalize!
+        @waf_runner.finalize!
       end
     end
   end

@@ -8,26 +8,7 @@ require 'datadog/core/environment/ext'
 require 'datadog/core/runtime/ext'
 require 'datadog/core/utils/time'
 require 'datadog/profiling/ext'
-
-RSpec.shared_examples_for 'a binary setting with' do |env_variable:, default:|
-  context "when #{env_variable}" do
-    around { |example| ClimateControl.modify(env_variable => environment) { example.run } }
-
-    context 'is not defined' do
-      let(:environment) { nil }
-
-      it { is_expected.to be default }
-    end
-
-    [true, false].each do |value|
-      context "is defined as #{value}" do
-        let(:environment) { value.to_s }
-
-        it { is_expected.to be value }
-      end
-    end
-  end
-end
+require_relative 'settings_shared_examples'
 
 RSpec.describe Datadog::Core::Configuration::Settings do
   subject(:settings) { described_class.new(options) }
@@ -106,12 +87,12 @@ RSpec.describe Datadog::Core::Configuration::Settings do
         end
       end
 
-      context "when #{Datadog::Core::Configuration::Ext::Diagnostics::ENV_OTEL_LOG_LEVEL}" do
+      context 'when OTEL_LOG_LEVEL' do
         around do |example|
           ClimateControl.modify(
             {
               Datadog::Core::Configuration::Ext::Diagnostics::ENV_DEBUG_ENABLED => dd_debug_env,
-              Datadog::Core::Configuration::Ext::Diagnostics::ENV_OTEL_LOG_LEVEL => otel_level_env
+              'OTEL_LOG_LEVEL' => otel_level_env
             }
           ) do
             example.run
@@ -233,6 +214,52 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       before { set_env }
 
       it { expect(settings.env).to be_nil }
+    end
+  end
+
+  describe '#container' do
+    describe '#external_env' do
+      subject(:external_env) { settings.container.external_env }
+
+      context "when #{Datadog::Core::Environment::Ext::ENV_EXTERNAL_ENV}" do
+        around do |example|
+          ClimateControl.modify(Datadog::Core::Environment::Ext::ENV_EXTERNAL_ENV => environment) do
+            example.run
+          end
+        end
+
+        context 'is not defined' do
+          let(:environment) { nil }
+
+          it { is_expected.to be nil }
+        end
+
+        context 'is defined' do
+          let(:environment) { 'provided-by-container-runner' }
+
+          it { is_expected.to eq(environment) }
+        end
+      end
+    end
+
+    describe '#external_env=' do
+      subject(:set_external_env) { settings.container.external_env = external_env }
+
+      context 'when given a value' do
+        let(:external_env) { 'provided-by-container-runner' }
+
+        before { set_external_env }
+
+        it { expect(settings.container.external_env).to eq(external_env) }
+      end
+
+      context 'when given `nil`' do
+        let(:external_env) { nil }
+
+        before { set_external_env }
+
+        it { expect(settings.container.external_env).to be_nil }
+      end
     end
   end
 
@@ -506,7 +533,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
           context 'is not defined' do
             let(:environment) { nil }
 
-            it { is_expected.to be 10 }
+            it { is_expected.to be 1 }
           end
 
           context 'is defined as 100' do
@@ -521,7 +548,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
         it 'updates the #experimental_heap_sample_rate setting' do
           expect { settings.profiling.advanced.experimental_heap_sample_rate = 100 }
             .to change { settings.profiling.advanced.experimental_heap_sample_rate }
-            .from(10)
+            .from(1)
             .to(100)
         end
       end
@@ -664,10 +691,18 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       end
 
       describe '#experimental_crash_tracking_enabled=' do
+        before { allow(Datadog::Core).to receive(:log_deprecation) }
+
         it 'updates the #experimental_crash_tracking_enabled setting' do
           expect { settings.profiling.advanced.experimental_crash_tracking_enabled = true }
             .to change { settings.profiling.advanced.experimental_crash_tracking_enabled }
             .from(nil).to(true)
+        end
+
+        it "logs a warning informing customers this no longer does anything" do
+          expect(Datadog::Core).to receive(:log_deprecation)
+
+          settings.profiling.advanced.experimental_crash_tracking_enabled = false
         end
       end
 
@@ -688,6 +723,23 @@ RSpec.describe Datadog::Core::Configuration::Settings do
         end
       end
 
+      describe '#shutdown_on_exec_enabled' do
+        subject(:shutdown_on_exec_enabled) { settings.profiling.advanced.shutdown_on_exec_enabled }
+
+        it_behaves_like 'a binary setting with',
+          env_variable: 'DD_PROFILING_SHUTDOWN_ON_EXEC_ENABLED',
+          default: true
+      end
+
+      describe '#shutdown_on_exec_enabled=' do
+        it 'updates the #shutdown_on_exec_enabled setting from its default of true' do
+          expect { settings.profiling.advanced.shutdown_on_exec_enabled = false }
+            .to change { settings.profiling.advanced.shutdown_on_exec_enabled }
+            .from(true)
+            .to(false)
+        end
+      end
+
       describe '#preview_gvl_enabled=' do
         it 'logs a warning informing customers this no longer does anything' do
           expect(Datadog.logger).to receive(:warn).with(/no longer does anything/)
@@ -701,6 +753,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
         it_behaves_like 'a binary setting with', env_variable: 'DD_PROFILING_GVL_ENABLED', default: true
 
+        # Defined in supported_configurations and deprecation logged during components initialization
         context 'when DD_PROFILING_PREVIEW_GVL_ENABLED' do
           around do |example|
             ClimateControl.modify('DD_PROFILING_PREVIEW_GVL_ENABLED' => environment) do
@@ -717,8 +770,6 @@ RSpec.describe Datadog::Core::Configuration::Settings do
           [true, false].each do |value|
             context "is defined as #{value}" do
               let(:environment) { value.to_s }
-
-              before { expect(Datadog::Core).to receive(:log_deprecation) }
 
               it { is_expected.to be value }
             end
@@ -837,6 +888,66 @@ RSpec.describe Datadog::Core::Configuration::Settings do
           end
         end
       end
+
+      describe '#native_filenames_enabled' do
+        subject(:native_filenames_enabled) { settings.profiling.advanced.native_filenames_enabled }
+
+        it_behaves_like 'a binary setting with', env_variable: 'DD_PROFILING_NATIVE_FILENAMES_ENABLED', default: true
+      end
+
+      describe '#native_filenames_enabled=' do
+        it 'updates the #native_filenames_enabled setting' do
+          expect { settings.profiling.advanced.native_filenames_enabled = false }
+            .to change { settings.profiling.advanced.native_filenames_enabled }
+            .from(true)
+            .to(false)
+        end
+      end
+
+      describe '#sighandler_sampling_enabled' do
+        subject(:sighandler_sampling_enabled) { settings.profiling.advanced.sighandler_sampling_enabled }
+
+        context 'on Ruby 3.2.4 and below' do
+          before { stub_const('RUBY_VERSION', '3.2.4') }
+
+          it_behaves_like 'a binary setting with', env_variable: 'DD_PROFILING_SIGHANDLER_SAMPLING_ENABLED', default: false
+        end
+
+        context 'on Ruby 3.3 < 3.3.4' do
+          before { stub_const('RUBY_VERSION', '3.3.3') }
+
+          it_behaves_like 'a binary setting with', env_variable: 'DD_PROFILING_SIGHANDLER_SAMPLING_ENABLED', default: false
+        end
+
+        context 'on Ruby 3.2 >= 3.2.5' do
+          before { stub_const('RUBY_VERSION', '3.2.5') }
+
+          it_behaves_like 'a binary setting with', env_variable: 'DD_PROFILING_SIGHANDLER_SAMPLING_ENABLED', default: true
+        end
+
+        context 'on Ruby 3.3 >= 3.3.4' do
+          before { stub_const('RUBY_VERSION', '3.3.4') }
+
+          it_behaves_like 'a binary setting with', env_variable: 'DD_PROFILING_SIGHANDLER_SAMPLING_ENABLED', default: true
+        end
+
+        context 'on Ruby 3.4' do
+          before { stub_const('RUBY_VERSION', '3.4.0') }
+
+          it_behaves_like 'a binary setting with', env_variable: 'DD_PROFILING_SIGHANDLER_SAMPLING_ENABLED', default: true
+        end
+      end
+
+      describe '#sighandler_sampling_enabled=' do
+        it 'updates the #sighandler_sampling_enabled setting' do
+          default = settings.profiling.advanced.sighandler_sampling_enabled # Default is already tested in the getter
+
+          expect { settings.profiling.advanced.sighandler_sampling_enabled = !default }
+            .to change { settings.profiling.advanced.sighandler_sampling_enabled }
+            .from(default)
+            .to(!default)
+        end
+      end
     end
 
     describe '#upload' do
@@ -893,6 +1004,57 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       end
     end
 
+    describe '#experimental_runtime_id_enabled' do
+      subject(:experimental_runtime_id_enabled) { settings.runtime_metrics.experimental_runtime_id_enabled }
+
+      let(:primary_env_var) { 'DD_RUNTIME_METRICS_RUNTIME_ID_ENABLED' }
+      let(:fallback_env_var) { 'DD_TRACE_EXPERIMENTAL_RUNTIME_ID_ENABLED' }
+
+      around do |example|
+        ClimateControl.modify(
+          primary_env_var => primary_enabled,
+          fallback_env_var => fallback_enabled
+        ) do
+          example.run
+        end
+      end
+
+      context 'by default' do
+        let(:primary_enabled) { nil }
+        let(:fallback_enabled) { nil }
+
+        it { is_expected.to be false }
+      end
+
+      context 'when only the primary env var DD_RUNTIME_METRICS_RUNTIME_ID_ENABLED is set to true' do
+        let(:primary_enabled) { 'true' }
+        let(:fallback_enabled) { nil }
+
+        it { is_expected.to be true }
+      end
+
+      context 'when only the fallback env var DD_TRACE_EXPERIMENTAL_RUNTIME_ID_ENABLED is set to true' do
+        let(:primary_enabled) { nil }
+        let(:fallback_enabled) { 'true' }
+
+        it { is_expected.to be true }
+      end
+
+      context 'when both env vars are set to true' do
+        let(:primary_enabled) { 'true' }
+        let(:fallback_enabled) { 'true' }
+
+        it { is_expected.to be true }
+      end
+
+      context "when primary env var is false and fallback is true" do
+        let(:primary_enabled) { 'false' }
+        let(:fallback_enabled) { 'true' }
+
+        it { is_expected.to be false }
+      end
+    end
+
     describe '#opts' do
       subject(:opts) { settings.runtime_metrics.opts }
 
@@ -900,7 +1062,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
     end
 
     describe '#opts=' do
-      let(:opts) { { a: :b } }
+      let(:opts) { {a: :b} }
 
       it 'changes the #opts setting' do
         expect { settings.runtime_metrics.opts = opts }
@@ -966,7 +1128,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
         around do |example|
           ClimateControl.modify(
             Datadog::Core::Environment::Ext::ENV_SERVICE => 'service-name-from-dd-service',
-            Datadog::Core::Environment::Ext::ENV_OTEL_SERVICE => 'otel-service-name'
+            'OTEL_SERVICE_NAME' => 'otel-service-name'
           ) do
             example.run
           end
@@ -979,7 +1141,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
       context 'and defined via OTEL_SERVICE_NAME' do
         around do |example|
-          ClimateControl.modify(Datadog::Core::Environment::Ext::ENV_OTEL_SERVICE => 'otel-service-name') do
+          ClimateControl.modify('OTEL_SERVICE_NAME' => 'otel-service-name') do
             example.run
           end
         end
@@ -1108,7 +1270,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
           ['key', 'key:', 'key: '].each do |tag|
             context "when tag is #{tag.inspect}" do
               let(:env_tags) { tag }
-              it { is_expected.to eq({ 'key' => '' }) }
+              it { is_expected.to eq({'key' => ''}) }
             end
           end
         end
@@ -1122,7 +1284,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
         end
 
         context 'and when #env' do
-          let(:options) { { **super(), env: env } }
+          let(:options) { {**super(), env: env} }
 
           context 'is set' do
             let(:env) { 'env-value' }
@@ -1138,7 +1300,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
         end
 
         context 'and when #version' do
-          let(:options) { { **super(), version: version } }
+          let(:options) { {**super(), version: version} }
 
           context 'is set' do
             let(:version) { 'version-value' }
@@ -1155,7 +1317,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       end
 
       context 'conflicts with #env' do
-        let(:options) { { **super(), env: env_value } }
+        let(:options) { {**super(), env: env_value} }
 
         let(:env_tags) { "env:#{tag_env_value}" }
         let(:tag_env_value) { 'tag-env-value' }
@@ -1165,7 +1327,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       end
 
       context 'conflicts with #version' do
-        let(:options) { { **super(), version: version_value } }
+        let(:options) { {**super(), version: version_value} }
 
         let(:env_tags) { "env:#{tag_version_value}" }
         let(:tag_version_value) { 'tag-version-value' }
@@ -1175,10 +1337,10 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       end
     end
 
-    context "when #{Datadog::Core::Environment::Ext::ENV_OTEL_RESOURCE_ATTRIBUTES}" do
+    context "when OTEL_RESOURCE_ATTRIBUTES" do
       around do |example|
         ClimateControl.modify(
-          Datadog::Core::Environment::Ext::ENV_OTEL_RESOURCE_ATTRIBUTES => otel_tags,
+          'OTEL_RESOURCE_ATTRIBUTES' => otel_tags,
           Datadog::Core::Environment::Ext::ENV_TAGS => dd_tags
         ) do
           example.run
@@ -1210,7 +1372,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
     context 'when given a Hash' do
       context 'with Symbol keys' do
-        let(:tags) { { :'custom-tag' => 'custom-value' } }
+        let(:tags) { {"custom-tag": 'custom-value'} }
 
         before { set_tags }
 
@@ -1218,7 +1380,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       end
 
       context 'with String keys' do
-        let(:tags) { { 'custom-tag' => 'custom-value' } }
+        let(:tags) { {'custom-tag' => 'custom-value'} }
 
         before { set_tags }
 
@@ -1228,13 +1390,52 @@ RSpec.describe Datadog::Core::Configuration::Settings do
 
     context 'called consecutively' do
       subject(:set_tags) do
-        settings.tags = { foo: 'foo', bar: 'bar' }
-        settings.tags = { 'foo' => 'oof', 'baz' => 'baz' }
+        settings.tags = {foo: 'foo', bar: 'bar'}
+        settings.tags = {'foo' => 'oof', 'baz' => 'baz'}
       end
 
       before { set_tags }
 
       it { expect(settings.tags).to eq('foo' => 'oof', 'bar' => 'bar', 'baz' => 'baz') }
+    end
+  end
+
+  describe '#experimental_propagate_process_tags_enabled' do
+    subject(:experimental_propagate_process_tags_enabled) { settings.experimental_propagate_process_tags_enabled }
+
+    context "when #{Datadog::Core::Environment::Ext::ENV_VERSION}" do
+      around do |example|
+        ClimateControl.modify('DD_EXPERIMENTAL_PROPAGATE_PROCESS_TAGS_ENABLED' => environment) do
+          example.run
+        end
+      end
+
+      context 'by default' do
+        let(:environment) { nil }
+
+        it { is_expected.to be false }
+      end
+
+      context 'when set to true' do
+        let(:environment) { 'true' }
+
+        it { is_expected.to be true }
+      end
+
+      context 'when set to false' do
+        let(:environment) { 'false' }
+
+        it { is_expected.to be false }
+      end
+    end
+  end
+
+  describe '#experimental_propagate_process_tags_enabled=' do
+    it 'updates the #experimental_propagate_process_tags_enabled setting' do
+      expect { settings.experimental_propagate_process_tags_enabled = true }
+        .to change { settings.experimental_propagate_process_tags_enabled }
+        .from(false)
+        .to(true)
     end
   end
 
@@ -1302,7 +1503,7 @@ RSpec.describe Datadog::Core::Configuration::Settings do
       new_milliseconds = get_time_new_milliseconds # Capture for closure
       new_seconds = get_time_new_seconds # Capture for closure
 
-      ->(unit) { unit == :float_millisecond ? new_milliseconds : new_seconds }
+      ->(unit) { (unit == :float_millisecond) ? new_milliseconds : new_seconds }
     end
 
     context 'when default' do

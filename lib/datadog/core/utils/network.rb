@@ -13,12 +13,15 @@ module Datadog
           true-client-ip
           x-client-ip
           x-forwarded
+          forwarded
           forwarded-for
           x-cluster-client-ip
           fastly-client-ip
           cf-connecting-ip
           cf-connecting-ipv6
         ].freeze
+
+        CGNAT_IP_RANGE = IPAddr.new('100.64.0.0/10')
 
         class << self
           # Returns a client IP associated with the request if it was
@@ -32,7 +35,7 @@ module Datadog
           def stripped_ip_from_request_headers(headers, ip_headers_to_check: DEFAULT_IP_HEADERS_NAMES)
             ip = ip_header(headers, ip_headers_to_check)
 
-            ip ? ip.to_s : nil
+            ip&.to_s
           end
 
           # @param [String] IP value.
@@ -40,7 +43,7 @@ module Datadog
           # @return [nil] when no valid IP value found.
           def stripped_ip(ip)
             ip = ip_to_ipaddr(ip)
-            ip ? ip.to_s : nil
+            ip&.to_s
           end
 
           private
@@ -52,10 +55,10 @@ module Datadog
             return unless ip
 
             clean_ip = if likely_ipv4?(ip)
-                         strip_ipv4_port(ip)
-                       else
-                         strip_zone_specifier(strip_ipv6_port(ip))
-                       end
+              strip_ipv4_port(ip)
+            else
+              strip_zone_specifier(strip_ipv6_port(ip))
+            end
 
             begin
               IPAddr.new(clean_ip)
@@ -73,6 +76,8 @@ module Datadog
               next unless value
 
               ips = value.split(',')
+              ips = process_forwarded_header_values(ips) if name == 'forwarded'
+
               ips.each do |ip|
                 parsed_ip = ip_to_ipaddr(ip.strip)
 
@@ -81,6 +86,22 @@ module Datadog
             end
 
             nil
+          end
+
+          def process_forwarded_header_values(values)
+            values.each_with_object([]) do |value, acc|
+              value.downcase!
+
+              value.split(';').each do |tuple_str|
+                tuple_str.strip!
+                next unless tuple_str.start_with?('for=')
+
+                tuple_str.delete_prefix!('for=')
+                tuple_str.delete!('"')
+
+                acc << tuple_str
+              end
+            end
           end
 
           # Returns whether the given value is more likely to be an IPv4 than an IPv6 address.
@@ -112,7 +133,7 @@ module Datadog
           end
 
           def global_ip?(parsed_ip)
-            parsed_ip && !parsed_ip.private? && !parsed_ip.loopback? && !parsed_ip.link_local?
+            parsed_ip && !parsed_ip.private? && !parsed_ip.loopback? && !parsed_ip.link_local? && !CGNAT_IP_RANGE.include?(parsed_ip)
           end
         end
       end

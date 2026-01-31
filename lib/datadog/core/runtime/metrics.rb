@@ -8,13 +8,14 @@ require_relative '../environment/gc'
 require_relative '../environment/thread_count'
 require_relative '../environment/vm_cache'
 require_relative '../environment/yjit'
+require_relative '../environment/process'
 
 module Datadog
   module Core
     module Runtime
       # For generating runtime metrics
       class Metrics < Core::Metrics::Client
-        def initialize(**options)
+        def initialize(telemetry:, **options)
           super
 
           # Initialize service list
@@ -24,6 +25,9 @@ module Datadog
 
           # Initialize the collection of runtime-id
           @runtime_id_enabled = options.fetch(:experimental_runtime_id_enabled, false)
+
+          # Initialized process tags support
+          @process_tags_enabled = options.fetch(:experimental_propagate_process_tags_enabled, false)
         end
 
         # Associate service with runtime metrics
@@ -96,7 +100,7 @@ module Datadog
 
         def try_flush
           yield
-        rescue StandardError => e
+        rescue => e
           Datadog.logger.warn("Error while sending runtime metric. Cause: #{e.class.name} #{e.message}")
         end
 
@@ -111,6 +115,11 @@ module Datadog
 
             # Add runtime-id dynamically because it might change during runtime.
             options[:tags].concat(["runtime-id:#{Core::Environment::Identity.id}"]) if @runtime_id_enabled
+
+            # Add process tags when enabled
+            if @process_tags_enabled
+              options[:tags].concat(Core::Environment::Process.tags)
+            end
           end
         end
 
@@ -119,7 +128,8 @@ module Datadog
         attr_reader \
           :service_tags,
           :services,
-          :runtime_id_enabled
+          :runtime_id_enabled,
+          :process_tags_enabled
 
         def compile_service_tags!
           @service_tags = services.to_a.collect do |service|
@@ -147,7 +157,7 @@ module Datadog
           gauge(metric_name, metric_value) if metric_value
         end
 
-        # rubocop:disable Metrics/MethodLength
+        # standard:disable Metrics/MethodLength
         def flush_yjit_stats
           # Only on Ruby >= 3.2
           try_flush do
@@ -195,7 +205,7 @@ module Datadog
             end
           end
         end
-        # rubocop:enable Metrics/MethodLength
+        # standard:enable Metrics/MethodLength
       end
     end
   end

@@ -16,7 +16,7 @@ rescue LoadError
   puts 'ActionCable not supported in Rails < 5.0'
 end
 
-RSpec.describe 'ActionCable patcher' do
+RSpec.describe 'ActionCable patcher', execute_in_fork: ::ActionCable.version.segments[0] >= 8 do
   before { skip('ActionCable not supported') unless Datadog::Tracing::Contrib::ActionCable::Integration.compatible? }
 
   let(:configuration_options) { {} }
@@ -46,7 +46,7 @@ RSpec.describe 'ActionCable patcher' do
 
     let(:server) do
       ActionCable::Server::Base.new.tap do |s|
-        s.config.cable = { adapter: 'inline' }.with_indifferent_access
+        s.config.cable = {adapter: 'inline'}.with_indifferent_access
         s.config.logger = Logger.new($stdout)
       end
     end
@@ -95,17 +95,28 @@ RSpec.describe 'ActionCable patcher' do
       stub_const(
         'ChatChannel',
         Class.new(ActionCable::Channel::Base) do
-          def subscribed; end
+          def subscribed
+          end
 
-          def unsubscribed; end
+          def unsubscribed
+          end
 
-          def foo(_data); end
+          def foo(_data)
+          end
         end
       )
     end
 
     let(:channel_instance) { channel_class.new(connection, '{id: 1}', id: 1) }
-    let(:connection) { double('connection', logger: Logger.new($stdout), transmit: nil, identifiers: []) }
+    let(:connection) do
+      double(
+        'connection',
+        logger: Logger.new($stdout),
+        transmit: nil,
+        identifiers: [],
+        config: double(filter_parameters: [])
+      )
+    end
 
     context 'on subscribe' do
       include_context 'Rails test application'
@@ -152,7 +163,7 @@ RSpec.describe 'ActionCable patcher' do
     context 'on perform action' do
       subject(:perform) { channel_instance.perform_action(data) }
 
-      let(:data) { { 'action' => 'foo', 'extra' => 'data' } }
+      let(:data) { {'action' => 'foo', 'extra' => 'data'} }
 
       it 'traces perform action event' do
         perform
@@ -201,13 +212,13 @@ RSpec.describe 'ActionCable patcher' do
     context 'on transmit' do
       subject(:perform) { channel_instance.perform_action(data) }
 
-      let(:data) { { 'action' => 'foo', 'extra' => 'data' } }
+      let(:data) { {'action' => 'foo', 'extra' => 'data'} }
       let(:channel_class) do
         stub_const(
           'ChatChannel',
           Class.new(ActionCable::Channel::Base) do
             def foo(_data)
-              transmit({ mock: 'data' }, via: 'streamed from chat_channel')
+              transmit({mock: 'data'}, via: 'streamed from chat_channel')
             end
           end
         )

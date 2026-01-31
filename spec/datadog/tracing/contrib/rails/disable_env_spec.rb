@@ -4,7 +4,7 @@
 
 require 'datadog/tracing/contrib/rails/rails_helper'
 
-RSpec.describe 'Rails disabled' do
+RSpec.describe 'Rails disabled', execute_in_fork: Rails.version.to_i >= 8 do
   before(:all) do
     expect(Datadog::Tracing::Contrib::Rails::Patcher.patched?).to(
       be_falsey, <<MESSAGE)
@@ -17,36 +17,52 @@ MESSAGE
   include Rack::Test::Methods
   include_context 'Rails test application'
 
-  around do |example|
-    ClimateControl.modify('DISABLE_DATADOG_RAILS' => '1') do
-      example.run
+  shared_examples 'rails patching disabled' do
+    let(:routes) { {'/' => 'test#index'} }
+
+    let(:controllers) { [controller] }
+
+    let(:controller) do
+      stub_const(
+        'TestController',
+        Class.new(ActionController::Base) do
+          def index
+            head :ok
+          end
+        end
+      )
+    end
+
+    it 'does not instrument' do
+      # make the request and assert the proper span
+      get '/'
+      expect(last_response).to be_ok
+      expect(spans).to be_empty
+    end
+
+    it 'manual instrumentation should still work' do
+      tracer.trace('a-test') {}
+      expect(spans).to have(1).item
     end
   end
 
-  let(:routes) { { '/' => 'test#index' } }
-
-  let(:controllers) { [controller] }
-
-  let(:controller) do
-    stub_const(
-      'TestController',
-      Class.new(ActionController::Base) do
-        def index
-          head :ok
-        end
+  context 'when DD_DISABLE_DATADOG_RAILS is set' do
+    around do |example|
+      ClimateControl.modify('DD_DISABLE_DATADOG_RAILS' => '1') do
+        example.run
       end
-    )
+    end
+
+    it_behaves_like 'rails patching disabled'
   end
 
-  it 'does not instrument' do
-    # make the request and assert the proper span
-    get '/'
-    expect(last_response).to be_ok
-    expect(spans).to be_empty
-  end
+  context 'when DISABLE_DATADOG_RAILS is set' do
+    around do |example|
+      ClimateControl.modify('DISABLE_DATADOG_RAILS' => '1') do
+        example.run
+      end
+    end
 
-  it 'manual instrumentation should still work' do
-    tracer.trace('a-test') {}
-    expect(spans).to have(1).item
+    it_behaves_like 'rails patching disabled'
   end
 end

@@ -27,7 +27,6 @@ module Datadog
 
       def self.build: (untyped settings, untyped agent_settings, Core::Logger logger, ?telemetry: untyped?) -> (nil | untyped)
 
-      def self.build!: (untyped settings, untyped agent_settings, Core::Logger logger, ?telemetry: untyped?) -> untyped
       def self.environment_supported?: (untyped settings, Core::Logger logger) -> (false | true)
 
       def initialize: (untyped settings, untyped agent_settings, Core::Logger logger, ?code_tracker: untyped?, ?telemetry: untyped?) -> void
@@ -56,6 +55,8 @@ module Datadog
 
       attr_reader serializer: untyped
       def shutdown!: (?untyped? replacement) -> untyped
+      
+      def parse_probe_spec_and_notify: (untyped) -> untyped
     end
   end
 end

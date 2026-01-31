@@ -16,7 +16,9 @@ module Datadog
       class Info
         def initialize(settings)
           @profiler_info = nil
-          @info = {
+
+          # Steep: https://github.com/soutaro/steep/issues/363
+          @info = { # steep:ignore IncompatibleAssignment
             platform: collect_platform_info,
             runtime: collect_runtime_info,
             application: collect_application_info(settings),
@@ -27,6 +29,37 @@ module Datadog
         attr_reader :info
 
         private
+
+        # Ruby GC tuning environment variables
+        RUBY_GC_TUNING_ENV_VARS = [
+          "RUBY_GC_HEAP_FREE_SLOTS",
+          "RUBY_GC_HEAP_GROWTH_FACTOR",
+          "RUBY_GC_HEAP_GROWTH_MAX_SLOTS",
+          "RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO",
+          "RUBY_GC_HEAP_FREE_SLOTS_MAX_RATIO",
+          "RUBY_GC_HEAP_FREE_SLOTS_GOAL_RATIO",
+          "RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR",
+          "RUBY_GC_HEAP_REMEMBERED_WB_UNPROTECTED_OBJECTS_LIMIT_RATIO",
+          "RUBY_GC_MALLOC_LIMIT",
+          "RUBY_GC_MALLOC_LIMIT_MAX",
+          "RUBY_GC_MALLOC_LIMIT_GROWTH_FACTOR",
+          "RUBY_GC_OLDMALLOC_LIMIT",
+          "RUBY_GC_OLDMALLOC_LIMIT_MAX",
+          "RUBY_GC_OLDMALLOC_LIMIT_GROWTH_FACTOR",
+          # INIT_SLOTS changed for Ruby 3.3+:
+          # * https://bugs.ruby-lang.org/issues/19785
+          # * https://www.ruby-lang.org/en/news/2023/12/25/ruby-3-3-0-released/#:~:text=Removed%20environment%20variables
+          "RUBY_GC_HEAP_0_INIT_SLOTS",
+          "RUBY_GC_HEAP_1_INIT_SLOTS",
+          "RUBY_GC_HEAP_2_INIT_SLOTS",
+          "RUBY_GC_HEAP_3_INIT_SLOTS",
+          "RUBY_GC_HEAP_4_INIT_SLOTS",
+          # There was only one setting for older Rubies:
+          "RUBY_GC_HEAP_INIT_SLOTS",
+          # Ruby 2.x only, alias for others:
+          "RUBY_FREE_MIN",
+          "RUBY_HEAP_MIN_SLOTS",
+        ].freeze
 
         # Instead of trying to figure out real process start time by checking
         # /proc or some other complex/non-portable way, approximate start time
@@ -51,6 +84,7 @@ module Datadog
             engine: Datadog::Core::Environment::Identity.lang_engine,
             version: Datadog::Core::Environment::Identity.lang_version,
             platform: Datadog::Core::Environment::Identity.lang_platform,
+            gc_tuning: collect_gc_tuning_info,
           }.freeze
         end
 
@@ -64,7 +98,7 @@ module Datadog
         end
 
         def collect_profiler_info(settings)
-          unless @profiler_info
+          @profiler_info ||= begin
             lib_datadog_gem = ::Gem.loaded_specs["libdatadog"]
 
             libdatadog_version =
@@ -76,13 +110,12 @@ module Datadog
                 "#{Libdatadog::VERSION}-(unknown)"
               end
 
-            @profiler_info = {
+            {
               version: Datadog::Core::Environment::Identity.gem_datadog_version,
               libdatadog: libdatadog_version,
               settings: collect_settings_recursively(settings.profiling),
             }.freeze
           end
-          @profiler_info
         end
 
         # The settings/option model isn't directly serializable because
@@ -108,6 +141,15 @@ module Datadog
           else
             v.inspect
           end
+        end
+
+        def collect_gc_tuning_info
+          return @gc_tuning_info if defined?(@gc_tuning_info)
+
+          @gc_tuning_info = RUBY_GC_TUNING_ENV_VARS.each_with_object({}) do |var, hash|
+            current_value = DATADOG_ENV[var]
+            hash[var.to_sym] = current_value if current_value
+          end.freeze
         end
       end
     end

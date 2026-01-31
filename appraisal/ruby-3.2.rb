@@ -58,6 +58,51 @@ appraise 'rails71' do
   gem 'rails', '~> 7.1.0'
 end
 
+appraise 'rails8-mysql2' do
+  gem 'rails', '~> 8.0.0'
+  gem 'mysql2', '~> 0.5', platform: :ruby
+  gem 'lograge', '~> 0.11'
+  gem 'net-smtp'
+end
+
+appraise 'rails8-postgres' do
+  gem 'rails', '~> 8.0.0'
+  gem 'pg', '>= 1.1', platform: :ruby
+  gem 'lograge', '~> 0.11'
+  gem 'net-smtp'
+end
+
+appraise 'rails8-postgres-redis' do
+  gem 'rails', '~> 8.0.0'
+  gem 'pg', '>= 1.1', platform: :ruby
+  gem 'redis', '~> 4'
+  gem 'lograge', '~> 0.11'
+  gem 'net-smtp'
+end
+
+appraise 'rails8-postgres-sidekiq' do
+  gem 'rails', '~> 8.0.0'
+  gem 'pg', '>= 1.1', platform: :ruby
+  gem 'sidekiq', '< 8'
+  gem 'lograge', '~> 0.11'
+  gem 'rails_semantic_logger', '~> 4.0'
+  gem 'net-smtp'
+end
+
+appraise 'rails8-semantic-logger' do
+  gem 'rails', '~> 8.0.0'
+  gem 'pg', '>= 1.1', platform: :ruby
+  gem 'rails_semantic_logger', '~> 4.0'
+  gem 'net-smtp'
+end
+
+appraise 'rails8-trilogy' do
+  gem 'rails', '~> 8.0.0'
+  gem 'trilogy'
+  gem 'lograge', '~> 0.11'
+  gem 'net-smtp'
+end
+
 appraise 'rails-old-redis' do
   # All dependencies except Redis < 4 are not important, they are just required to run Rails tests.
   gem 'redis', '< 4'
@@ -98,7 +143,9 @@ build_coverage_matrix('rest-client')
 build_coverage_matrix('mongo', min: '2.1.0')
 build_coverage_matrix('dalli', [2])
 build_coverage_matrix('karafka', min: '2.3.0')
+build_coverage_matrix('waterdrop', min: '2.8.8.rc1')
 build_coverage_matrix('devise', min: '3.2.1')
+build_coverage_matrix('openfeature', min: '0.3.1', gem: 'openfeature-sdk')
 
 appraise 'relational_db' do
   gem 'activerecord', '~> 7'
@@ -159,6 +206,7 @@ build_coverage_matrix('rack', 1..2, meta: { 'rack-contrib' => nil, 'rack-test' =
 [2, 3, 4].each do |n|
   appraise "sinatra-#{n}" do
     gem 'sinatra', "~> #{n}"
+    gem 'sinatra-contrib', "~> #{n}"
     gem 'rack-contrib'
     gem 'rack-test' # Dev dependencies for testing rack-based code
   end
@@ -166,6 +214,8 @@ end
 
 appraise 'opentelemetry' do
   gem 'opentelemetry-sdk', '~> 1.1'
+  gem 'opentelemetry-metrics-sdk', '>= 0.8'
+  gem 'opentelemetry-exporter-otlp-metrics', '>= 0.4'
 end
 
 appraise 'opentelemetry_otlp' do
@@ -186,4 +236,11 @@ end
 
 appraise 'core-old' do
   gem 'dogstatsd-ruby', '~> 4'
+end
+
+appraise 'environment' do
+  gem 'spring', '>= 2.0.2'
+  gem 'cucumber', '>= 3'
+  gem 'logger'
+  gem 'minitest'
 end

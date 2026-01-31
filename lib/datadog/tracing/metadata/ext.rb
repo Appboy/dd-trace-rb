@@ -82,12 +82,20 @@ module Datadog
           TAG_MSG = 'error.message'
           TAG_STACK = 'error.stack'
           TAG_TYPE = 'error.type'
+
+          # From https://opentelemetry.io/docs/specs/semconv/registry/attributes/exception/#exception-stacktrace
+          ATTRIBUTE_MESSAGE = 'exception.message'
+          ATTRIBUTE_STACKTRACE = 'exception.stacktrace'
+          ATTRIBUTE_TYPE = 'exception.type'
+
+          # From https://opentelemetry.io/docs/specs/semconv/exceptions/exceptions-spans/#exception-event
+          EVENT_NAME = 'exception'
         end
 
         # @public_api
         module HTTP
-          ERROR_RANGE = (500...600).freeze
           TAG_BASE_URL = 'http.base_url'
+          TAG_ENDPOINT = 'http.endpoint'
           TAG_METHOD = 'http.method'
           TAG_STATUS_CODE = 'http.status_code'
           TAG_USER_AGENT = 'http.useragent'

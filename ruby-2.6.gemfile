@@ -13,7 +13,7 @@ gem 'concurrent-ruby'
 # @see https://github.com/DataDog/dogstatsd-ruby/issues/182
 gem 'dogstatsd-ruby', '>= 3.3.0', '!= 5.0.0', '!= 5.0.1', '!= 5.1.0'
 
-gem 'extlz4', '~> 0.3', '>= 0.3.3'
+gem 'zstd-ruby'
 
 # Profiler testing dependencies
 # NOTE: We're excluding versions 3.7.0 and 3.7.1 for the reasons documented in #1424.
@@ -35,7 +35,6 @@ gem 'rspec-wait', '~> 0'
 gem 'rspec_junit_formatter', '>= 0.5.1'
 
 gem 'simplecov', '~> 0.22.0'
-gem 'simplecov-cobertura', '~> 2.1.0' # Used by codecov
 
 gem 'warning', '~> 1' # NOTE: Used in spec_helper.rb
 gem 'webmock', '>= 3.10.0'

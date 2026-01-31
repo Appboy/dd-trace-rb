@@ -20,6 +20,7 @@ RSpec.describe 'Sinatra instrumentation' do
   subject(:response) { get url }
 
   let(:configuration_options) { {} }
+  let(:server_error_statuses) { nil }
   let(:url) { '/' }
   let(:http_method) { 'GET' }
   let(:resource) { "#{http_method} #{url}" }
@@ -49,11 +50,11 @@ RSpec.describe 'Sinatra instrumentation' do
       get '/erb' do
         headers['Cache-Control'] = 'max-age=0'
 
-        erb :msg, locals: { msg: 'hello' }
+        erb :msg, locals: {msg: 'hello'}
       end
 
       get '/erb_literal' do
-        erb '<%= msg %>', locals: { msg: 'hello' }
+        erb '<%= msg %>', locals: {msg: 'hello'}
       end
 
       get '/span_resource' do
@@ -71,6 +72,7 @@ RSpec.describe 'Sinatra instrumentation' do
   before do
     Datadog.configure do |c|
       c.tracing.instrument :sinatra, configuration_options
+      c.tracing.http_error_statuses.server = server_error_statuses if server_error_statuses
     end
   end
 
@@ -272,6 +274,15 @@ RSpec.describe 'Sinatra instrumentation' do
             is_expected.to be_bad_request
             expect(span).to_not have_error
           end
+
+          context 'when the server error statuses are configured to include 400' do
+            let(:server_error_statuses) { 400..599 }
+
+            it 'has error set' do
+              is_expected.to be_bad_request
+              expect(span).to have_error
+            end
+          end
         end
 
         context 'and a request resulting in an internal error is made' do
@@ -374,7 +385,7 @@ RSpec.describe 'Sinatra instrumentation' do
       let(:query_string) { {} }
       let(:headers) { {} }
 
-      let(:configuration_options) { super().merge(headers: { request: request_headers, response: response_headers }) }
+      let(:configuration_options) { super().merge(headers: {request: request_headers, response: response_headers}) }
       let(:request_headers) { [] }
       let(:response_headers) { [] }
 
@@ -382,7 +393,7 @@ RSpec.describe 'Sinatra instrumentation' do
 
       context 'with a header that should be tagged' do
         let(:request_headers) { ['X-Request-Header'] }
-        let(:headers) { { 'HTTP_X_REQUEST_HEADER' => header_value } }
+        let(:headers) { {'HTTP_X_REQUEST_HEADER' => header_value} }
         let(:header_value) { SecureRandom.uuid }
 
         it { expect(span.get_tag('http.request.headers.x-request-header')).to eq(header_value) }
@@ -410,7 +421,7 @@ RSpec.describe 'Sinatra instrumentation' do
       end
 
       context 'with a header that should not be tagged' do
-        let(:headers) { { 'HTTP_X_REQUEST_HEADER' => header_value } }
+        let(:headers) { {'HTTP_X_REQUEST_HEADER' => header_value} }
         let(:header_value) { SecureRandom.uuid }
 
         it { expect(span.get_tag('http.request.headers.x-request-header')).to be nil }
@@ -420,7 +431,7 @@ RSpec.describe 'Sinatra instrumentation' do
         subject(:response) { get '/', {}, headers }
 
         let(:configuration_options) { {} }
-        let(:headers) { { 'HTTP_REQUEST_ID' => 'test-id' } }
+        let(:headers) { {'HTTP_REQUEST_ID' => 'test-id'} }
         let(:response_headers) { ['etag'] }
 
         include_examples 'with request tracer header tags' do
@@ -511,6 +522,8 @@ RSpec.describe 'Sinatra instrumentation' do
     let(:sinatra_app) do
       sinatra_routes = self.sinatra_routes
       Class.new(Sinatra::Application) do
+        # Newer versions of sinatra have a host restriction by default
+        set :host_authorization, permitted_hosts: []
         instance_exec(&sinatra_routes)
       end
     end
@@ -523,6 +536,8 @@ RSpec.describe 'Sinatra instrumentation' do
       stub_const(
         'NestedApp',
         Class.new(Sinatra::Base) do
+          # Newer versions of sinatra have a host restriction by default
+          set :host_authorization, permitted_hosts: []
           get '/nested' do
             headers['X-Request-ID'] = 'test id'
             'nested ok'
@@ -534,6 +549,9 @@ RSpec.describe 'Sinatra instrumentation' do
       stub_const(
         'App',
         Class.new(Sinatra::Base) do
+          # Newer versions of sinatra have a host restriction by default
+          set :host_authorization, permitted_hosts: []
+
           use NestedApp
 
           instance_exec(&sinatra_routes)

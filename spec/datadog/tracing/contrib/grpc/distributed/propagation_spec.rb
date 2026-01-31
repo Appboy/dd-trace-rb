@@ -22,6 +22,22 @@ RSpec.describe Datadog::Tracing::Contrib::GRPC::Distributed::Propagation do
   let(:propagation_style_extract) { ['datadog', 'tracecontext', 'baggage'] }
   let(:propagation_extract_first) { false }
 
+  it 'contains default inject propagation styles in its propagation styles list' do
+    expect(propagation.instance_variable_get(:@propagation_styles).keys)
+      .to include(*Datadog.configuration.tracing.propagation_style_inject)
+    Datadog.configuration.tracing.propagation_style_inject.each do |style|
+      expect(propagation.instance_variable_get(:@propagation_styles)[style]).to_not be_nil
+    end
+  end
+
+  it 'contains default extract propagation styles in its propagation styles list' do
+    expect(propagation.instance_variable_get(:@propagation_styles).keys)
+      .to include(*Datadog.configuration.tracing.propagation_style_extract)
+    Datadog.configuration.tracing.propagation_style_extract.each do |style|
+      expect(propagation.instance_variable_get(:@propagation_styles)[style]).to_not be_nil
+    end
+  end
+
   it_behaves_like 'Distributed tracing propagator' do
     subject(:propagator) { propagation }
 
@@ -33,10 +49,10 @@ RSpec.describe Datadog::Tracing::Contrib::GRPC::Distributed::Propagation do
       # https://github.com/grpc/grpc-go/blob/master/Documentation/grpc-metadata.md
       context 'given populated data in array format' do
         let(:data) do
-          { 'x-datadog-trace-id' => %w[12345 67890],
-            'x-datadog-parent-id' => %w[98765 43210],
-            'x-datadog-sampling-priority' => ['0'],
-            'x-datadog-origin' => ['synthetics'] }
+          {'x-datadog-trace-id' => %w[12345 67890],
+           'x-datadog-parent-id' => %w[98765 43210],
+           'x-datadog-sampling-priority' => ['0'],
+           'x-datadog-origin' => ['synthetics']}
         end
 
         it 'returns a populated TraceDigest with the first data array values' do

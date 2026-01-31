@@ -23,6 +23,15 @@ concurrency:
   cancel-in-progress: "${{ github.ref != 'refs/heads/master' }}"
 
 jobs:
+  # ADD NEW RUBIES HERE
+  ruby-40:
+    name: "Ruby 4.0"
+    uses: ./.github/workflows/_unit_test.yml
+    with:
+      engine: ruby
+      version: "4.0"
+      alias: ruby-40
+
   ruby-34:
     name: "Ruby 3.4"
     uses: ./.github/workflows/_unit_test.yml
@@ -87,6 +96,14 @@ jobs:
       version: "2.5"
       alias: ruby-25
 
+  jruby-100:
+    name: "JRuby 10.0"
+    uses: ./.github/workflows/_unit_test.yml
+    with:
+      engine: jruby
+      version: "10.0"
+      alias: jruby-100
+
   jruby-94:
     name: "JRuby 9.4"
     uses: ./.github/workflows/_unit_test.yml
@@ -116,7 +133,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     container:
-      image: datadog/ci
+      image: datadog/ci:v3.7.1
       credentials:
         username: "${{ secrets.DOCKERHUB_USERNAME }}"
         password: "${{ secrets.DOCKERHUB_TOKEN }}"
@@ -127,6 +144,8 @@ jobs:
         DD_SERVICE: dd-trace-rb
         DD_GIT_REPOSITORY_URL: "${{ github.repositoryUrl }}"
     needs:
+      # ADD NEW RUBIES HERE
+      - ruby-40
       - ruby-34
       - ruby-33
       - ruby-32
@@ -135,13 +154,14 @@ jobs:
       - ruby-27
       - ruby-26
       - ruby-25
+      - jruby-100
       - jruby-94
       - jruby-93
       - jruby-92
     steps:
       - run: mkdir -p tmp/rspec && datadog-ci version
       - name: Download all junit reports
-        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: tmp/rspec
           pattern: junit-*
@@ -164,12 +184,15 @@ jobs:
         run: echo "DD_GIT_COMMIT_SHA=$DD_GIT_COMMIT_SHA" >> "$GITHUB_ENV"
       - run: echo "$DD_GIT_COMMIT_SHA"
       - name: Upload junit reports
+        continue-on-error: true
         run: datadog-ci junit upload --verbose tmp/rspec/
 
   coverage:
-    name: codecov/upload
+    name: dd/coverage
     runs-on: ubuntu-24.04
     needs:
+      # ADD NEW RUBIES HERE
+      - ruby-40
       - ruby-34
       - ruby-33
       - ruby-32
@@ -178,45 +201,38 @@ jobs:
       - ruby-27
       - ruby-26
       - ruby-25
+      - jruby-100
       - jruby-94
       - jruby-93
       - jruby-92
     container:
-      image: ghcr.io/datadog/images-rb/engines/ruby:3.4
+      image: datadog/ci:v3.20.0
+      credentials:
+        username: "${{ secrets.DOCKERHUB_USERNAME }}"
+        password: "${{ secrets.DOCKERHUB_TOKEN }}"
+      env:
+        DD_API_KEY: "${{ secrets.DD_API_KEY }}"
+        DD_ENV: ci
+        DATADOG_SITE: datadoghq.com
+        DD_SERVICE: dd-trace-rb
+        DD_GIT_REPOSITORY_URL: "${{ github.repositoryUrl }}"
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Download lockfile
-        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
-        with:
-          name: ${{ needs.ruby-34.outputs.lockfile }}
-      - name: Restore cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        id: restore-cache
-        with:
-          key: ${{ needs.ruby-34.outputs.cache-key }}
-          path: "/usr/local/bundle"
-      - run: bundle check || bundle install
+      - run: mkdir -p tmp/coverage && datadog-ci version
       - name: Download all coverage data
-        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          path: coverage
+          path: tmp/coverage
           pattern: coverage-*
           merge-multiple: true
-      - name: Generate coverage report
-        run: bundle exec rake coverage:report
-      - name: Upload coverage report
-        uses: codecov/codecov-action@0565863a31f2c772f9f0395002a31e3f06189574 # v5.4.0
-        with:
-          files: coverage/report/coverage.xml
-          # Uncomment the following line to enable verbose output for debugging
-          # verbose: true
+      - name: Upload coverage reports to Datadog
+        run: datadog-ci coverage upload --verbose tmp/coverage/
 
   complete:
     name: Unit Tests (complete)
     runs-on: ubuntu-24.04
     needs:
+      # ADD NEW RUBIES HERE
+      - ruby-40
       - ruby-34
       - ruby-33
       - ruby-32
@@ -225,6 +241,7 @@ jobs:
       - ruby-27
       - ruby-26
       - ruby-25
+      - jruby-100
       - jruby-94
       - jruby-93
       - jruby-92

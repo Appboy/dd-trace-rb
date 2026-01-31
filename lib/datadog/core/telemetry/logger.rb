@@ -14,10 +14,12 @@ module Datadog
       #   read: lib/datadog/core/telemetry/logging.rb
       module Logger
         class << self
+          # (see Datadog::Core::Telemetry::Logging#report)
           def report(exception, level: :error, description: nil)
             instance&.report(exception, level: level, description: description)
           end
 
+          # (see Datadog::Core::Telemetry::Logging#error)
           def error(description)
             instance&.error(description)
           end
@@ -34,9 +36,10 @@ module Datadog
             #
             # The downside is: this leaves us unable to report telemetry during component initialization.
             components = Datadog.send(:components, allow_initialization: false)
+            telemetry = components&.telemetry
 
-            if components && components.telemetry
-              components.telemetry
+            if telemetry
+              telemetry
             else
               Datadog.logger.warn(
                 'Failed to send telemetry before components initialization or within components lifecycle'

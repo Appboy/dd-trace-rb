@@ -10,7 +10,7 @@ module Datadog
         # Current monotonic time
         #
         # @param unit [Symbol] unit for the resulting value, same as ::Process#clock_gettime, defaults to :float_second
-        # @return [Numeric] timestamp in the requested unit, since some unspecified starting point
+        # @return [Float|Integer] timestamp in the requested unit, since some unspecified starting point
         def get_time(unit = :float_second)
           Process.clock_gettime(Process::CLOCK_MONOTONIC, unit)
         end
@@ -31,6 +31,16 @@ module Datadog
         #
         # @param block [Proc] block that returns a `Time` object representing the current wall time
         def now_provider=(block)
+          class << self
+            # Avoid method redefinition warning.
+            # `rescue nil` is added in case customers remove the method
+            # themselves to squelch the warning.
+            begin
+              remove_method(:now)
+            rescue
+              nil
+            end
+          end
           define_singleton_method(:now, &block)
         end
 
@@ -43,6 +53,16 @@ module Datadog
         #
         # @param block [Proc] block that accepts unit and returns timestamp in the requested unit
         def get_time_provider=(block)
+          class << self
+            # Avoid method redefinition warning
+            # `rescue nil` is added in case customers remove the method
+            # themselves to squelch the warning.
+            begin
+              remove_method(:get_time)
+            rescue
+              nil
+            end
+          end
           define_singleton_method(:get_time, &block)
         end
 

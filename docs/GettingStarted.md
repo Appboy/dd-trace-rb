@@ -288,6 +288,16 @@ current_span = Datadog::Tracing.active_span
 current_span.set_tag('my_tag', 'my_value') unless current_span.nil?
 ```
 
+You can record an exception in the current span. It adds the recorded exception as a span event.
+You can record multiple exceptions during the lifetime of a span.
+```ruby
+# e.g: recording an exception in the active span
+rescue => e
+  current_span = Datadog::Tracing.active_span
+  current_span&.record_exception(e, attributes: { "foo" => "bar" })
+end
+```
+
 You can also get the current active trace using the `active_trace` method. This method will return `nil` if there is no active trace.
 
 ```ruby
@@ -295,6 +305,23 @@ You can also get the current active trace using the `active_trace` method. This 
 
 current_trace = Datadog::Tracing.active_trace
 ```
+
+### Adding span events
+
+Span events are timestamped annotations attached to a span, useful for recording structured logs, exceptions, or custom events during a span's lifetime. You can create and add custom span events to the current active span as follows:
+
+```ruby
+event = Datadog::Tracing::SpanEvent.new(
+ "custom.event.name",
+ attributes: { "key1" => "value1", "key2" => 123 }
+)
+
+span.span_events << event
+```
+
+You can add multiple events to a span. Each event **must** include a name, an optional set of attributes, and an optional timestamp (in nanoseconds). If no timestamp is provided, the current time is used.
+
+This is useful for recording application-specific events, errors, or milestones within a trace.
 
 ## Integration instrumentation
 
@@ -552,6 +579,7 @@ cache.read('city')
 | --------------- | - | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | `enabled` | `DD_TRACE_ACTIVE_SUPPORT_ENABLED` | `Bool` | Whether the integration should create spans. | `true` |
 | `cache_service` | | `String` | Name of application running the `active_support` instrumentation. May be overridden by `global_default_service_name`. [See _Additional Configuration_ for more details](#additional-configuration) | `active_support-cache` |
+| `cache_store` | | `Array` | Specifies which cache stores to instrument. Accepts a list of store names (e.g. `memory_store`, `file_store`, or symbols like `:file_store`). If set, only the listed stores will be traced. By default (`nil`), it traces all stores. | `nil` |
 
 ### AWS
 
@@ -862,12 +890,12 @@ To activate your integration, use the `Datadog.configure` method:
 # Inside Rails initializer or equivalent
 # For graphql >= v2.2
 Datadog.configure do |c|
-  c.tracing.instrument :graphql, with_unified_tracer: true, **options
+  c.tracing.instrument :graphql, error_tracking: true, with_unified_tracer: true, **options
 end
 
 # For graphql < v2.2
 Datadog.configure do |c|
-   c.tracing.instrument :graphql, **options
+   c.tracing.instrument :graphql, error_tracking: true, **options
 end
 
 # Then run a GraphQL query
@@ -884,6 +912,7 @@ The `instrument :graphql` method accepts the following parameters. Additional op
 | `with_deprecated_tracer` |                            | `Bool`   | (Not recommended) Enable to instrument with deprecated `GraphQL::Tracing::DataDogTracing`. This has priority over `with_unified_tracer`. Default is `false`, using `GraphQL::Tracing::DataDogTrace` instead | `false` |
 | `service_name`           |                            | `String` | Service name used for graphql instrumentation                                                                                                                                                                   | `'ruby-graphql'` |
 | `error_extensions` | `DD_TRACE_GRAPHQL_ERROR_EXTENSIONS` | `Array` | List of extension keys to include in the span event reported for GraphQL queries with errors. | `[]` |
+| `error_tracking` | `DD_TRACE_GRAPHQL_ERROR_TRACKING` | `Bool` | (Recommended) Surface GraphQL errors in Error Tracking. | `false` |
 
 
 Once an instrumentation strategy is selected (`with_unified_tracer: true`, `with_deprecated_tracer: true`, or *no option set* which defaults to `GraphQL::Tracing::DataDogTrace`), it is not possible to change the instrumentation strategy in the same Ruby process.
@@ -1130,10 +1159,32 @@ end
 ```
 `options` are the following keyword arguments:
 
-| Key                   | Env Var                  | Type   | Description                                         | Default |
-| --------------------- | ------------------------ | ------ | --------------------------------------------------- | ------- |
-| `enabled`             | `DD_TRACE_KARAFKA_ENABLED` | `Bool` | Specifies whether the integration should create spans.        | `true`  |
-| `distributed_tracing` |                          | `Bool` | Enables [distributed tracing](#distributed-tracing). | `false` |
+| Key                   | Env Var                    | Type   | Description                                                                                                                                                                  | Default |
+| --------------------- | -------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `enabled`             | `DD_TRACE_KARAFKA_ENABLED` | `Bool` | Specifies whether the integration should create spans.                                                                                                                       | `true`  |
+| `distributed_tracing` |                            | `Bool` | Enables [distributed tracing](#distributed-tracing) (when iterating through the kafka messages, each of the messages' traces will be resumed for the duration of the block). | `false` |
+
+### WaterDrop
+
+The WaterDrop integration provides tracing of the `waterdrop` gem (a dependency of `karafka`, but also can be used standalone).
+
+This integration activates automatically with the Karafka framework. If your application doesn’t use Karafka (for example, if it only produces messages consumed by another app), enable it manually with `Datadog.configure`:
+
+```ruby
+require 'waterdrop'
+require 'datadog'
+
+Datadog.configure do |c|
+  c.tracing.instrument :waterdrop, **options
+end
+
+```
+`options` are the following keyword arguments:
+
+| Key                   | Env Var                      | Type   | Description                                                                                                          | Default |
+| --------------------- | ---------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------- | ------- |
+| `enabled`             | `DD_TRACE_WATERDROP_ENABLED` | `Bool` | Specifies whether the integration should create spans.                                                               | `true`  |
+| `distributed_tracing` |                              | `Bool` | Enables [distributed tracing](#distributed-tracing) (the trace context will be injected onto the produced messages). | `false` |
 
 ### MongoDB
 
@@ -1144,7 +1195,7 @@ require 'mongo'
 require 'datadog'
 
 Datadog.configure do |c|
-  c.tracing.instrument :mongo, **options
+  c.tracing.instrument :mongo, json_command: true, **options
 end
 
 # Create a MongoDB client and use it as usual
@@ -1164,6 +1215,7 @@ Datadog.configure_onto(client, **options)
 | `service_name` | `DD_TRACE_MONGO_SERVICE_NAME` | `String` | Name of application running the `mongo` instrumentation. May be overridden by `global_default_service_name`. [See _Additional Configuration_ for more details](#additional-configuration)   | `mongodb`                                        |
 | `peer_service` | `DD_TRACE_MONGO_PEER_SERVICE` | `String` | Name of external service the application connects to                                                                                                                                        | `nil`                                            |
 | `quantize`     |                               | `Hash`   | Hash containing options for quantization. May include `:show` with an Array of keys to not quantize (or `:all` to skip quantization), or `:exclude` with Array of keys to exclude entirely. | `{ show: [:collection, :database, :operation] }` |
+| `json_command` | `DD_TRACE_MONGO_JSON_COMMAND` | `Bool` | (Recommended) Serialize the MongoDB command as JSON, which enables full support for introspection in the Datadog App. | `false` |
 
 **Configuring trace settings per connection**
 
@@ -1537,7 +1589,10 @@ end
 | ------------ | -------------- | -------------- |
 | 2.5          |                | 4.2 - 6.1      |
 | 2.6 - 2.7    | 9.2 - 9.3      | 5.0 - 6.1      |
-| 3.0 - 3.2    | 9.4            | 6.1            |
+| 3.0 - 3.1    | 9.4            | 6.1 - 7.1      |
+| 3.2 - 3.4    |                | 6.1 - 8.0      |
+
+Instrumentation for the [Rails Runner](https://guides.rubyonrails.org/command_line.html#bin-rails-runner) command is only supported for Rails 5.1 or higher.
 
 ### Rake
 
@@ -2103,6 +2158,7 @@ For example, if `tracing.sampling.default_rate` is configured by [Remote Configu
 | `tracing.sampling.rules`                               | `DD_TRACE_SAMPLING_RULES`                               | `String`                              | `nil`                        | Sets trace-level sampling rules, matching against the local root span. The format is a `String` with JSON, containing an Array of Objects. Each Object must have a float attribute `sample_rate` (between 0.0 and 1.0, inclusive), and optionally `name`, `service`, `resource`, and `tags` string attributes. `name`, `service`, `resource`, and `tags` control to which traces this sampling rule applies; if they are all absent, then this rule applies to all traces. Rules are evaluated in order of declaration in the array; only the first to match is applied. If none apply, then `tracing.sampling.default_rate` is applied. |
 | `tracing.sampling.span_rules`                          | `DD_SPAN_SAMPLING_RULES`,`ENV_SPAN_SAMPLING_RULES_FILE` | `String`                              | `nil`                        | Sets [Single Span Sampling](#single-span-sampling) rules. These rules allow you to keep spans even when their respective traces are dropped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `tracing.trace_id_128_bit_generation_enabled`          | `DD_TRACE_128_BIT_TRACEID_GENERATION_ENABLED`           | `Bool`                                | `true`                       | `true` to generate 128 bits trace ID and `false` to generate 64 bits trace ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `tracing.baggage_tag_keys`                             | `DD_TRACE_BAGGAGE_TAG_KEYS`                             | `Array<String>`                       | `['user.id', 'session.id', 'account.id']` | Comma-separated list of baggage keys that should be converted to span tags. Baggage keys matching the exact, case-sensitive names in this list are converted to span tags with the prefix "baggage.". Special values: Empty string ("") disables baggage tag conversion, and Wildcard ("*") converts all baggage keys to span tags.                                                                                                                                                                                                                                                                                                   |
 | `tracing.report_hostname`                              | `DD_TRACE_REPORT_HOSTNAME`                              | `Bool`                                | `false`                      | Adds hostname tag to traces.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `apm.tracing.enabled`                                      | `DD_APM_TRACING_ENABLED`                                      | `Bool`                                | `true`                       | Enables or disables APM traces. If set to `false`, instrumentation will still run, but only one APM trace per minute will be sent to the Agent. The service will be considered alive by Datadog, allowing usage of other products in standalone mode. For now, only Application Security is supported.
 
@@ -2715,7 +2771,7 @@ Datadog.configure do |c|
 
   # Optionally, you can configure runtime metrics to generate an additional `runtime-id` tag
   # on the generated metrics, which allows you to filter metrics at the individual process level.
-  # You can also set DD_TRACE_EXPERIMENTAL_RUNTIME_ID_ENABLED=true to configure this.
+  # You can also set DD_RUNTIME_METRICS_RUNTIME_ID_ENABLED=true to configure this.
   c.runtime_metrics.experimental_runtime_id_enabled = true
 
   # Optionally, you can configure the Statsd instance used for sending runtime metrics.
@@ -2764,6 +2820,41 @@ If you run into issues with profiling, please check the [Profiler Troubleshootin
 When profiling [Resque](https://github.com/resque/resque) jobs, you should set the `RUN_AT_EXIT_HOOKS=1` option described in the [Resque](https://github.com/resque/resque/blob/v2.0.0/docs/HOOKS.md#worker-hooks) documentation.
 
 Without this flag, profiles for short-lived Resque jobs will not be available as Resque kills worker processes before they have a chance to submit this information.
+
+### Error Tracking
+
+`datadog` can automatically report handled errors. The errors are attached through span events to the span in which they are handled. They are also directly reported to Error Tracking.
+
+#### Requirements
+
+- Ruby 2.7+. JRuby and TruffleRuby are not supported.
+- Datadog Ruby gem (`datadog`) v2.16.0+.
+
+#### Configuration
+
+You can enable automatic reporting of handled errors using the following environment variables:
+
+| Environment variable | Type | Description | Default |
+|---|---|---|---|
+| `DD_ERROR_TRACKING_HANDLED_ERRORS` | `String` | Report handled errors from user code, third-party gems, or both. Accepted values are: `user, third_party, all`. | `nil` |
+| `DD_ERROR_TRACKING_HANDLED_ERRORS_INCLUDE` | `Array[String]` | A comma-separated list of paths, file names, or gem names whose handled errors should be reported. See [Include Format](#include-format) for details. <br><br>Ruby 3.3 or later: the location where the error was rescued is matched.<br>Ruby 3.2 or earlier: the location where the error was raised is matched.  | `[]` |
+
+Alternatively, set error tracking parameters inside a `Datadog.configure` block with the following settings:
+
+| Setting | Type | Description | Default |
+|---|---|---|---|
+| `c.error_tracking.handled_errors` | `String` | Report handled errors from user code, third-party gems, or both. Accepted values are: `user, third_party, all`. | `nil` |
+| `c.error_tracking.handled_errors_include` | `Array[String]` | A comma-separated list of paths, file names, or gem names whose handled errors should be reported. See [Include Format](#include-format) for details. <br><br>Ruby 3.3 or later: the location where the error was rescued is matched.<br>Ruby 3.2 or earlier: the location where the error was raised is matched.  | `[]` |
+
+#### Include format
+
+`DD_ERROR_TRACKING_HANDLED_ERRORS_INCLUDE` environment variable or the `c.error_tracking.handled_errors_include` setting should specify one or more of the following:
+- A file name: For example, `main` to instrument `main.rb`.
+- A folder name: For example, `subdir` to instrument every Ruby file in folders named `subdir`.
+- Gem name: For example, `rails` to instruments every Ruby file in the *rails* gem **and** any project subfolder named `rails`.
+- Absolute path: For example, `/app/lib/mypackage/main.rb` to instrument that file, or `/app/lib/mypackage/` to instrument every Ruby file in that folder.
+- Relative path: For example, for a program running in the `app` directory, use `./lib/mypackage/main.rb` to instrument the `main.rb` file, or`./lib/mypackage/` to instrument every Ruby file in that folder.
+
 
 ## Known issues and suggested configurations
 

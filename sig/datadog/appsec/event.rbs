@@ -1,27 +1,40 @@
 module Datadog
   module AppSec
     module Event
-      DERIVATIVE_SCHEMA_KEY_PREFIX: ::String
+      interface _RequestInterface
+        def host: () -> ::String?
+        def user_agent: () -> ::String?
+        def remote_addr: () -> ::String?
+        def headers: () -> Enumerable[[::String, ::String]]
+      end
 
-      DERIVATIVE_SCHEMA_MAX_COMPRESSED_SIZE: ::Integer
+      interface _ResponseInterface
+        def headers: () -> Enumerable[[::String, ::String]]
+      end
+
+      type tags = ::Hash[::String, ::String]
+
+      ATTRIBUTES_SCHEMA_KEY_PREFIX: ::String
+
+      ATTRIBUTES_SCHEMA_MAX_COMPRESSED_SIZE: ::Integer
 
       ALLOWED_REQUEST_HEADERS: ::Array[::String]
 
       ALLOWED_RESPONSE_HEADERS: ::Array[::String]
 
-      def self.record: (Tracing::SpanOperation span, *untyped events) -> void
+      def self.record: (Context context, ?request: _RequestInterface?, ?response: _ResponseInterface?) -> void
 
-      def self.record_via_span: (Tracing::SpanOperation span, *untyped events) -> void
-
-      def self.build_service_entry_tags: (untyped event_group) -> ::Hash[::String, untyped]
-
-      def self.tag_and_keep!: (untyped context, untyped waf_result) -> void
+      def self.tag: (Context context, SecurityEngine::result waf_result) -> void
 
       private
 
-      def self.json_parse: (untyped value) -> ::String?
+      def self.waf_tags: (::Array[untyped]) -> tags
 
-      def self.add_distributed_tags: (untyped trace) -> void
+      def self.request_tags: (_RequestInterface request) -> tags
+
+      def self.response_tags: (_ResponseInterface response) -> tags
+
+      def self.json_parse: (untyped value) -> ::String?
     end
   end
 end

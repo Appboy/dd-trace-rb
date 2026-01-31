@@ -6,15 +6,15 @@ require 'datadog/tracing/contrib/ethon/easy_patch'
 require 'datadog/tracing/contrib/ethon/shared_examples'
 require 'datadog/tracing/contrib/analytics_examples'
 
-require 'spec/datadog/tracing/contrib/ethon/support/thread_helpers'
-
 RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
   let(:configuration_options) { {} }
-  let(:easy) { EthonSupport.ethon_easy_new }
+  let(:easy) { Ethon::Easy.new }
+  let(:server_error_statuses) { nil }
 
   before do
     Datadog.configure do |c|
       c.tracing.instrument :ethon, configuration_options
+      c.tracing.http_error_statuses.server = server_error_statuses if server_error_statuses
     end
   end
 
@@ -34,7 +34,7 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
 
   describe '#headers=' do
     it 'preserves HTTP headers on easy instance' do
-      easy.headers = { key: 'value' }
+      easy.headers = {key: 'value'}
       expect(easy.instance_eval { @datadog_original_headers }).to eq(key: 'value')
     end
   end
@@ -123,7 +123,7 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
 
     before do
       expect(easy).to receive(:url).and_return('http://example.com/test').at_least(:once)
-      allow(easy).to receive(:mirror).and_return(double('Fake mirror', options: { response_code: 200 }))
+      allow(easy).to receive(:mirror).and_return(double('Fake mirror', options: {response_code: 200}))
       easy.datadog_before_request
     end
 
@@ -138,7 +138,7 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
 
     context 'when response is successful' do
       before do
-        expect(easy).to receive(:mirror).and_return(double('Fake mirror', options: { response_code: 200 }))
+        expect(easy).to receive(:mirror).and_return(double('Fake mirror', options: {response_code: 200}))
       end
 
       it_behaves_like 'span' do
@@ -154,7 +154,7 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
 
     context 'when response is 500' do
       before do
-        expect(easy).to receive(:mirror).and_return(double('Fake mirror', options: { response_code: 500 }))
+        expect(easy).to receive(:mirror).and_return(double('Fake mirror', options: {response_code: 500}))
         subject
       end
 
@@ -163,13 +163,14 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
       end
 
       it 'has error set' do
+        expect(span).to have_error
         expect(span).to have_error_message('Request has failed with HTTP error: 500')
       end
     end
 
     context 'response has not found status' do
       before do
-        expect(easy).to receive(:mirror).and_return(double('Fake mirror', options: { response_code: 404 }))
+        expect(easy).to receive(:mirror).and_return(double('Fake mirror', options: {response_code: 404}))
         subject
       end
 
@@ -180,12 +181,21 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
       it 'has no error set' do
         expect(span).to_not have_error_message
       end
+
+      context 'when the server error statuses are configured to include 404' do
+        let(:server_error_statuses) { 400..599 }
+
+        it 'has error set' do
+          expect(span).to have_error
+          expect(span).to have_error_message('Request has failed with HTTP error: 404')
+        end
+      end
     end
 
     context 'request timed out' do
       before do
         expect(easy).to receive(:mirror).and_return(
-          double('Fake mirror', options: { response_code: 0, return_code: :operation_timedout })
+          double('Fake mirror', options: {response_code: 0, return_code: :operation_timedout})
         )
         subject
       end
@@ -205,7 +215,7 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
 
     context 'with headers set up' do
       before do
-        easy.headers = { key: 'value' }
+        easy.headers = {key: 'value'}
       end
 
       it 'cleans up @datadog_original_headers variable' do
@@ -240,7 +250,7 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
 
   context 'when basic auth in url' do
     it 'does not collect auth info' do
-      easy = EthonSupport.ethon_easy_new(url: 'http://username:pasword@example.com/sample/path')
+      easy = Ethon::Easy.new(url: 'http://username:pasword@example.com/sample/path')
 
       easy.perform
 
@@ -251,7 +261,7 @@ RSpec.describe Datadog::Tracing::Contrib::Ethon::EasyPatch do
 
   context 'when query string in url' do
     it 'does not collect query string' do
-      easy = EthonSupport.ethon_easy_new(url: 'http://example.com/sample/path?foo=bar')
+      easy = Ethon::Easy.new(url: 'http://example.com/sample/path?foo=bar')
 
       easy.perform
 

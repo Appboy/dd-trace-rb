@@ -16,11 +16,13 @@ require 'datadog/tracing/transport/traces'
 
 RSpec.describe Datadog::Tracing::Writer do
   describe 'instance' do
-    subject(:writer) { described_class.new({ agent_settings: test_agent_settings }.update(options)) }
+    subject(:writer) do
+      described_class.new({logger: logger, agent_settings: test_agent_settings}.update(options))
+    end
 
-    let(:options) { { transport: transport } }
+    let(:options) { {transport: transport} }
     let(:transport) { instance_double(Datadog::Tracing::Transport::Traces::Transport) }
-    let(:logger) { Datadog.logger }
+    let(:logger) { double(Datadog::Core::Logger) }
 
     describe 'behavior' do
       describe '#initialize' do
@@ -37,22 +39,35 @@ RSpec.describe Datadog::Tracing::Writer do
         end
 
         context 'and custom transport options' do
-          let(:options) { super().merge(transport_options: { api_version: api_version }) }
-          let(:api_version) { double('API version') }
+          let(:options) do
+            super().merge(transport_options: {headers: {foo: 'bar'}})
+          end
 
           it do
             expect(Datadog::Tracing::Transport::HTTP).to receive(:default) do |**options|
-              expect(options).to include(api_version: api_version)
+              expect(options).to include(headers: {foo: 'bar'})
             end
 
             writer
           end
         end
 
+        context 'when transport options include headers' do
+          let(:options) do
+            super().merge(transport_options: {headers: {foo: 'bar'}})
+          end
+
+          it 'passes the headers into transport' do
+            expect(writer.transport.apis.length).to eq 2
+            expect(writer.transport.apis['v0.4'].headers).to include(foo: 'bar')
+            expect(writer.transport.apis['v0.3'].headers).to include(foo: 'bar')
+          end
+        end
+
         context 'with agent_settings' do
           let(:agent_settings) { double('AgentSettings') }
 
-          let(:options) { { agent_settings: agent_settings } }
+          let(:options) { {agent_settings: agent_settings} }
 
           it 'configures the transport using the agent_settings' do
             expect(Datadog::Tracing::Transport::HTTP).to receive(:default).with(
@@ -93,7 +108,7 @@ RSpec.describe Datadog::Tracing::Writer do
         end
 
         context 'with shutdown timeout provided in options' do
-          let(:options) { { transport: transport, shutdown_timeout: 1000 } }
+          let(:options) { {transport: transport, shutdown_timeout: 1000} }
           let(:expected_async_transport_params) { async_transport_params.merge(shutdown_timeout: 1000) }
 
           it 'creates worker with configured shutdown timeout' do

@@ -38,11 +38,15 @@ module Datadog
           TAG_MSG: ::String
           TAG_STACK: ::String
           TAG_TYPE: ::String
+          ATTRIBUTE_MESSAGE: ::String
+          ATTRIBUTE_STACKTRACE: ::String
+          ATTRIBUTE_TYPE: ::String
+          EVENT_NAME: ::String
         end
 
         module HTTP
-          ERROR_RANGE: ::Range[::Integer]
           TAG_BASE_URL: ::String
+          TAG_ENDPOINT: ::String
           TAG_METHOD: ::String
           TAG_STATUS_CODE: ::String
           TAG_USER_AGENT: ::String

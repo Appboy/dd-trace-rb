@@ -1,6 +1,6 @@
 require 'spec_helper'
 
-require 'datadog/core/configuration/agent_settings_resolver'
+require 'datadog/core/configuration/agent_settings'
 require 'datadog/tracing/pipeline'
 require 'datadog/tracing/pipeline/span_filter'
 require 'datadog/tracing/span'
@@ -26,8 +26,8 @@ RSpec.describe Datadog::Tracing::SyncWriter do
     subject(:sync_writer) { described_class.new(**options) }
 
     context 'given :agent_settings' do
-      let(:options) { { agent_settings: agent_settings, logger: logger } }
-      let(:agent_settings) { instance_double(Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings) }
+      let(:options) { {agent_settings: agent_settings, logger: logger} }
+      let(:agent_settings) { instance_double(Datadog::Core::Configuration::AgentSettings) }
       let(:transport) { instance_double(Datadog::Tracing::Transport::Traces::Transport) }
 
       before do
@@ -38,6 +38,19 @@ RSpec.describe Datadog::Tracing::SyncWriter do
       end
 
       it { is_expected.to have_attributes(transport: transport) }
+    end
+
+    context 'when transport options include headers' do
+      let(:agent_settings) { instance_double(Datadog::Core::Configuration::AgentSettings) }
+      let(:options) { {agent_settings: agent_settings, logger: logger, transport_options: transport_options} }
+
+      let(:transport_options) { {headers: {foo: 'bar'}} }
+
+      it 'passes the headers into transport' do
+        expect(sync_writer.transport.apis.length).to eq 2
+        expect(sync_writer.transport.apis['v0.4'].headers).to include(foo: 'bar')
+        expect(sync_writer.transport.apis['v0.3'].headers).to include(foo: 'bar')
+      end
     end
   end
 

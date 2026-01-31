@@ -177,6 +177,7 @@ build_coverage_matrix('excon')
 build_coverage_matrix('rest-client')
 build_coverage_matrix('mongo', min: '2.1.0')
 build_coverage_matrix('dalli', [2])
+# NOTE: waterdrop requires Ruby >= 3.1.0, JRuby 9.3 (Ruby 2.6) is not supported
 # NOTE: JRuby bundler failed to install some dependencies https://github.com/ruby/psych/issues/700
 #       and it could be re-enabled when upstream fix the issue
 # build_coverage_matrix('devise', min: '3.2.1')
@@ -237,6 +238,7 @@ build_coverage_matrix('rack', 1..2, meta: { 'rack-contrib' => nil, 'rack-test' =
 [2, 3].each do |n|
   appraise "sinatra-#{n}" do
     gem 'sinatra', "~> #{n}"
+    gem 'sinatra-contrib', "~> #{n}"
     gem 'rack-contrib'
     gem 'rack-test' # Dev dependencies for testing rack-based code
   end
@@ -248,4 +250,11 @@ end
 
 appraise 'core-old' do
   gem 'dogstatsd-ruby', '~> 4'
+end
+
+appraise 'environment' do
+  gem 'spring', '>= 2.0.2'
+  gem 'cucumber', '>= 3'
+  gem 'logger'
+  gem 'minitest'
 end

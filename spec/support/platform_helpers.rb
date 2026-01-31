@@ -18,6 +18,11 @@ module PlatformHelpers
     RUBY_ENGINE == 'jruby'
   end
 
+  # After we resolve all "# TODO: JRuby 10.0 - " comments, remove this method and update docs/Compatibility.md
+  def jruby_100?
+    RUBY_ENGINE == 'jruby' && RUBY_ENGINE_VERSION.start_with?('10.0')
+  end
+
   def truffleruby?
     RUBY_ENGINE == 'truffleruby'
   end
@@ -32,7 +37,7 @@ module PlatformHelpers
     operator, guard_version = matcher_with_ruby_version.split(' ', 2).tap { |array| array.unshift('==') if array.size == 1 }
 
     unless ALLOWED_COMPARISON_OPERATORS.include?(operator)
-      message = "Unsupported operator: #{operator}. Supported operators: #{ALLOWED_COMPARISON_OPERATORS.join(', ')}"
+      message = "Unsupported operator: #{operator}. Supported operators: #{ALLOWED_COMPARISON_OPERATORS.join(", ")}"
       raise ArgumentError, message
     end
 
@@ -69,5 +74,32 @@ module PlatformHelpers
 
   def supports_fork?
     Process.respond_to?(:fork)
+  end
+
+  module ClassMethods
+    def skip_any_instance_on_buggy_jruby
+      before do
+        if PlatformHelpers.jruby? && !PlatformHelpers.ruby_version_matches?('>= 2.6')
+          # See: https://github.com/rspec/rspec-mocks/issues/1338
+          skip 'any_instance expectations are broken on JRuby 9.2'
+        end
+      end
+    end
+
+    def ruby_2_only
+      if RUBY_VERSION >= '3'
+        before(:all) do
+          skip "Test is only for Ruby 2"
+        end
+      end
+    end
+
+    def forking_platform_only
+      if PlatformHelpers.jruby?
+        before(:all) do
+          skip "Test requires fork to be implemented, JRuby does not"
+        end
+      end
+    end
   end
 end

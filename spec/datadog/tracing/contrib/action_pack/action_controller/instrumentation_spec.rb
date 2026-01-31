@@ -16,7 +16,7 @@ RSpec.describe Datadog::Tracing::Contrib::ActionPack::ActionController::Instrume
       let(:action_dispatch_exception) { nil }
       let(:action_name) { 'index' }
       let(:controller_class) { stub_const('TestController', Class.new(ActionController::Base)) }
-      let(:env) { { 'rack.url_scheme' => 'http' } }
+      let(:env) { {'rack.url_scheme' => 'http'} }
       let(:payload) do
         {
           controller: controller_class,
@@ -46,13 +46,47 @@ RSpec.describe Datadog::Tracing::Contrib::ActionPack::ActionController::Instrume
         end
       end
 
+      context 'with a status code set in the payload' do
+        let(:payload) do
+          super().merge(status: 404)
+        end
+
+        describe 'the Datadog span' do
+          before do
+            expect(Datadog.logger).to_not receive(:error)
+            finish_processing
+          end
+
+          it do
+            expect(span).to_not have_error
+          end
+        end
+
+        context 'when http_error_statuses.server is set to match the status code' do
+          before do
+            Datadog.configure do |c|
+              c.tracing.http_error_statuses.server = 400..599
+            end
+          end
+
+          describe 'the Datadog span' do
+            before do
+              expect(Datadog.logger).to_not receive(:error)
+              finish_processing
+            end
+
+            it do
+              expect(span).to have_error
+            end
+          end
+        end
+      end
+
       context 'with a 500 Server Error response' do
         let(:error) do
-          begin
-            raise 'Test error'
-          rescue StandardError => e
-            e
-          end
+          raise 'Test error'
+        rescue => e
+          e
         end
 
         let(:payload) do
@@ -70,6 +104,46 @@ RSpec.describe Datadog::Tracing::Contrib::ActionPack::ActionController::Instrume
         describe 'the Datadog span' do
           it do
             expect(span).to have_error
+          end
+        end
+      end
+
+      context 'with a 404 Not Found response' do
+        let(:error) { ::ActionController::RoutingError.new('Not Found') }
+        let(:payload) do
+          super().merge(
+            exception: [error.class.name, error.message],
+            exception_object: error
+          )
+        end
+
+        describe 'the Datadog span' do
+          before do
+            expect(Datadog.logger).to_not receive(:error)
+            finish_processing
+          end
+
+          it do
+            expect(span).to_not have_error
+          end
+        end
+
+        context 'when http_error_statuses.server is set to match 404' do
+          before do
+            Datadog.configure do |c|
+              c.tracing.http_error_statuses.server = 400..599
+            end
+          end
+
+          describe 'the Datadog span' do
+            before do
+              expect(Datadog.logger).to_not receive(:error)
+              finish_processing
+            end
+
+            it do
+              expect(span).to have_error
+            end
           end
         end
       end

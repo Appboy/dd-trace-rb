@@ -23,6 +23,7 @@ module Datadog
           allocation_profiling_enabled:,
           allocation_counting_enabled:,
           gvl_profiling_enabled:,
+          sighandler_sampling_enabled:,
           # **NOTE**: This should only be used for testing; disabling the dynamic sampling rate will increase the
           # profiler overhead!
           dynamic_sampling_rate_enabled: true,
@@ -31,6 +32,9 @@ module Datadog
         )
           unless dynamic_sampling_rate_enabled
             Datadog.logger.warn(
+              "Profiling dynamic sampling rate disabled. This should only be used for testing, and will increase overhead!"
+            )
+            Datadog::Core::Telemetry::Logger.error(
               "Profiling dynamic sampling rate disabled. This should only be used for testing, and will increase overhead!"
             )
           end
@@ -46,6 +50,7 @@ module Datadog
             allocation_profiling_enabled: allocation_profiling_enabled,
             allocation_counting_enabled: allocation_counting_enabled,
             gvl_profiling_enabled: gvl_profiling_enabled,
+            sighandler_sampling_enabled: sighandler_sampling_enabled,
             skip_idle_samples_for_testing: skip_idle_samples_for_testing,
           )
           @worker_thread = nil
@@ -72,11 +77,13 @@ module Datadog
               Datadog.logger.debug("CpuAndWallTimeWorker thread stopping cleanly")
             rescue Exception => e # rubocop:disable Lint/RescueException
               @failure_exception = e
+              operation_name = self.class._native_failure_exception_during_operation(self).inspect
               Datadog.logger.warn(
                 "CpuAndWallTimeWorker thread error. " \
-                "Cause: #{e.class.name} #{e.message} Location: #{Array(e.backtrace).first}"
+                "Operation: #{operation_name} Cause: #{e.class.name} #{e.message} Location: #{Array(e.backtrace).first}"
               )
               on_failure_proc&.call
+              Datadog::Core::Telemetry::Logger.report(e, description: "CpuAndWallTimeWorker thread error: #{operation_name}")
             end
             @worker_thread.name = self.class.name # Repeated from above to make sure thread gets named asap
             @worker_thread.thread_variable_set(:fork_safe, true)

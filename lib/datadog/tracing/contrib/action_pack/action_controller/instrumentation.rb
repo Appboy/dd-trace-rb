@@ -42,7 +42,7 @@ module Datadog
 
               span.set_tag(Tracing::Metadata::Ext::TAG_COMPONENT, Ext::TAG_COMPONENT)
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_CONTROLLER)
-            rescue StandardError => e
+            rescue => e
               Datadog.logger.error(e.message)
               Datadog::Core::Telemetry::Logger.report(e)
             end
@@ -68,20 +68,26 @@ module Datadog
 
                 span.set_tag(Ext::TAG_ROUTE_ACTION, payload.fetch(:action))
                 span.set_tag(Ext::TAG_ROUTE_CONTROLLER, payload.fetch(:controller))
+                if (runtime = payload[:view_runtime])
+                  span.set_tag(Ext::TAG_VIEW_RUNTIME, runtime)
+                end
+                if (runtime = payload[:db_runtime])
+                  span.set_tag(Ext::TAG_DB_RUNTIME, runtime)
+                end
 
                 exception = payload[:exception_object]
                 if exception.nil?
-                  # [christian] in some cases :status is not defined,
-                  # rather than firing an error, simply acknowledge we don't know it.
-                  status = payload.fetch(:status, '?').to_s
-                  span.status = 1 if status.start_with?('5')
+                  status = payload[:status]
+                  if status && Datadog.configuration.tracing.http_error_statuses.server.include?(status)
+                    span.status = Tracing::Metadata::Ext::Errors::STATUS
+                  end
                 elsif Utils.exception_is_error?(exception)
                   span.set_error(exception)
                 end
               ensure
                 span.finish
               end
-            rescue StandardError => e
+            rescue => e
               Datadog.logger.error(e.message)
               Datadog::Core::Telemetry::Logger.report(e)
             end
@@ -109,7 +115,7 @@ module Datadog
                 begin
                   # process and catch request exceptions
                   Instrumentation.start_processing(payload)
-                  result = super(*args)
+                  result = super
                   status = datadog_response_status
                   payload[:status] = status unless status.nil?
                   result
@@ -118,6 +124,15 @@ module Datadog
                   payload[:exception] = [e.class.name, e.message]
                   payload[:exception_object] = e
                   raise e
+                ensure
+                  # Database and view runtime are available for controllers
+                  # deriving from ActionController::Base.
+                  # They are not defined on controllers deriving from
+                  # ActionController::Metal, unless
+                  # ActionController::Instrumentation is explicitly included
+                  # into the controller class.
+                  payload[:db_runtime] = db_runtime if respond_to?(:db_runtime)
+                  payload[:view_runtime] = view_runtime if respond_to?(:view_runtime)
                 end
               # rubocop:enable Lint/RescueException
               ensure
@@ -131,7 +146,7 @@ module Datadog
                 when Array
                   # Likely a Rack response array: first element is the status.
                   status = response.first
-                  status.class <= Integer ? status : nil
+                  (status.class <= Integer) ? status : nil
                 end
               end
             end

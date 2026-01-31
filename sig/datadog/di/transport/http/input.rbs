@@ -3,20 +3,11 @@ module Datadog
     module Transport
       module HTTP
         module Input
-          module Client
+          class Client < Core::Transport::HTTP::Client
             def send_input_payload: (untyped request) -> untyped
           end
 
           module API
-            class Instance < Core::Transport::HTTP::API::Instance
-              def send_input: (untyped env) -> untyped
-            end
-
-            class Spec < Core::Transport::HTTP::API::Spec
-              attr_accessor input: untyped
-
-              def send_input: (untyped env) { (?) -> untyped } -> untyped
-            end
             class Endpoint < Datadog::Core::Transport::HTTP::API::Endpoint
               @encoder: untyped
 

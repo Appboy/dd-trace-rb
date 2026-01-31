@@ -24,6 +24,7 @@ module Datadog
             # nginx header is seconds in the format "t=1512379167.574"
             # apache header is microseconds in the format "t=1570633834463123"
             # heroku header is milliseconds in the format "1570634024294"
+            # @see https://github.com/heroku/vegur/blob/65d168f757e0ddb448f41cfb9e4b0281c747378d/README.md?plain=1#L383-L384
             time_string = header.to_s.delete('^0-9')
             return if time_string.nil?
 
@@ -34,8 +35,8 @@ module Datadog
             # return the request_start only if it's lesser than
             # current time, to avoid significant clock skew
             request_start = Time.at(time_value)
-            request_start.utc > now ? nil : request_start
-          rescue StandardError => e
+            (request_start.utc > now) ? nil : request_start
+          rescue => e
             # in case of an Exception we don't create a
             # `request.queuing` span
             Datadog.logger.debug("[rack] unable to parse request queue headers: #{e}")

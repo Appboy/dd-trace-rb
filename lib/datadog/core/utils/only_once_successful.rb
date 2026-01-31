@@ -5,20 +5,35 @@ require_relative 'only_once'
 module Datadog
   module Core
     module Utils
-      # Helper class to execute something with only one success.
+      # Helper class to execute something with only one successful execution.
       #
-      # This is useful for cases where we want to ensure that a block of code is only executed once, and only if it
-      # succeeds. One such example is sending app-started telemetry event.
+      # If limit is not provided to the constructor, +run+ will execute the
+      # block an unlimited number of times until the block indicates that it
+      # executed successfully by returning a truthy value. After a block
+      # executes successfully, subsequent +run+ calls will not invoke the
+      # block.
       #
-      # Successful execution is determined by the return value of the block: any truthy value is considered success.
+      # If a non-zero limit is provided to the constructor, +run+ will
+      # execute the block up to that many times, and will mark the instance
+      # of OnlyOneSuccessful as failed if none of the executions succeeded.
       #
-      # Thread-safe when used correctly (e.g. be careful of races when lazily initializing instances of this class).
+      # One consumer of this class is sending the app-started telemetry event.
+      #
+      # Successful execution is determined by the return value of the block:
+      # any truthy value is considered success.
+      #
+      # This class is thread-safe (however, instances of it must also be
+      # created in a thread-safe manner).
       #
       # Note: In its current state, this class is not Ractor-safe.
       # In https://github.com/DataDog/dd-trace-rb/pull/1398#issuecomment-797378810 we have a discussion of alternatives,
       # including an alternative implementation that is Ractor-safe once spent.
       class OnlyOnceSuccessful < OnlyOnce
-        def initialize(limit = 0)
+        def initialize(limit = nil)
+          if limit && limit <= 0
+            raise ArgumentError, "Limit must be a positive integer if provided: #{limit}"
+          end
+
           super()
 
           @limit = limit
@@ -52,7 +67,9 @@ module Datadog
 
         private
 
+        # Use this method only after checking that limit is not nil.
         def check_limit!
+          # @type ivar @limit: Integer
           if @retries >= @limit
             @failed = true
             @ran_once = true
@@ -60,7 +77,7 @@ module Datadog
         end
 
         def limited?
-          !@limit.nil? && @limit.positive?
+          !@limit.nil?
         end
 
         def reset_ran_once_state_for_tests
