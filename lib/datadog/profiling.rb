@@ -62,8 +62,7 @@ module Datadog
 
     def self.enabled?
       profiler = Datadog.send(:components).profiler
-      # Use .send(...) to avoid exposing the attr_reader as an API to the outside
-      !!profiler&.send(:scheduler)&.running?
+      !!profiler&.enabled?
     end
 
     def self.wait_until_running(timeout_seconds: 5)
@@ -121,15 +120,13 @@ module Datadog
     end
 
     private_class_method def self.try_loading_native_library
-      begin
-        require_relative 'profiling/load_native_extension'
+      require_relative 'profiling/load_native_extension'
 
-        success =
-          defined?(Profiling::NativeExtension) && Profiling::NativeExtension.send(:native_working?)
-        [success, nil]
-      rescue StandardError, LoadError => e
-        [false, e]
-      end
+      success =
+        defined?(Profiling::NativeExtension) && Profiling::NativeExtension.send(:native_working?)
+      [success, nil]
+    rescue StandardError, LoadError => e
+      [false, e]
     end
 
     # All requires for the profiler should be directly added here; and everything should be loaded eagerly.
@@ -157,6 +154,7 @@ module Datadog
       require_relative 'profiling/native_extension'
       require_relative 'profiling/tag_builder'
       require_relative 'profiling/http_transport'
+      require_relative 'profiling/sequence_tracker'
 
       replace_noop_allocation_count
 

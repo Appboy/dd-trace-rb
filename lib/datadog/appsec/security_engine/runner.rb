@@ -9,10 +9,13 @@ module Datadog
       class Runner
         SUCCESSFUL_EXECUTION_CODES = [:ok, :match].freeze
 
-        def initialize(handle, telemetry:)
+        attr_reader :ruleset_version
+
+        def initialize(handle_ref, ruleset_version:)
           @mutex = Mutex.new
-          @context = WAF::Context.new(handle)
-          @telemetry = telemetry
+          @handle_ref = handle_ref
+          @waf_handle = handle_ref.acquire
+          @ruleset_version = ruleset_version
 
           @debug_tag = "libddwaf:#{WAF::VERSION::STRING} method:ddwaf_run"
         end
@@ -24,54 +27,74 @@ module Datadog
           persistent_data.reject! do |_, v|
             next false if v.is_a?(TrueClass) || v.is_a?(FalseClass)
 
-            v.nil? || v.empty?
+            v.nil? || (v.respond_to?(:empty?) && v.empty?)
           end
 
           ephemeral_data.reject! do |_, v|
             next false if v.is_a?(TrueClass) || v.is_a?(FalseClass)
 
-            v.nil? || v.empty?
+            v.nil? || (v.respond_to?(:empty?) && v.empty?)
           end
 
-          _code, result = try_run(persistent_data, ephemeral_data, timeout)
+          result = try_run(persistent_data, ephemeral_data, timeout)
           stop_ns = Core::Utils::Time.get_time(:nanosecond)
 
           report_execution(result)
 
           unless SUCCESSFUL_EXECUTION_CODES.include?(result.status)
-            return Result::Error.new(duration_ext_ns: stop_ns - start_ns)
+            return Result::Error.new(duration_ext_ns: stop_ns - start_ns, input_truncated: result.input_truncated?)
           end
 
-          klass = result.status == :match ? Result::Match : Result::Ok
+          klass = (result.status == :match) ? Result::Match : Result::Ok
           klass.new(
             events: result.events,
             actions: result.actions,
-            derivatives: result.derivatives,
-            timeout: result.timeout,
-            duration_ns: result.total_runtime,
-            duration_ext_ns: (stop_ns - start_ns)
+            attributes: result.attributes,
+            keep: result.keep?,
+            timeout: result.timeout?,
+            duration_ns: result.duration,
+            duration_ext_ns: (stop_ns - start_ns),
+            input_truncated: result.input_truncated?
           )
         ensure
           @mutex.unlock
         end
 
-        def finalize
-          @context.finalize
+        def waf_context
+          @waf_context ||= @waf_handle.build_context
+        end
+
+        def waf_addresses
+          @waf_handle.known_addresses
+        end
+
+        def finalize!
+          @waf_context&.finalize!
+        ensure
+          @handle_ref.release(@waf_handle)
         end
 
         private
 
         def try_run(persistent_data, ephemeral_data, timeout)
-          @context.run(persistent_data, ephemeral_data, timeout)
-        rescue WAF::LibDDWAF::Error => e
+          waf_context.run(persistent_data, ephemeral_data, timeout)
+        rescue WAF::LibDDWAFError => e
           Datadog.logger.debug { "#{@debug_tag} execution error: #{e} backtrace: #{e.backtrace&.first(3)}" }
-          @telemetry.report(e, description: 'libddwaf-rb internal low-level error')
+          AppSec.telemetry.report(e, description: 'libddwaf-rb internal low-level error')
 
-          [:err_internal, WAF::Result.new(:err_internal, [], 0, false, [], [])]
+          WAF::Result.new(
+            status: :err_internal,
+            events: [],
+            actions: {},
+            attributes: {},
+            duration: 0,
+            keep: false,
+            timeout: false
+          )
         end
 
         def report_execution(result)
-          Datadog.logger.debug { "#{@debug_tag} execution timed out: #{result.inspect}" } if result.timeout
+          Datadog.logger.debug { "#{@debug_tag} execution timed out: #{result.inspect}" } if result.timeout?
 
           if SUCCESSFUL_EXECUTION_CODES.include?(result.status)
             Datadog.logger.debug { "#{@debug_tag} execution result: #{result.inspect}" }
@@ -79,7 +102,7 @@ module Datadog
             message = "#{@debug_tag} execution error: #{result.status.inspect}"
 
             Datadog.logger.debug { message }
-            @telemetry.error(message)
+            AppSec.telemetry.error(message)
           end
         end
       end

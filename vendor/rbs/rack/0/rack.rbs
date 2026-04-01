@@ -1,0 +1,29 @@
+module Rack
+  class Request
+    def initialize: (::Hash[::String, untyped] env) -> void
+
+    def env: () -> ::Hash[::String, untyped]
+
+    def params: () -> ::Hash[::String, untyped]
+
+    def body: () -> untyped
+
+    def get?: () -> bool
+
+    def post?: () -> bool
+
+    def path: () -> ::String
+  end
+
+  class Response
+    interface _Body
+      def each: () { (::String) -> void } -> void
+
+      def respond_to?: (::Symbol method, ?boolish include_all) -> bool
+
+      def to_ary: () -> ::Array[::String]?
+    end
+
+    def initialize: (?untyped body, ?untyped status, ?untyped headers) -> void
+  end
+end

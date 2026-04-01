@@ -19,12 +19,6 @@ module Datadog
 
           def self?.add_middleware: (untyped app) -> untyped
 
-          module ProcessActionPatch
-            def process_action: (*untyped args) -> untyped
-          end
-
-          def self?.patch_process_action: () -> untyped
-
           def self?.include_middleware?: (untyped middleware, untyped app) -> untyped
 
           def self?.inspect_middlewares: (untyped app) -> untyped
@@ -32,6 +26,10 @@ module Datadog
           def self?.patch_after_initialize: () -> untyped
 
           def self?.after_initialize: (untyped app) -> untyped
+
+          def self.subscribe_to_routes_loaded: () -> void
+
+          def self.report_routes_via_telemetry: () -> void
 
           def self?.setup_security: () -> untyped
         end

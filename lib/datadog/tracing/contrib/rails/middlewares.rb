@@ -26,15 +26,15 @@ module Datadog
           rescue Exception => e
             span = Tracing.active_span
             if !span.nil? && ActionPack::Utils.exception_is_error?(e)
-              # Only set error if it's supposed to be flagged as such
-              # e.g. we don't want to flag 404s.
+              # By default, only 5XX exceptions are actually errors (e.g. don't flag 404s).
+              # This can be changed by setting `DD_TRACE_HTTP_SERVER_ERROR_STATUSES` environment variable.
               # You can add custom errors via `config.action_dispatch.rescue_responses`
               span.set_error(e)
 
               # Some exception gets handled by Rails middleware before it can be set on Rack middleware
               # The rack span is the root span of the request and should make sure it has the full exception
               # set on it.
-              env[Contrib::Rack::Ext::RACK_ENV_REQUEST_SPAN].set_error(e) if env[Contrib::Rack::Ext::RACK_ENV_REQUEST_SPAN]
+              env[Contrib::Rack::Ext::RACK_ENV_REQUEST_SPAN]&.set_error(e)
             end
             raise e
           end

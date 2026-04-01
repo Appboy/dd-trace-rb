@@ -72,16 +72,16 @@ RSpec.describe Datadog::Core::Remote::Client do
           'roles' => {
             'root' => {
               'keyids' => ['bla1',
-                           'bla2'],
+                'bla2'],
               'threshold' => 2
             },
             'snapshot' => {
               'keyids' => ['foo'],
-              'threshold' => 1 \
+              'threshold' => 1
             },
-            'targets' => { \
+            'targets' => {
               'keyids' => ['foo'],
-              'threshold' => 1 \
+              'threshold' => 1
             },
             'timestamp' => {
               'keyids' => ['foo'],
@@ -101,11 +101,11 @@ RSpec.describe Datadog::Core::Remote::Client do
         'custom' => {
           'c' => ['client_id'],
           'tracer-predicates' => {
-            'tracer_predicates_v1' => [{ 'clientID' => 'client_id' }]
+            'tracer_predicates_v1' => [{'clientID' => 'client_id'}]
           },
           'v' => 21
         },
-        'hashes' => { 'sha256' => Digest::SHA256.hexdigest(exclusions) },
+        'hashes' => {'sha256' => Digest::SHA256.hexdigest(exclusions)},
         'length' => 645
       }
     }
@@ -116,10 +116,10 @@ RSpec.describe Datadog::Core::Remote::Client do
       'datadog/603646/ASM_DATA/blocked_ips/config' => {
         'custom' => {
           'c' => ['client_id'],
-          'tracer-predicates' => { 'tracer_predicates_v1' => [{ 'clientID' => 'client_id' }] },
+          'tracer-predicates' => {'tracer_predicates_v1' => [{'clientID' => 'client_id'}]},
           'v' => 51
         },
-        'hashes' => { 'sha256' => Digest::SHA256.hexdigest(blocked_ips) },
+        'hashes' => {'sha256' => Digest::SHA256.hexdigest(blocked_ips)},
         'length' => 1834
       },
     }
@@ -131,11 +131,11 @@ RSpec.describe Datadog::Core::Remote::Client do
         'custom' => {
           'c' => ['client_id'],
           'tracer-predicates' => {
-            'tracer_predicates_v1' => [{ 'clientID' => 'client_id' }]
+            'tracer_predicates_v1' => [{'clientID' => 'client_id'}]
           },
           'v' => 21
         },
-        'hashes' => { 'sha256' => Digest::SHA256.hexdigest(rules_data) },
+        'hashes' => {'sha256' => Digest::SHA256.hexdigest(rules_data)},
         'length' => 645
       },
     }
@@ -245,9 +245,11 @@ RSpec.describe Datadog::Core::Remote::Client do
 
   let(:repository) { Datadog::Core::Remote::Configuration::Repository.new }
 
+  let(:settings) { Datadog::Core::Configuration::Settings.new }
+
   let(:capabilities) do
     capabilities = Datadog::Core::Remote::Client::Capabilities.new(
-      Datadog::Core::Configuration::Settings.new,
+      settings,
       instance_double(Datadog::Core::Telemetry::Component)
     )
     capabilities.send(:register_products, ['ASM_DATA', 'ASM_DD', 'ASM'])
@@ -255,7 +257,7 @@ RSpec.describe Datadog::Core::Remote::Client do
     capabilities
   end
 
-  subject(:client) { described_class.new(transport, capabilities, repository: repository, logger: logger) }
+  subject(:client) { described_class.new(transport, capabilities, repository: repository, settings: settings, logger: logger) }
 
   describe '#sync' do
     include_context 'HTTP connection stub'
@@ -321,16 +323,16 @@ RSpec.describe Datadog::Core::Remote::Client do
             .and_return(
               [
                 {
-                  :path => 'datadog/603646/ASM_DATA/blocked_ips/config',
-                  :content => StringIO.new(new_blocked_ips)
+                  path: 'datadog/603646/ASM_DATA/blocked_ips/config',
+                  content: new_blocked_ips,
                 },
                 {
-                  :path => 'datadog/603646/ASM/exclusion_filters/config',
-                  :content => StringIO.new(exclusions)
+                  path: 'datadog/603646/ASM/exclusion_filters/config',
+                  content: exclusions,
                 },
                 {
-                  :path => 'datadog/603646/ASM_DD/latest/config',
-                  :content => StringIO.new(rules_data)
+                  path: 'datadog/603646/ASM_DD/latest/config',
+                  content: rules_data,
                 }
               ]
             )
@@ -348,28 +350,28 @@ RSpec.describe Datadog::Core::Remote::Client do
                 'datadog/603646/ASM/exclusion_filters/config' => {
                   'custom' => {
                     'c' => ['client_id'],
-                    'tracer-predicates' => { 'tracer_predicates_v1' => [{ 'clientID' => 'client_id' }] },
+                    'tracer-predicates' => {'tracer_predicates_v1' => [{'clientID' => 'client_id'}]},
                     'v' => 21
                   },
-                  'hashes' => { 'sha256' => Digest::SHA256.hexdigest(exclusions) },
+                  'hashes' => {'sha256' => Digest::SHA256.hexdigest(exclusions)},
                   'length' => 645
                 },
                 'datadog/603646/ASM_DATA/blocked_ips/config' => {
                   'custom' => {
                     'c' => ['client_id'],
-                    'tracer-predicates' => { 'tracer_predicates_v1' => [{ 'clientID' => 'client_id' }] },
+                    'tracer-predicates' => {'tracer_predicates_v1' => [{'clientID' => 'client_id'}]},
                     'v' => 51
                   },
-                  'hashes' => { 'sha256' => Digest::SHA256.hexdigest(new_blocked_ips) },
+                  'hashes' => {'sha256' => Digest::SHA256.hexdigest(new_blocked_ips)},
                   'length' => 1834
                 },
                 'datadog/603646/ASM_DD/latest/config' => {
                   'custom' => {
                     'c' => ['client_id'],
-                    'tracer-predicates' => { 'tracer_predicates_v1' => [{ 'clientID' => 'client_id' }] },
+                    'tracer-predicates' => {'tracer_predicates_v1' => [{'clientID' => 'client_id'}]},
                     'v' => 51
                   },
-                  'hashes' => { 'sha256' => Digest::SHA256.hexdigest(rules_data) },
+                  'hashes' => {'sha256' => Digest::SHA256.hexdigest(rules_data)},
                   'length' => 1834
                 }
               },
@@ -431,7 +433,7 @@ RSpec.describe Datadog::Core::Remote::Client do
                   },
                   'v' => 21
                 },
-                'hashes' => { 'sha256' => Digest::SHA256.hexdigest(exclusions) },
+                'hashes' => {'sha256' => Digest::SHA256.hexdigest(exclusions)},
                 'length' => 645
               },
             }
@@ -455,12 +457,12 @@ RSpec.describe Datadog::Core::Remote::Client do
                   'c' => ['client_id'],
                   'tracer-predicates' => {
                     'tracer_predicates_v1' => [
-                      { 'clientID' => 'client_id' }
+                      {'clientID' => 'client_id'}
                     ]
                   },
                   'v' => 21
                 },
-                'hashes' => { 'sha256' => 'fake sha' },
+                'hashes' => {'sha256' => 'fake sha'},
                 'length' => 645
               },
             }
@@ -472,16 +474,34 @@ RSpec.describe Datadog::Core::Remote::Client do
         end
       end
 
+      context 'when agent returns an HTTP error' do
+        let(:response_code) { 500 }
+        let(:response_body) { 'unimplemented' }
+
+        it 'raises a transport error' do
+          expect { client.sync }.to raise_error(
+            Datadog::Core::Remote::Client::TransportError, /Agent returned an error response: 500: unimplemented/
+          )
+        end
+      end
+
       context 'with a network error' do
         it 'raises a transport error' do
           expect(http_connection).to receive(:request).and_raise(IOError)
 
-          expect { client.sync }.to raise_error(Datadog::Core::Remote::Client::TransportError)
+          expect { client.sync }.to raise_error(
+            Datadog::Core::Remote::Client::TransportError, /error_type:IOError error:IOError/
+          )
         end
       end
     end
 
     describe '#payload' do
+      before do
+        Datadog::Core::Environment::Git.reset_for_tests
+        Datadog::Core::TagBuilder.reset_for_tests
+      end
+
       context 'no sync errors' do
         let(:response_code) { 200 }
         include_context 'Client dispatches changes'
@@ -496,12 +516,12 @@ RSpec.describe Datadog::Core::Remote::Client do
               state = repository.state
 
               expected_state = {
-                :root_version => state.root_version,
-                :targets_version => state.targets_version,
-                :config_states => state.config_states,
-                :has_error => state.has_error,
-                :error => state.error,
-                :backend_client_state => state.opaque_backend_state
+                root_version: state.root_version,
+                targets_version: state.targets_version,
+                config_states: state.config_states,
+                has_error: state.has_error,
+                error: state.error,
+                backend_client_state: state.opaque_backend_state
               }
 
               expect(client_payload[:state]).to eq(expected_state)
@@ -541,6 +561,21 @@ RSpec.describe Datadog::Core::Remote::Client do
           context 'client_tracer' do
             context 'tags' do
               let(:gem_datadog_version) { '1.1.1' }
+              let(:expected_base_client_tracer_tags) do
+                [
+                  "platform:#{native_platform}",
+                  "ruby.tracer.version:#{gem_datadog_version}",
+                  "ruby.runtime.platform:#{ruby_platform}",
+                  "ruby.runtime.version:#{ruby_version}",
+                  "ruby.runtime.engine.name:#{ruby_engine}",
+                  "ruby.runtime.engine.version:#{ruby_engine_version}",
+                  "ruby.rubygems.platform.local:#{gem_platform_local}",
+                  "ruby.gem.libddwaf.version:#{libddwaf_gem_spec.version}",
+                  "ruby.gem.libddwaf.platform:#{libddwaf_gem_spec.platform}",
+                  "ruby.gem.libdatadog.version:#{libdatadog_gem_spec.version}",
+                  "ruby.gem.libdatadog.platform:#{libdatadog_gem_spec.platform}",
+                ]
+              end
               let(:ruby_platform) { 'ruby-platform' }
               let(:ruby_version) { '2.2.2' }
               let(:ruby_engine) { 'ruby_engine_name' }
@@ -565,73 +600,112 @@ RSpec.describe Datadog::Core::Remote::Client do
               end
 
               it 'returns client_tracer tags' do
-                expect(Datadog.configuration).to receive(:version).and_return('hello').at_least(:once)
+                expect(settings).to receive(:version).and_return('hello').at_least(:once)
 
-                expected_client_tracer_tags = [
-                  "platform:#{native_platform}",
-                  "ruby.tracer.version:#{gem_datadog_version}",
-                  "ruby.runtime.platform:#{ruby_platform}",
-                  "ruby.runtime.version:#{ruby_version}",
-                  "ruby.runtime.engine.name:#{ruby_engine}",
-                  "ruby.runtime.engine.version:#{ruby_engine_version}",
-                  "ruby.rubygems.platform.local:#{gem_platform_local}",
-                  "ruby.gem.libddwaf.version:#{libddwaf_gem_spec.version}",
-                  "ruby.gem.libddwaf.platform:#{libddwaf_gem_spec.platform}",
-                  "ruby.gem.libdatadog.version:#{libdatadog_gem_spec.version}",
-                  "ruby.gem.libdatadog.platform:#{libdatadog_gem_spec.platform}",
-                ]
+                expect(client_payload[:client_tracer][:tags]).to eq(expected_base_client_tracer_tags)
+              end
 
-                expect(client_payload[:client_tracer][:tags]).to eq(expected_client_tracer_tags)
+              context 'when SCI environment variables are set' do
+                with_env 'DD_GIT_REPOSITORY_URL' => 'http://foo',
+                  'DD_GIT_COMMIT_SHA' => '1234hash'
+
+                let(:expected_sci_tags) do
+                  [
+                    'git.repository_url:http://foo',
+                    'git.commit.sha:1234hash',
+                  ]
+                end
+
+                before do
+                  Datadog::Core::Environment::Git.reset_for_tests
+                end
+
+                it 'includes SCI tags in remote config' do
+                  expect(settings).to receive(:version).and_return('hello').at_least(:once)
+
+                  expect(client_payload[:client_tracer][:tags]).to eq(expected_base_client_tracer_tags + expected_sci_tags)
+                end
               end
             end
 
             context 'with remote service setting' do
               it 'returns client_tracer' do
-                expect(Datadog.configuration.remote).to receive(:service).and_return('foo').at_least(:once)
+                expect(settings.remote).to receive(:service).and_return('foo').at_least(:once)
 
                 expected_client_tracer = {
-                  :runtime_id => Datadog::Core::Environment::Identity.id,
-                  :language => Datadog::Core::Environment::Identity.lang,
-                  :tracer_version => Datadog::Core::Environment::Identity.gem_datadog_version_semver2,
-                  :service => Datadog.configuration.remote.service,
-                  :env => Datadog.configuration.env,
+                  runtime_id: Datadog::Core::Environment::Identity.id,
+                  language: Datadog::Core::Environment::Identity.lang,
+                  tracer_version: Datadog::Core::Environment::Identity.gem_datadog_version_semver2,
+                  service: settings.remote.service,
+                  env: settings.env,
                 }
 
-                expect(client_payload[:client_tracer].tap { |h| h.delete(:tags) }).to eq(expected_client_tracer)
+                expect(client_payload[:client_tracer]).to include(expected_client_tracer)
               end
             end
 
             context 'with app_version' do
               it 'returns client_tracer' do
-                expect(Datadog.configuration).to receive(:version).and_return('hello').at_least(:once)
+                expect(settings).to receive(:version).and_return('hello').at_least(:once)
 
                 expected_client_tracer = {
-                  :runtime_id => Datadog::Core::Environment::Identity.id,
-                  :language => Datadog::Core::Environment::Identity.lang,
-                  :tracer_version => Datadog::Core::Environment::Identity.gem_datadog_version_semver2,
-                  :service => Datadog.configuration.service,
-                  :env => Datadog.configuration.env,
-                  :app_version => Datadog.configuration.version,
+                  runtime_id: Datadog::Core::Environment::Identity.id,
+                  language: Datadog::Core::Environment::Identity.lang,
+                  tracer_version: Datadog::Core::Environment::Identity.gem_datadog_version_semver2,
+                  service: settings.service,
+                  env: settings.env,
+                  app_version: settings.version,
                 }
 
-                expect(client_payload[:client_tracer].tap { |h| h.delete(:tags) }).to eq(expected_client_tracer)
+                expect(client_payload[:client_tracer]).to include(expected_client_tracer)
               end
             end
 
             context 'without app_version' do
               it 'returns client_tracer' do
-                expect(Datadog.configuration).to receive(:version).and_return(nil).at_least(:once)
+                expect(settings).to receive(:version).and_return(nil).at_least(:once)
 
                 expected_client_tracer = {
-                  :runtime_id => Datadog::Core::Environment::Identity.id,
-                  :language => Datadog::Core::Environment::Identity.lang,
-                  :tracer_version => Datadog::Core::Environment::Identity.gem_datadog_version_semver2,
-                  :service => Datadog.configuration.service,
-                  :env => Datadog.configuration.env,
+                  runtime_id: Datadog::Core::Environment::Identity.id,
+                  language: Datadog::Core::Environment::Identity.lang,
+                  tracer_version: Datadog::Core::Environment::Identity.gem_datadog_version_semver2,
+                  service: settings.service,
+                  env: settings.env,
                 }
 
-                expect(client_payload[:client_tracer].tap { |h| h.delete(:tags) }).to eq(expected_client_tracer)
+                expect(client_payload[:client_tracer]).to include(expected_client_tracer)
               end
+            end
+          end
+        end
+
+        context 'process_tags' do
+          let(:client_payload) { client.send(:payload)[:client] }
+
+          context 'when process tags propagation is enabled' do
+            include_context 'with mocked process environment'
+            before do
+              allow(settings).to receive(:experimental_propagate_process_tags_enabled).and_return(true)
+            end
+
+            it 'has process tags in the payload' do
+              process_tags = client_payload[:client_tracer][:process_tags]
+              expect(process_tags).to be_a(Array)
+              expect(process_tags).to include('entrypoint.workdir:app')
+              expect(process_tags).to include('entrypoint.name:rspec')
+              expect(process_tags).to include('entrypoint.basedir:bin')
+              expect(process_tags).to include('entrypoint.type:script')
+            end
+          end
+
+          context 'when process tags propagation is not enabled' do
+            before do
+              # Explicitly disable because the global default is now true.
+              allow(settings).to receive(:experimental_propagate_process_tags_enabled).and_return(false)
+            end
+
+            it 'does not have process tags in the payload' do
+              expect(client_payload[:client_tracer]).not_to have_key(:process_tags)
             end
           end
         end

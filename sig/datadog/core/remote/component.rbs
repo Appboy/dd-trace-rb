@@ -11,8 +11,12 @@ module Datadog
 
         @barrier: Barrier
         @logger: Core::Logger
+        @settings: untyped
+        @capabilities: Datadog::Core::Remote::Client::Capabilities
+        @agent_settings: Datadog::Core::Configuration::AgentSettings
+        @transport: untyped
 
-        def initialize: (untyped settings, Datadog::Core::Remote::Client::Capabilities capabilities, Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings agent_settings, logger: Core::Logger) -> void
+        def initialize: (untyped settings, Datadog::Core::Remote::Client::Capabilities capabilities, Datadog::Core::Configuration::AgentSettings agent_settings, logger: Core::Logger) -> void
 
         def start: -> void
 
@@ -24,9 +28,11 @@ module Datadog
 
         def shutdown!: () -> void
 
+        def after_fork: () -> void
+
         def self.build: (
           untyped settings,
-          Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings agent_settings,
+          Datadog::Core::Configuration::AgentSettings agent_settings,
           logger: Core::Logger,
           telemetry: Datadog::Core::Telemetry::Component
         ) -> Datadog::Core::Remote::Component?

@@ -30,6 +30,9 @@ RSpec.describe 'gem release process' do
            |CONTRIBUTING.md
            |SECURITY.md
            |Gemfile
+           |AGENTS\.md
+           |AGENTS_TODO\.md
+           |CLAUDE\.md
            |(ruby|jruby)-\d+.\d+.gemfile
            |Rakefile
            |Matrixfile
@@ -43,6 +46,8 @@ RSpec.describe 'gem release process' do
            |\.standard\.yml
            |\.standard_todo\.yml
            |.rspec-local.example
+           |\.customcops\.yml
+           |supported-configurations\.json
           )
           $
         }x
@@ -52,7 +57,7 @@ RSpec.describe 'gem release process' do
             sig
             |spec
             |docs
-            |\.circleci
+            |\.cursor
             |\.github
             |\.gitlab
             |\.vscode
@@ -66,6 +71,7 @@ RSpec.describe 'gem release process' do
             |yard
             |vendor/rbs
             |suppressions
+            |rubocop
           )/
         }x
 
@@ -112,6 +118,7 @@ RSpec.describe 'gem release process' do
           'libddwaf',
           'msgpack',
           'logger',
+          'cgi',
         )
       end
     end

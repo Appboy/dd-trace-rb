@@ -15,27 +15,26 @@ jobs:
   test-memcheck:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: ruby/setup-ruby@e5ac7b085f6e63d49c8973eb0c6e04d876b881f1 # v1.230.0
+      - uses: ruby/setup-ruby@90be1154f987f4dc0fe0dd0feedac9e473aa4ba8 # v1.286.0
         with:
           ruby-version: 3.4.1
           bundler-cache: true # runs 'bundle install' and caches installed gems automatically
           bundler: latest
           cache-version: v2 # bump this to invalidate cache
       - run: sudo apt-get update && (sudo apt-get install -y valgrind || sleep 5 && sudo apt-get install -y valgrind) && valgrind --version
-      - run: gem update --system 3.5.23 # TODO: This is a workaround for a buggy rubygems in 3.4.0-preview2; remove once stable version 3.4 is out
-      - run: bundle exec rake compile spec:profiling:memcheck
+      - run: bundle exec rake compile spec:profiling:memcheck spec:core_with_libdatadog_api_memcheck
   test-asan:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: ruby/setup-ruby@e5ac7b085f6e63d49c8973eb0c6e04d876b881f1 # Adds 3.4-asan builds
+      - uses: ruby/setup-ruby@90be1154f987f4dc0fe0dd0feedac9e473aa4ba8 # v1.286.0
         with:
-          ruby-version: 3.4-asan
+          ruby-version: asan-release
           bundler-cache: true # runs 'bundle install' and caches installed gems automatically
           bundler: latest
           cache-version: v2 # bump this to invalidate cache

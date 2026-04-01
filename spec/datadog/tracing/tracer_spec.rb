@@ -14,6 +14,7 @@ require 'datadog/tracing/sampling/ext'
 require 'datadog/tracing/span_operation'
 require 'datadog/tracing/trace_operation'
 require 'datadog/tracing/tracer'
+require 'datadog/tracing/transport/trace_formatter'
 require 'datadog/tracing/utils'
 require 'datadog/tracing/writer'
 
@@ -90,7 +91,7 @@ RSpec.describe Datadog::Tracing::Tracer do
     shared_examples 'shared #trace behavior' do
       context 'with options to be forwarded to the span' do
         context 'service:' do
-          let(:options) { { service: service } }
+          let(:options) { {service: service} }
           let(:service) { 'my-service' }
 
           it 'sets the span service' do
@@ -99,7 +100,7 @@ RSpec.describe Datadog::Tracing::Tracer do
         end
 
         context 'resource:' do
-          let(:options) { { resource: resource } }
+          let(:options) { {resource: resource} }
           let(:resource) { 'my-resource' }
 
           it 'sets the span resource' do
@@ -108,7 +109,7 @@ RSpec.describe Datadog::Tracing::Tracer do
         end
 
         context 'span_type:' do
-          let(:options) { { type: span_type } }
+          let(:options) { {type: span_type} }
           let(:span_type) { 'my-span_type' }
 
           it 'sets the span resource' do
@@ -117,8 +118,8 @@ RSpec.describe Datadog::Tracing::Tracer do
         end
 
         context 'tags:' do
-          let(:options) { { tags: tags } }
-          let(:tags) { { tag_name => tag_value } }
+          let(:options) { {tags: tags} }
+          let(:tags) { {tag_name => tag_value} }
           let(:tag_name) { 'my' }
           let(:tag_value) { 'tag' }
 
@@ -128,9 +129,9 @@ RSpec.describe Datadog::Tracing::Tracer do
 
           context 'contains version and the span service name' do
             let(:tracer_options) do
-              { default_service: 'global-service', tags: { Datadog::Core::Environment::Ext::TAG_VERSION => '1.1.0' } }
+              {default_service: 'global-service', tags: {Datadog::Core::Environment::Ext::TAG_VERSION => '1.1.0'}}
             end
-            let(:options) { { service: service } }
+            let(:options) { {service: service} }
 
             context 'is nil' do
               let(:service) { nil }
@@ -169,9 +170,9 @@ RSpec.describe Datadog::Tracing::Tracer do
           end
 
           context 'and default tags are set on the tracer' do
-            let(:tracer_options) { { tags: default_tags } }
+            let(:tracer_options) { {tags: default_tags} }
 
-            let(:default_tags) { { default_tag_name => default_tag_value } }
+            let(:default_tags) { {default_tag_name => default_tag_value} }
             let(:default_tag_name) { 'default_tag' }
             let(:default_tag_value) { 'default_value' }
 
@@ -202,7 +203,7 @@ RSpec.describe Datadog::Tracing::Tracer do
         before { trace }
 
         context 'start_time:' do
-          let(:options) { { start_time: start_time } }
+          let(:options) { {start_time: start_time} }
           let(:start_time) { Time.utc(2021, 8, 3) }
 
           it 'is ignored' do
@@ -599,7 +600,7 @@ RSpec.describe Datadog::Tracing::Tracer do
         let(:span) { trace }
 
         context 'start_time:' do
-          let(:options) { { start_time: start_time } }
+          let(:options) { {start_time: start_time} }
           let(:start_time) { Time.utc(2021, 8, 3) }
 
           it 'sets the span start_time' do
@@ -823,6 +824,24 @@ RSpec.describe Datadog::Tracing::Tracer do
 
           expect(tracer.active_trace).to be original_trace
         end
+
+        it 'create a root span inside the block' do
+          tracer.continue_trace!(digest) do
+            tracer.trace('span-1') {}
+          end
+
+          expect(span).to be_root_span
+        end
+
+        it 'create multiple root spans inside the block' do
+          tracer.continue_trace!(digest) do
+            tracer.trace('span-1') {}
+            tracer.trace('span-2') {}
+          end
+
+          expect(spans).to have(2).items
+          expect(spans).to all(be_root_span)
+        end
       end
     end
 
@@ -866,6 +885,24 @@ RSpec.describe Datadog::Tracing::Tracer do
 
           expect(tracer.active_trace).to be original_trace
         end
+
+        it 'create a root span inside the block' do
+          tracer.continue_trace!(digest) do
+            tracer.trace('span-1') {}
+          end
+
+          expect(span).to be_root_span
+        end
+
+        it 'create two root spans inside the block' do
+          tracer.continue_trace!(digest) do
+            tracer.trace('span-1') {}
+            tracer.trace('span-2') {}
+          end
+
+          expect(spans).to have(2).items
+          expect(spans).to all(be_root_span)
+        end
       end
     end
 
@@ -873,7 +910,7 @@ RSpec.describe Datadog::Tracing::Tracer do
       let(:digest) do
         Datadog::Tracing::TraceDigest.new(
           span_id: Datadog::Tracing::Utils.next_id,
-          trace_distributed_tags: { '_dd.p.test' => 'value' },
+          trace_distributed_tags: {'_dd.p.test' => 'value'},
           trace_id: Datadog::Tracing::Utils.next_id,
           trace_origin: 'synthetics',
           trace_sampling_priority: Datadog::Tracing::Sampling::Ext::Priority::USER_KEEP,
@@ -944,6 +981,47 @@ RSpec.describe Datadog::Tracing::Tracer do
 
           expect(tracer.active_trace).to be original_trace
         end
+
+        it 'create a child span inside the block' do
+          tracer.continue_trace!(digest) do
+            tracer.trace('span-1') {}
+          end
+
+          expect(span.parent_id).to eq(digest.span_id)
+        end
+
+        it 'create multiple child spans inside the block' do
+          tracer.continue_trace!(digest) do
+            tracer.trace('span-1') {}
+            tracer.trace('span-2') {}
+          end
+
+          expect(spans).to have(2).items
+          expect(spans.map(&:parent_id)).to all(eq(digest.span_id))
+        end
+
+        it 'flushes finished spans and loses unfinished spans' do
+          tracer.continue_trace!(digest) do
+            tracer.trace('finished-span') {}
+            tracer.trace('unfinished-span')
+          end
+
+          expect(spans).to have(1).item
+          expect(span.name).to eq('finished-span')
+        end
+
+        it 'flushes finished span when an error occurs in the block' do
+          expect do
+            tracer.continue_trace!(digest) do
+              tracer.trace('finished-span') {}
+              raise 'test error'
+            end
+          end.to raise_error('test error')
+
+          expect(spans).to have(1).item
+          expect(span.name).to eq('finished-span')
+          expect(span.parent_id).to eq(digest.span_id)
+        end
       end
     end
 
@@ -952,18 +1030,57 @@ RSpec.describe Datadog::Tracing::Tracer do
 
       before { continue_trace! }
 
-      it 'starts a new trace' do
-        tracer.trace('operation') do |span, trace|
-          expect(trace).to have_attributes(
-            origin: nil,
-            sampling_priority: nil
-          )
+      context 'starts a new trace' do
+        context 'and a block raising an error handling' do
+          it 'flushes trace and restore context' do
+            original_trace = tracer.active_trace
 
-          expect(span).to have_attributes(
-            parent_id: 0,
-            id: a_kind_of(Integer),
-            trace_id: a_kind_of(Integer)
-          )
+            expect do
+              tracer.continue_trace!(digest) do
+                tracer.trace('span-1') {} # This span finishes
+                raise StandardError, 'test error'
+              end
+            end.to raise_error(StandardError, 'test error')
+
+            expect(spans).to have(1).item
+            expect(span.name).to eq('span-1')
+            expect(tracer.active_trace).to be original_trace
+          end
+        end
+
+        context 'and a block with flush conditions' do
+          it 'flushes trace only when finished_span_count > 0' do
+            tracer.continue_trace!(digest) do
+              tracer.trace('span-1') {} # This completes
+            end
+
+            expect(spans).to have(1).item
+            expect(span.name).to eq('span-1')
+          end
+
+          it 'does not flush trace when finished_span_count is 0' do
+            tracer.continue_trace!(digest) do
+              span_op = tracer.trace('span-1')
+              span_op.start
+              # Don't finish the span, so finished_span_count remains 0
+            end
+
+            # No spans should be flushed
+            expect(spans).to be_empty
+          end
+
+          it 'flushes multiple finished spans' do
+            tracer.continue_trace!(digest) do
+              tracer.trace('span-1') {}
+              tracer.trace('span-2') {}
+              span_op = tracer.trace('span-3')
+              span_op.start # Start but don't finish this one
+            end
+
+            # Only the finished spans should be flushed
+            expect(spans).to have(2).items
+            expect(spans.map(&:name)).to contain_exactly('span-1', 'span-2')
+          end
         end
       end
     end
@@ -978,7 +1095,7 @@ RSpec.describe Datadog::Tracing::Tracer do
     subject(:default_service) { tracer.default_service }
 
     context 'when tracer is initialized with a default_service' do
-      let(:tracer_options) { { **super(), default_service: default_service_value } }
+      let(:tracer_options) { {**super(), default_service: default_service_value} }
       let(:default_service_value) { 'test_default_service' }
 
       it { is_expected.to be default_service_value }
@@ -1030,7 +1147,7 @@ RSpec.describe Datadog::Tracing::Tracer do
     let(:writer) { instance_double(Datadog::Tracing::Writer) }
 
     context 'when the tracer is enabled' do
-      let(:tracer_options) { { enabled: true } }
+      let(:tracer_options) { {enabled: true} }
 
       context 'when writer is nil' do
         let(:writer) { nil }
@@ -1051,7 +1168,7 @@ RSpec.describe Datadog::Tracing::Tracer do
     end
 
     context 'when the tracer is disabled' do
-      let(:tracer_options) { { enabled: false } }
+      let(:tracer_options) { {enabled: false} }
 
       it do
         expect(writer).to_not receive(:stop)
@@ -1061,6 +1178,8 @@ RSpec.describe Datadog::Tracing::Tracer do
   end
 
   describe '#baggage_tracing_interactions' do
+    before { Datadog.configure {} }
+
     it 'baggage set before active trace creates active trace' do
       Datadog::Tracing.baggage['key'] = 'value'
       Datadog::Tracing.trace('operation') do |_span, trace|
@@ -1075,19 +1194,53 @@ RSpec.describe Datadog::Tracing::Tracer do
       Datadog::Tracing.baggage['key'] = 'value'
       expect(Datadog::Tracing.active_trace.to_digest.baggage).to eq('key' => 'value')
     end
-  end
 
-  it 'baggage value is overridden inside an active trace' do
-    Datadog::Tracing.trace('operation') do |_span, trace|
-      Datadog::Tracing.baggage['key'] = 'value'
-      expect(trace.to_digest.baggage).to eq('key' => 'value')
+    it 'baggage value is overridden inside an active trace' do
+      Datadog::Tracing.trace('operation') do |_span, trace|
+        Datadog::Tracing.baggage['key'] = 'value'
+        expect(trace.to_digest.baggage).to eq('key' => 'value')
+      end
     end
-  end
 
-  it 'incoming headers overrides existing baggage' do
-    Datadog::Tracing.baggage['key'] = 'value'
-    Datadog::Tracing.continue_trace!(Datadog::Tracing::TraceDigest.new(baggage: { 'key1' => 'value1' }))
-    expect(Datadog::Tracing.active_trace.to_digest.baggage).to eq('key1' => 'value1')
+    it 'incoming headers overrides existing baggage' do
+      Datadog::Tracing.baggage['key'] = 'value'
+      Datadog::Tracing.continue_trace!(Datadog::Tracing::TraceDigest.new(baggage: {'key1' => 'value1'}))
+      expect(Datadog::Tracing.active_trace.to_digest.baggage).to eq('key1' => 'value1')
+    end
+
+    it 'sets a trace tag for the respective baggage key' do
+      trace_digest = Datadog::Tracing::Contrib::HTTP.extract({'baggage' => 'user.id=test-id'})
+
+      Datadog::Tracing.trace('op', continue_from: trace_digest) do |_span, trace|
+        expect(trace.get_tag('baggage.user.id')).to eq('test-id')
+      end
+    end
+
+    it 'sets span tags for the respective baggage key after formatting' do
+      trace_digest = Datadog::Tracing::Contrib::HTTP.extract(
+        {
+          'baggage' => 'user.id=test-id,session.id=session-123,foo=bar'
+        }
+      )
+
+      tracer.trace('op', continue_from: trace_digest) do |_span, _trace|
+      end
+
+      # Get the completed trace and format it to copy trace tags to root span
+      expect(traces).to have(1).item
+      trace = traces.first
+      formatted_trace = Datadog::Tracing::Transport::TraceFormatter.format!(trace)
+
+      # Check that baggage tags were copied to the root span (span with parent_id=0)
+      root_span = formatted_trace.spans.find { |span| span.parent_id == 0 }
+      expect(root_span).not_to be_nil
+
+      # user.id and session.id are in default configuration
+      expect(root_span.get_tag('baggage.user.id')).to eq('test-id')
+      expect(root_span.get_tag('baggage.session.id')).to eq('session-123')
+      # don't expect foo to be set as a span tag (not in default config)
+      expect(root_span.get_tag('baggage.foo')).to be_nil
+    end
   end
 end
 

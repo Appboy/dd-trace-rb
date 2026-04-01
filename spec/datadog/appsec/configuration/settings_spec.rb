@@ -211,43 +211,81 @@ RSpec.describe Datadog::AppSec::Configuration::Settings do
       end
     end
 
-    describe '#ip_denylist' do
-      subject(:ip_denylist) { settings.appsec.ip_denylist }
+    describe '#ip_passlist' do
+      it 'returns default value' do
+        expect(settings.appsec.ip_passlist).to eq([])
+      end
+    end
 
-      context 'default value' do
-        it { is_expected.to eq [] }
+    describe '#ip_passlist=' do
+      context 'when given a value' do
+        it 'sets the value' do
+          settings.appsec.ip_passlist = ['1.1.1.1']
+
+          expect(settings.appsec.ip_passlist).to eq(['1.1.1.1'])
+        end
+
+        it 'does not log a deprecation warning when set to default value' do
+          expect { settings.appsec.ip_passlist = [] }.not_to log_deprecation
+        end
+
+        it 'logs a deprecation warning when set to a non-default value' do
+          expect { settings.appsec.ip_passlist = ['1.1.1.1'] }.to log_deprecation(
+            'ip_passlist setting is deprecated and will be removed in the next release'
+          )
+        end
+      end
+    end
+
+    describe '#ip_denylist' do
+      it 'returns default value' do
+        expect(settings.appsec.ip_denylist).to eq([])
       end
     end
 
     describe '#ip_denylist=' do
-      subject(:set_appsec_ip_denylist) { settings.appsec.ip_denylist = appsec_ip_denylist }
-
       context 'when given a value' do
-        let(:appsec_ip_denylist) { ['1.1.1.1'] }
+        it 'sets the value' do
+          settings.appsec.ip_denylist = ['1.1.1.1']
 
-        before { set_appsec_ip_denylist }
+          expect(settings.appsec.ip_denylist).to eq(['1.1.1.1'])
+        end
 
-        it { expect(settings.appsec.ip_denylist).to eq(['1.1.1.1']) }
+        it 'does not log a deprecation warning when set to default value' do
+          expect { settings.appsec.ip_denylist = [] }.not_to log_deprecation
+        end
+
+        it 'logs a deprecation warning when set to a non-default value' do
+          expect { settings.appsec.ip_denylist = ['1.1.1.1'] }.to log_deprecation(
+            'ip_denylist setting is deprecated and will be removed in the next release'
+          )
+        end
       end
     end
 
     describe '#user_id_denylist' do
-      subject(:user_id_denylist) { settings.appsec.user_id_denylist }
-
-      context 'default value' do
-        it { is_expected.to eq [] }
+      it 'returns default value' do
+        expect(settings.appsec.user_id_denylist).to eq([])
       end
     end
 
     describe '#user_id_denylist=' do
-      subject(:set_appsec_user_id_denylist) { settings.appsec.user_id_denylist = appsec_user_id_denylist }
-
       context 'when given a value' do
-        let(:appsec_user_id_denylist) { ['1'] }
+        it 'sets the value' do
+          settings.appsec.user_id_denylist = ['1']
 
-        before { set_appsec_user_id_denylist }
+          expect(settings.appsec.user_id_denylist).to eq(['1'])
+        end
 
-        it { expect(settings.appsec.user_id_denylist).to eq(['1']) }
+        it 'does not log a deprecation warning when set to default value' do
+          expect { settings.appsec.user_id_denylist = [] }.not_to log_deprecation
+        end
+
+        it 'logs a deprecation warning when set to a non-default value' do
+          expect { settings.appsec.user_id_denylist = ['1'] }.to log_deprecation(
+            'user_id_denylist setting is deprecated and will be removed in the next release'
+          )
+        end
       end
     end
 
@@ -486,7 +524,7 @@ RSpec.describe Datadog::AppSec::Configuration::Settings do
 
             it 'writes the deprication message' do
               expect(Datadog::Core).to receive(:log_deprecation) do |_, &block|
-                expect(block.call).to match(/setting has been deprecated for removal/)
+                expect(block.call).to match(/setting is deprecated/)
               end
               expect(enabled).to eq(true)
             end
@@ -580,7 +618,7 @@ RSpec.describe Datadog::AppSec::Configuration::Settings do
 
           it 'writes the deprication message' do
             expect(Datadog::Core).to receive(:log_deprecation) do |_, &block|
-              expect(block.call).to match(/setting has been deprecated for removal/)
+              expect(block.call).to match(/setting is deprecated/)
             end
 
             set_appsec_track_user_events_mode
@@ -806,21 +844,13 @@ RSpec.describe Datadog::AppSec::Configuration::Settings do
       end
 
       context 'when valid DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE is set' do
-        around do |example|
-          ClimateControl.modify('DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE' => 'disabled') do
-            example.run
-          end
-        end
+        with_env 'DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE' => 'disabled'
 
         it { expect(settings.appsec.auto_user_instrumentation.mode).to eq('disabled') }
       end
 
       context 'when valid DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE short value is set' do
-        around do |example|
-          ClimateControl.modify('DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE' => 'anon') do
-            example.run
-          end
-        end
+        with_env 'DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE' => 'anon'
 
         it 'expands the alias value to the long version' do
           expect(settings.appsec.auto_user_instrumentation.mode).to eq('anonymization')
@@ -828,11 +858,7 @@ RSpec.describe Datadog::AppSec::Configuration::Settings do
       end
 
       context 'when invalid DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE is set' do
-        around do |example|
-          ClimateControl.modify('DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE' => 'unknown') do
-            example.run
-          end
-        end
+        with_env 'DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE' => 'unknown'
 
         it 'sets the value to the default and writes a warning message' do
           expect(logger).to receive(:warn).with(/value provided is not supported/)
@@ -866,9 +892,9 @@ RSpec.describe Datadog::AppSec::Configuration::Settings do
     describe 'block' do
       describe 'templates' do
         [
-          { method_name: :html, env_var: 'DD_APPSEC_HTTP_BLOCKED_TEMPLATE_HTML' },
-          { method_name: :json, env_var: 'DD_APPSEC_HTTP_BLOCKED_TEMPLATE_JSON' },
-          { method_name: :text, env_var: 'DD_APPSEC_HTTP_BLOCKED_TEMPLATE_TEXT' }
+          {method_name: :html, env_var: 'DD_APPSEC_HTTP_BLOCKED_TEMPLATE_HTML'},
+          {method_name: :json, env_var: 'DD_APPSEC_HTTP_BLOCKED_TEMPLATE_JSON'},
+          {method_name: :text, env_var: 'DD_APPSEC_HTTP_BLOCKED_TEMPLATE_TEXT'}
         ].each do |test_info|
           describe "##{test_info[:method_name]}" do
             context "when #{test_info[:env_var]}" do
@@ -939,26 +965,22 @@ RSpec.describe Datadog::AppSec::Configuration::Settings do
 
     describe 'api_security' do
       describe '#enabled' do
-        subject(:enabled) { settings.appsec.api_security.enabled }
+        context 'when DD_API_SECURITY_ENABLED is undefined' do
+          with_env 'DD_API_SECURITY_ENABLED' => nil
 
-        context 'when DD_EXPERIMENTAL_API_SECURITY_ENABLED' do
-          around do |example|
-            ClimateControl.modify('DD_EXPERIMENTAL_API_SECURITY_ENABLED' => api_security_enabled) do
-              example.run
-            end
-          end
+          it { expect(settings.appsec.api_security.enabled).to eq(true) }
+        end
 
-          context 'is not defined' do
-            let(:api_security_enabled) { nil }
+        context 'when DD_API_SECURITY_ENABLED is set to true' do
+          with_env 'DD_API_SECURITY_ENABLED' => 'true'
 
-            it { is_expected.to eq false }
-          end
+          it { expect(settings.appsec.api_security.enabled).to eq(true) }
+        end
 
-          context 'is defined' do
-            let(:api_security_enabled) { 'true' }
+        context 'when DD_API_SECURITY_ENABLED is set to false' do
+          with_env 'DD_API_SECURITY_ENABLED' => 'false'
 
-            it { is_expected.to eq(true) }
-          end
+          it { expect(settings.appsec.api_security.enabled).to eq(false) }
         end
       end
 
@@ -976,41 +998,85 @@ RSpec.describe Datadog::AppSec::Configuration::Settings do
         end
       end
 
-      describe '#sample_rate' do
-        subject(:sample_rate) { settings.appsec.api_security.sample_rate.rate }
+      describe 'endpoint_collection' do
+        describe '#enabled' do
+          context 'when DD_API_SECURITY_ENDPOINT_COLLECTION_ENABLED is undefined' do
+            with_env 'DD_API_SECURITY_ENDPOINT_COLLECTION_ENABLED' => nil
 
-        context 'when DD_API_SECURITY_REQUEST_SAMPLE_RATE' do
-          around do |example|
-            ClimateControl.modify('DD_API_SECURITY_REQUEST_SAMPLE_RATE' => api_security_sample_rate) do
-              example.run
+            it { expect(settings.appsec.api_security.endpoint_collection.enabled).to eq(true) }
+          end
+
+          context 'when DD_API_SECURITY_ENDPOINT_COLLECTION_ENABLED is set to true' do
+            with_env 'DD_API_SECURITY_ENDPOINT_COLLECTION_ENABLED' => 'true'
+
+            it { expect(settings.appsec.api_security.endpoint_collection.enabled).to eq(true) }
+          end
+
+          context 'when DD_API_SECURITY_ENDPOINT_COLLECTION_ENABLED is set to false' do
+            with_env 'DD_API_SECURITY_ENDPOINT_COLLECTION_ENABLED' => 'false'
+
+            it { expect(settings.appsec.api_security.endpoint_collection.enabled).to eq(false) }
+          end
+        end
+
+        describe '#enabled=' do
+          [true, false].each do |value|
+            context "when given #{value}" do
+              before { settings.appsec.api_security.endpoint_collection.enabled = value }
+
+              it { expect(settings.appsec.api_security.endpoint_collection.enabled).to eq(value) }
             end
-          end
-
-          context 'is not defined' do
-            let(:api_security_sample_rate) { nil }
-
-            it { is_expected.to eq 0.1 }
-          end
-
-          context 'is defined' do
-            let(:api_security_sample_rate) { '0.3' }
-
-            it { is_expected.to eq 0.3 }
           end
         end
       end
 
-      describe '#sample_rate=' do
-        subject(:set_api_security_sample_rate) do
-          settings.appsec.api_security.sample_rate = api_security_sample_rate
+      describe 'downstream_body_analysis' do
+        describe '#sample_rate' do
+          context 'when DD_API_SECURITY_DOWNSTREAM_BODY_ANALYSIS_SAMPLE_RATE is undefined' do
+            around do |example|
+              ClimateControl.modify('DD_API_SECURITY_DOWNSTREAM_BODY_ANALYSIS_SAMPLE_RATE' => nil) { example.run }
+            end
+
+            it { expect(settings.appsec.api_security.downstream_body_analysis.sample_rate).to eq(0.5) }
+          end
+
+          context 'when DD_API_SECURITY_DOWNSTREAM_BODY_ANALYSIS_SAMPLE_RATE is set' do
+            around do |example|
+              ClimateControl.modify('DD_API_SECURITY_DOWNSTREAM_BODY_ANALYSIS_SAMPLE_RATE' => '0.3') { example.run }
+            end
+
+            it { expect(settings.appsec.api_security.downstream_body_analysis.sample_rate).to eq(0.3) }
+          end
         end
 
-        context 'when given a value higher than 1.0' do
-          let(:api_security_sample_rate) { 1.2 }
+        describe '#sample_rate=' do
+          before { settings.appsec.api_security.downstream_body_analysis.sample_rate = 0.7 }
 
-          before { set_api_security_sample_rate }
+          it { expect(settings.appsec.api_security.downstream_body_analysis.sample_rate).to eq(0.7) }
+        end
 
-          it { expect(settings.appsec.api_security.sample_rate.rate).to eq 1.0 }
+        describe '#max_requests' do
+          context 'when DD_API_SECURITY_MAX_DOWNSTREAM_REQUEST_BODY_ANALYSIS is undefined' do
+            around do |example|
+              ClimateControl.modify('DD_API_SECURITY_MAX_DOWNSTREAM_REQUEST_BODY_ANALYSIS' => nil) { example.run }
+            end
+
+            it { expect(settings.appsec.api_security.downstream_body_analysis.max_requests).to eq(1) }
+          end
+
+          context 'when DD_API_SECURITY_MAX_DOWNSTREAM_REQUEST_BODY_ANALYSIS is set' do
+            around do |example|
+              ClimateControl.modify('DD_API_SECURITY_MAX_DOWNSTREAM_REQUEST_BODY_ANALYSIS' => '5') { example.run }
+            end
+
+            it { expect(settings.appsec.api_security.downstream_body_analysis.max_requests).to eq(5) }
+          end
+        end
+
+        describe '#max_requests=' do
+          before { settings.appsec.api_security.downstream_body_analysis.max_requests = 3 }
+
+          it { expect(settings.appsec.api_security.downstream_body_analysis.max_requests).to eq(3) }
         end
       end
     end

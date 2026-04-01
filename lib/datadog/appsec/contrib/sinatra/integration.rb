@@ -18,7 +18,7 @@ module Datadog
           register_as :sinatra
 
           def self.version
-            Gem.loaded_specs['sinatra'] && Gem.loaded_specs['sinatra'].version
+            Gem.loaded_specs['sinatra']&.version
           end
 
           def self.loaded?
@@ -26,7 +26,7 @@ module Datadog
           end
 
           def self.compatible?
-            super && version >= MINIMUM_VERSION
+            !!(super && (version&.>= MINIMUM_VERSION))
           end
 
           def self.auto_instrument?

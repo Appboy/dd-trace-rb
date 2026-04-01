@@ -2,35 +2,35 @@ module Datadog
   module DI
     module Transport
       module Input
-        class EncodedParcel
-          include Datadog::Core::Transport::Parcel
-        end
-
         class Request < Datadog::Core::Transport::Request
+          @serialized_tags: untyped
+
+          attr_reader serialized_tags: untyped
+
+          def initialize: (untyped parcel, untyped serialized_tags) -> void
         end
 
-        class Transport
-          @apis: untyped
+        class Transport < Core::Transport::Transport
+          @telemetry: Datadog::Core::Telemetry::Component?
 
-          @logger: untyped
+          MAX_SERIALIZED_SNAPSHOT_SIZE: ::Integer
+          MAX_CHUNK_SIZE: ::Integer
+          DEFAULT_CHUNK_SIZE: ::Integer
 
-          @client: untyped
+          attr_reader telemetry: Datadog::Core::Telemetry::Component?
 
-          attr_reader client: untyped
+          def initialize: (
+            Datadog::Core::Transport::HTTP::API::Map apis,
+            ::String default_api,
+            logger: Datadog::Core::Logger,
+            ?telemetry: Datadog::Core::Telemetry::Component?
+          ) -> void
 
-          attr_reader apis: untyped
+          def send_input: (untyped payload, untyped tags, on_serialization_error: ^(String, Exception) -> void) -> untyped
 
-          attr_reader default_api: untyped
+          def send_input_chunk: (untyped chunked_payload, untyped serialized_tags) -> untyped
 
-          attr_reader current_api_id: untyped
-
-          attr_reader logger: untyped
-
-          def initialize: (untyped apis, untyped default_api, logger: untyped) -> void
-
-          def current_api: () -> untyped
-
-          def send_input: (untyped payload) -> untyped
+          def encoder: () -> singleton(Core::Encoding::JSONEncoder)
         end
       end
     end

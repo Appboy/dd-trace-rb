@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
-require_relative '../../../instrumentation/gateway'
 require_relative '../../../event'
+require_relative '../../../trace_keeper'
+require_relative '../../../security_event'
+require_relative '../../../instrumentation/gateway'
 
 module Datadog
   module AppSec
@@ -16,11 +18,14 @@ module Datadog
 
                 watch_request_dispatch(gateway)
                 watch_request_routed(gateway)
+                watch_response_body_json(gateway)
               end
 
               def watch_request_dispatch(gateway = Instrumentation.gateway)
-                gateway.watch('sinatra.request.dispatch', :appsec) do |stack, gateway_request|
-                  context = gateway_request.env[Datadog::AppSec::Ext::CONTEXT_KEY]
+                gateway.watch('sinatra.request.dispatch') do |stack, gateway_request|
+                  context = gateway_request.env[AppSec::Ext::CONTEXT_KEY] # : Context
+
+                  context.state[:web_framework] = 'sinatra'
 
                   persistent_data = {
                     'server.request.body' => gateway_request.form_hash
@@ -28,18 +33,17 @@ module Datadog
 
                   result = context.run_waf(persistent_data, {}, Datadog.configuration.appsec.waf_timeout)
 
+                  if result.match? || !result.attributes.empty?
+                    context.events.push(
+                      AppSec::SecurityEvent.new(result, trace: context.trace, span: context.span)
+                    )
+                  end
+
                   if result.match?
-                    Datadog::AppSec::Event.tag_and_keep!(context, result)
+                    AppSec::Event.tag(context, result)
+                    TraceKeeper.keep!(context.trace) if result.keep?
 
-                    context.events << {
-                      waf_result: result,
-                      trace: context.trace,
-                      span: context.span,
-                      request: gateway_request,
-                      actions: result.actions
-                    }
-
-                    Datadog::AppSec::ActionsHandler.handle(result.actions)
+                    AppSec::ActionsHandler.handle(result.actions)
                   end
 
                   stack.call(gateway_request.request)
@@ -47,8 +51,9 @@ module Datadog
               end
 
               def watch_request_routed(gateway = Instrumentation.gateway)
-                gateway.watch('sinatra.request.routed', :appsec) do |stack, (gateway_request, gateway_route_params)|
-                  context = gateway_request.env[Datadog::AppSec::Ext::CONTEXT_KEY]
+                gateway.watch('sinatra.request.routed') do |stack, args|
+                  gateway_request, gateway_route_params = args # : [Gateway::Request, Gateway::RouteParams]
+                  context = gateway_request.env[AppSec::Ext::CONTEXT_KEY] # : Context
 
                   persistent_data = {
                     'server.request.path_params' => gateway_route_params.params
@@ -57,20 +62,41 @@ module Datadog
                   result = context.run_waf(persistent_data, {}, Datadog.configuration.appsec.waf_timeout)
 
                   if result.match?
-                    Datadog::AppSec::Event.tag_and_keep!(context, result)
+                    AppSec::Event.tag(context, result)
+                    TraceKeeper.keep!(context.trace) if result.keep?
 
-                    context.events << {
-                      waf_result: result,
-                      trace: context.trace,
-                      span: context.span,
-                      request: gateway_request,
-                      actions: result.actions
-                    }
+                    context.events.push(
+                      AppSec::SecurityEvent.new(result, trace: context.trace, span: context.span)
+                    )
 
-                    Datadog::AppSec::ActionsHandler.handle(result.actions)
+                    AppSec::ActionsHandler.handle(result.actions)
                   end
 
                   stack.call(gateway_request.request)
+                end
+              end
+
+              def watch_response_body_json(gateway = Instrumentation.gateway)
+                gateway.watch('sinatra.response.body.json') do |stack, container|
+                  context = container.context # : Context
+
+                  persistent_data = {
+                    'server.response.body' => container.data
+                  }
+                  result = context.run_waf(persistent_data, {}, Datadog.configuration.appsec.waf_timeout)
+
+                  if result.match?
+                    context.events.push(
+                      AppSec::SecurityEvent.new(result, trace: context.trace, span: context.span)
+                    )
+
+                    AppSec::Event.tag(context, result)
+                    TraceKeeper.keep!(context.trace) if result.keep?
+
+                    AppSec::ActionsHandler.handle(result.actions)
+                  end
+
+                  stack.call(container)
                 end
               end
             end

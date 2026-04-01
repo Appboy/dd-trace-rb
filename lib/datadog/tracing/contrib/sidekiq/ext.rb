@@ -12,7 +12,9 @@ module Datadog
           # @!visibility private
           ENV_ANALYTICS_ENABLED = 'DD_TRACE_SIDEKIQ_ANALYTICS_ENABLED'
           ENV_ANALYTICS_SAMPLE_RATE = 'DD_TRACE_SIDEKIQ_ANALYTICS_SAMPLE_RATE'
+          ENV_DISTRIBUTED_TRACING = 'DD_TRACE_SIDEKIQ_DISTRIBUTED_TRACING'
           SERVICE_NAME = 'sidekiq'
+          SIDEKIQ_8_SECONDS_PER_INTEGER = 0.001 # Sidekiq 8 uses integer epoch milliseconds, rather than epoch floats
           SPAN_PUSH = 'sidekiq.push'
           SPAN_JOB = 'sidekiq.job'
           SPAN_JOB_FETCH = 'sidekiq.job_fetch'

@@ -30,7 +30,8 @@ RSpec.describe 'Sidekiq distributed tracing' do
       'EmptyWorker',
       Class.new do
         include Sidekiq::Worker
-        def perform; end
+        def perform
+        end
       end
     )
   end
@@ -113,6 +114,7 @@ RSpec.describe 'Sidekiq distributed tracing' do
 
         job_span, push_span = spans
 
+        expect(job_span.get_tag('sidekiq.job.delay')).to be_positive
         expect(push_span).to be_root_span
         expect(push_span.get_tag('sidekiq.job.id')).to eq(job_span.get_tag('sidekiq.job.id'))
 
@@ -201,6 +203,7 @@ RSpec.describe 'Sidekiq distributed tracing' do
 
         job_span, push_span = spans
 
+        expect(job_span.get_tag('sidekiq.job.delay')).to be_positive
         expect(push_span.trace_id).to_not eq(job_span.trace_id)
         expect(push_span.get_tag('sidekiq.job.id')).to eq(job_span.get_tag('sidekiq.job.id'))
 

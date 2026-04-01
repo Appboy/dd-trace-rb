@@ -44,10 +44,9 @@ module Datadog
               endpoint = payload.fetch(:endpoint)
               env = payload.fetch(:env)
               ### BRAZE MODIFICATION
-              # OLD
-              # api_view = api_view(endpoint.options[:for])
-              # NEW
-              # The changes here https://github.com/ruby-grape/grape/issues/1825 don't work with the way we use grape
+              # The upstream api_view helper calls api.base.to_s for Grape >= 1.2.0,
+              # which does not return the correct namespace for Braze's API structure.
+              # See: https://github.com/ruby-grape/grape/issues/1825
               api = endpoint.options[:for]
               api_view = api.to_s
               if api_view.blank?
@@ -86,7 +85,7 @@ module Datadog
               end
 
               Thread.current[KEY_RUN] = true
-            rescue StandardError => e
+            rescue => e
               Datadog.logger.error(e.message)
               Datadog::Core::Telemetry::Logger.report(e)
             end
@@ -106,10 +105,7 @@ module Datadog
                 # collect endpoint details
                 endpoint = payload.fetch(:endpoint)
                 ### BRAZE MODIFICATION
-                # OLD
-                # api_view = api_view(endpoint.options[:for])
-                # NEW
-                # The changes here https://github.com/ruby-grape/grape/issues/1825 don't work with the way we use grape
+                # Same fix as endpoint_start_process — see comment there.
                 api = endpoint.options[:for]
                 api_view = api.to_s
                 if api_view.blank?
@@ -140,7 +136,7 @@ module Datadog
                 span.start(start)
                 span.finish(finish)
               end
-            rescue StandardError => e
+            rescue => e
               Datadog.logger.error(e.message)
               Datadog::Core::Telemetry::Logger.report(e)
             end
@@ -184,7 +180,7 @@ module Datadog
               span.set_tag(Tracing::Metadata::Ext::TAG_OPERATION, Ext::TAG_OPERATION_ENDPOINT_RENDER)
 
               Thread.current[KEY_RENDER] = true
-            rescue StandardError => e
+            rescue => e
               Datadog.logger.error(e.message)
               Datadog::Core::Telemetry::Logger.report(e)
             end
@@ -209,7 +205,7 @@ module Datadog
                 span.start(start)
                 span.finish(finish)
               end
-            rescue StandardError => e
+            rescue => e
               Datadog.logger.error(e.message)
               Datadog::Core::Telemetry::Logger.report(e)
             end
@@ -248,7 +244,7 @@ module Datadog
                 span.start(start)
                 span.finish(finish)
               end
-            rescue StandardError => e
+            rescue => e
               Datadog.logger.error(e.message)
               Datadog::Core::Telemetry::Logger.report(e)
             end
@@ -273,10 +269,10 @@ module Datadog
             end
 
             def api_view(api)
-              # If the API inherits from Grape::API in version >= 1.2.0
+              # If the API inherits from Grape::API in version >= 1.2.0 and version <= 2.3.0
               # then the API will be an instance and the name must be derived from the base.
               # See https://github.com/ruby-grape/grape/issues/1825
-              if defined?(::Grape::API::Instance) && api <= ::Grape::API::Instance
+              if defined?(::Grape::API::Instance) && api <= ::Grape::API::Instance && api.respond_to?(:base)
                 api.base.to_s
               else
                 api.to_s
@@ -285,7 +281,7 @@ module Datadog
 
             def endpoint_expand_path(endpoint)
               route_path = endpoint.options[:path]
-              namespace = endpoint.routes.first && endpoint.routes.first.namespace || ''
+              namespace = endpoint.routes.first&.namespace || ''
 
               path = (namespace.split('/') + route_path)
                 .reject { |p| p.blank? || p.eql?('/') }
@@ -317,11 +313,11 @@ module Datadog
               matcher = datadog_configuration[:error_statuses]
               return true unless matcher
 
-              matcher.include?(status) if matcher
+              matcher&.include?(status)
             end
 
             def enabled?
-              Datadog.configuration.tracing.enabled && \
+              Datadog.configuration.tracing.enabled &&
                 datadog_configuration[:enabled] == true
             end
 

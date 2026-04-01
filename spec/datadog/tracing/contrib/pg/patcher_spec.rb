@@ -13,7 +13,7 @@ require 'pg'
 
 RSpec.describe 'PG::Connection patcher' do
   let(:service_name) { 'pg' }
-  let(:configuration_options) { { service_name: service_name } }
+  let(:configuration_options) { {service_name: service_name} }
 
   let(:conn) do
     PG::Connection.new(
@@ -66,7 +66,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = exec
@@ -93,6 +93,7 @@ RSpec.describe 'PG::Connection patcher' do
 
         context 'when a successful query is made' do
           it_behaves_like 'with sql comment propagation', span_op_name: 'pg.exec'
+          it_behaves_like 'with sql comment base hash injection', span_op_name: 'pg.exec'
 
           it 'produces a trace' do
             exec
@@ -171,7 +172,7 @@ RSpec.describe 'PG::Connection patcher' do
           end
 
           context 'when there is custom error handling' do
-            let(:configuration_options) { { on_error: ->(_span, _error) { false } } }
+            let(:configuration_options) { {on_error: ->(_span, _error) { false }} }
 
             it 'calls the error handler' do
               expect { exec }.to raise_error(PG::Error)
@@ -200,7 +201,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             exec
@@ -256,7 +257,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:exec) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.exec(sql_statement, &:clear) rescue nil
+
+              conn.exec(sql_statement, &:clear)
+            rescue
+              nil
             end
 
             it do
@@ -336,7 +340,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = exec_params
@@ -462,7 +466,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             exec_params
@@ -518,7 +522,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:exec_params) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.exec_params(sql_statement, [1], &:clear) rescue nil
+
+              conn.exec_params(sql_statement, [1], &:clear)
+            rescue
+              nil
             end
 
             it do
@@ -603,7 +610,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = exec_prepared
@@ -721,7 +728,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             exec_prepared
@@ -773,7 +780,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:exec_prepared) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.exec_prepared('prepared select 1', [1], &:clear) rescue nil
+
+              conn.exec_prepared('prepared select 1', [1], &:clear)
+            rescue
+              nil
             end
 
             it do
@@ -856,7 +866,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = async_exec
@@ -981,7 +991,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             async_exec
@@ -1037,7 +1047,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:async_exec) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.async_exec(sql_statement, &:clear) rescue nil
+
+              conn.async_exec(sql_statement, &:clear)
+            rescue
+              nil
             end
 
             it do
@@ -1126,7 +1139,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = async_exec_params
@@ -1251,7 +1264,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             async_exec_params
@@ -1307,7 +1320,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:async_exec_params) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.async_exec_params(sql_statement, [1], &:clear) rescue nil
+
+              conn.async_exec_params(sql_statement, [1], &:clear)
+            rescue
+              nil
             end
 
             it do
@@ -1392,7 +1408,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = async_exec_prepared
@@ -1511,7 +1527,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             async_exec_prepared
@@ -1563,7 +1579,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:async_exec_prepared) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.async_exec_prepared('prepared select 1', [1], &:clear) rescue nil
+
+              conn.async_exec_prepared('prepared select 1', [1], &:clear)
+            rescue
+              nil
             end
 
             it do
@@ -1652,7 +1671,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = sync_exec
@@ -1775,7 +1794,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             sync_exec
@@ -1831,7 +1850,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:sync_exec) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.sync_exec(sql_statement, &:clear) rescue nil
+
+              conn.sync_exec(sql_statement, &:clear)
+            rescue
+              nil
             end
 
             it do
@@ -1913,7 +1935,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = sync_exec_params
@@ -2037,7 +2059,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             sync_exec_params
@@ -2091,7 +2113,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:sync_exec_params) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.sync_exec_params(sql_statement, [1], &:clear) rescue nil
+
+              conn.sync_exec_params(sql_statement, [1], &:clear)
+            rescue
+              nil
             end
 
             it do
@@ -2174,7 +2199,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             result = sync_exec_prepared
@@ -2291,7 +2316,7 @@ RSpec.describe 'PG::Connection patcher' do
         end
 
         context 'when instrumentation is disabled' do
-          let(:configuration_options) { { enabled: false } }
+          let(:configuration_options) { {enabled: false} }
 
           it 'does not generate spans' do
             sync_exec_prepared
@@ -2343,7 +2368,10 @@ RSpec.describe 'PG::Connection patcher' do
           context 'when `PG::Result` is cleared before the block is finished' do
             subject(:sync_exec_prepared) do
               # Older versions of the pg gem raises execption when `clear` is called within a block
-              conn.sync_exec_prepared('prepared select 1', [1], &:clear) rescue nil
+
+              conn.sync_exec_prepared('prepared select 1', [1], &:clear)
+            rescue
+              nil
             end
 
             it do

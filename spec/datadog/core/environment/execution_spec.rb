@@ -31,13 +31,11 @@ RSpec.describe Datadog::Core::Environment::Execution do
       # `Datadog::Core::Environment::Execution.rspec?` because
       # otherwise we'll have no real test for non-RSpec cases.
       around do |example|
-        begin
-          original = $PROGRAM_NAME
-          $PROGRAM_NAME = 'not-rspec'
-          example.run
-        ensure
-          $PROGRAM_NAME = original
-        end
+        original = $PROGRAM_NAME
+        $PROGRAM_NAME = 'not-rspec'
+        example.run
+      ensure
+        $PROGRAM_NAME = original
       end
 
       let!(:repl_script) do
@@ -80,7 +78,9 @@ RSpec.describe Datadog::Core::Environment::Execution do
       end
 
       context 'when in a Minitest test' do
-        before { skip('Minitest not in bundle') unless Gem.loaded_specs['minitest'] }
+        before do
+          skip('JRuby does not support fork') if RUBY_ENGINE == 'jruby'
+        end
 
         it 'returns true' do
           expect_in_fork do
@@ -105,21 +105,8 @@ RSpec.describe Datadog::Core::Environment::Execution do
       end
 
       context 'when in a Rails Spring process' do
-        before do
-          unless PlatformHelpers.ci? || Gem.loaded_specs['spring']
-            skip('spring gem not present. In CI, this test is never skipped.')
-          end
-        end
-
         let(:script) do
           <<-RUBY
-            require 'bundler/inline'
-
-            gemfile(true) do
-              source 'https://rubygems.org'
-              gem 'spring', '>= 2.0.2'
-            end
-
             # Load the `bin/spring` file, just like a real Spring application would.
             # https://github.com/rails/spring/blob/0a80019e1abdedb3291afb13e8cfb72f3992da90/bin/spring
             ARGV = ['help'] # Let's ask for a simple Spring command, so that it returns quickly.
@@ -162,21 +149,10 @@ RSpec.describe Datadog::Core::Environment::Execution do
       end
 
       context 'for Cucumber' do
-        before do
-          unless PlatformHelpers.ci? || Gem.loaded_specs['cucumber']
-            skip('cucumber gem not present. In CI, this test is never skipped.')
-          end
-        end
-
         let(:script) do
-          <<-'RUBY'
-            require 'bundler/inline'
-
-            gemfile(true) do
-              source 'https://rubygems.org'
-
-              gem 'cucumber', '>= 3', '<= 9.2.1'
-            end
+          <<-RUBY
+            require 'cucumber'
+            require 'logger' if RUBY_VERSION >= '3.0'
 
             load Gem.bin_path('cucumber', 'cucumber')
           RUBY
@@ -258,15 +234,8 @@ RSpec.describe Datadog::Core::Environment::Execution do
 
     context 'when given WebMock', skip: Gem::Version.new(Bundler::VERSION) < Gem::Version.new('2') do
       it do
-        out, _err, status = Bundler.with_unbundled_env do
+        out, err, status = Bundler.with_unbundled_env do
           Open3.capture3('ruby', stdin_data: <<-RUBY
-            require 'bundler/inline'
-
-            gemfile(true, quiet: true) do
-              source 'https://rubygems.org'
-              gem 'webmock'
-            end
-
             require 'webmock'
             WebMock.enable!
 
@@ -279,6 +248,7 @@ RSpec.describe Datadog::Core::Environment::Execution do
           )
         end
 
+        expect(err).to be_empty
         expect(out).to end_with('ACTUAL:true')
         expect(status.exitstatus).to eq(0)
       end

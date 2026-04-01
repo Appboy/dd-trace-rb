@@ -26,6 +26,8 @@ require 'datadog/tracing/tracer'
 require 'datadog/tracing/span'
 
 require 'support/core_helpers'
+require 'support/environment_helpers'
+require 'support/execute_in_fork'
 require 'support/faux_transport'
 require 'support/faux_writer'
 require 'support/loaded_gem'
@@ -34,12 +36,14 @@ require 'support/log_helpers'
 require 'support/network_helpers'
 require 'support/object_space_helper'
 require 'support/platform_helpers'
+require 'support/process_helpers'
 require 'support/span_helpers'
 require 'support/spy_transport'
 require 'support/synchronization_helpers'
+require 'support/tag_builder_helpers'
 require 'support/test_helpers'
+require 'support/telemetry_helpers'
 require 'support/tracer_helpers'
-require 'support/crashtracking_helpers'
 require 'support/http_server_helpers'
 
 begin
@@ -64,13 +68,15 @@ RSpec.configure do |config|
   config.include LogHelpers
   config.include NetworkHelpers
   config.include LoadedGem
-  config.extend  LoadedGem::Helpers
+  config.extend LoadedGem::Helpers
   config.include LoadedGem::Helpers
   config.include SpanHelpers
   config.include SynchronizationHelpers
+  config.include TelemetryHelpers
   config.include TracerHelpers
   config.include TestHelpers::RSpec::Integration, :integration
   config.include HttpServerHelpers
+  config.extend PlatformHelpers::ClassMethods
 
   config.expect_with :rspec do |expectations|
     expectations.include_chain_clauses_in_custom_matcher_descriptions = true
@@ -167,6 +173,7 @@ RSpec.configure do |config|
       # Exclude acceptable background threads
       background_threads = Thread.list.reject do |t|
         group_name = t.group.instance_variable_get(:@group_name) if t.group.instance_variable_defined?(:@group_name)
+        caller = t.instance_variable_defined?(:@caller) && t.instance_variable_get(:@caller) || []
         backtrace = t.backtrace || []
 
         # Current thread
@@ -174,7 +181,9 @@ RSpec.configure do |config|
           # Thread has shut down, but we caught it right as it was still alive
           !t.alive? ||
           # Long-lived Timeout thread created by `Timeout.create_timeout_thread`.
-          (t.respond_to?(:name) && t.name == 'Timeout stdlib thread') ||
+          t.name == 'Timeout stdlib thread' ||
+          # FFI threads: https://github.com/ffi/ffi/pull/883
+          t.name == 'FFI Callback Dispatcher' ||
           # JRuby: Long-lived Timeout thread created by `Timeout.create_timeout_thread`.
           t == Timeout.instance_exec { @timeout_thread if defined?(@timeout_thread) } ||
           # Internal JRuby thread
@@ -185,8 +194,10 @@ RSpec.configure do |config|
           t[:WEBrickSocket] ||
           # Rails connection reaper
           backtrace.find { |b| b =~ %r{lib/active_record/connection_adapters/abstract/connection_pool(/reaper)?.rb} } ||
+          # Rails connection reaper in newer Rails are native (no backtrace), but have a consistent call site
+          caller.find { |b| b =~ %r{lib/active_record/connection_adapters/abstract/connection_pool(/reaper)?.rb} } ||
           # Ruby JetBrains debugger
-          (t.class.name && t.class.name.include?('DebugThread')) ||
+          t.class.name&.include?('DebugThread') ||
           # Categorized as a known leaky thread
           !group_name.nil? ||
           # Internal TruffleRuby thread, defined in
@@ -306,11 +317,15 @@ if ENV.key?('CI')
         backtrace = ['(Not available)'] if backtrace.nil? || backtrace.empty?
 
         msg = "#{idx}: #{t} (#{t.class.name})",
-              'Thread Backtrace:',
-              backtrace.map { |l| "\t#{l}" }.join("\n"),
-              "\n"
+          'Thread Backtrace:',
+          backtrace.map { |l| "\t#{l}" }.join("\n"),
+          "\n"
 
-        warn(msg) rescue puts(msg)
+        begin
+          warn(msg)
+        rescue
+          puts(msg)
+        end
       end
 
       Kernel.exit(1)
@@ -334,3 +349,9 @@ Timeout.ensure_timeout_thread_created if Timeout.respond_to?(:ensure_timeout_thr
 # mock objects in the test suite. Disable it and tests that need code tracking
 # will enable it back for themselves.
 Datadog::DI.deactivate_tracking! if defined?(Datadog::DI) && Datadog::DI.respond_to?(:deactivate_tracking!)
+
+# Enable raising errors when accessing unknown datadog/otel environment variables
+# (Default is to return `nil`). See docs/AccessEnvironmentVariables.md for details.
+#
+# (Note that the `config_helper_spec.rb` checks this is enabled as well!)
+Datadog::DATADOG_ENV.instance_variable_set(:@raise_on_unknown_env_var, true)

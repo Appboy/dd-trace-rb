@@ -1,36 +1,31 @@
 module Datadog
   module Profiling
     class HttpTransport
-      type exporter_configuration_array = [:agentless | :agent, untyped]
+      type exporter_configuration_array = [:agentless, Integer, bool, String, String] | [:agent, Integer, bool, String]
 
       attr_reader exporter_configuration: exporter_configuration_array
 
-      @upload_timeout_milliseconds: ::Integer
       @exporter_configuration: exporter_configuration_array
 
       def initialize: (
-        agent_settings: Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings,
+        agent_settings: Datadog::Core::Configuration::AgentSettings,
         site: ::String?,
         api_key: ::String?,
         upload_timeout_seconds: ::Integer,
+        use_system_dns: bool,
       ) -> void
 
       def export: (Datadog::Profiling::Flush flush) -> bool
 
       private
 
-      def agentless?: (::String? site, ::String? api_key) -> bool
+      def agentless?: (::String? site, ::String? api_key) -> bool?
 
       def self._native_validate_exporter: (exporter_configuration_array exporter_configuration) -> [:ok | :error, ::String?]
 
       def self._native_do_export: (
         exporter_configuration_array exporter_configuration,
-        ::Integer upload_timeout_milliseconds,
         Datadog::Profiling::Flush flush,
-        ::Integer start_timespec_seconds,
-        ::Integer start_timespec_nanoseconds,
-        ::Integer finish_timespec_seconds,
-        ::Integer finish_timespec_nanoseconds,
       ) -> [:ok | :error, ::Integer | ::String]
 
       def config_without_api_key: () -> ::String

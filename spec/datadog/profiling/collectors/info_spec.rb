@@ -105,6 +105,24 @@ RSpec.describe Datadog::Profiling::Collectors::Info do
         end
       end
     end
+
+    describe "gc tuning reporting" do
+      context "when no gc tuning env vars are set" do
+        it "reports an empty hash" do
+          expect(info.fetch(:runtime).fetch(:gc_tuning)).to eq({})
+        end
+      end
+
+      context "when some gc tuning env vars are set" do
+        with_env "RUBY_GC_HEAP_FREE_SLOTS" => "12345"
+
+        it "reports the gc tuning env vars" do
+          expect(info.fetch(:runtime).fetch(:gc_tuning)).to eq({
+            RUBY_GC_HEAP_FREE_SLOTS: "12345"
+          })
+        end
+      end
+    end
   end
 end
 

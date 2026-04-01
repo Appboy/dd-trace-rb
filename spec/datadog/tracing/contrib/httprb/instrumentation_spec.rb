@@ -40,13 +40,6 @@ RSpec.describe Datadog::Tracing::Contrib::Httprb::Instrumentation do
     Datadog.configure do |c|
       c.tracing.instrument :httprb, configuration_options
     end
-
-    # LibFFI native thread
-    allow(::HTTP::Connection).to receive(:new).and_wrap_original do |method, *args, &block|
-      ThreadHelpers.with_leaky_thread_creation(:ffi) do
-        method.call(*args, &block)
-      end
-    end
   end
 
   around do |example|
@@ -63,8 +56,8 @@ RSpec.describe Datadog::Tracing::Contrib::Httprb::Instrumentation do
     let(:path) { '/sample/path' }
     let(:port) { http_server_port }
     let(:url) { "http://#{host}:#{http_server_port}#{path}" }
-    let(:body) { { 'message' => message, 'code' => code } }
-    let(:headers) { { accept: 'application/json' } }
+    let(:body) { {'message' => message, 'code' => code} }
+    let(:headers) { {accept: 'application/json'} }
     let(:response) { HTTP.post(url, body: body.to_json, headers: headers) }
 
     shared_examples_for 'instrumented request' do
@@ -138,7 +131,7 @@ RSpec.describe Datadog::Tracing::Contrib::Httprb::Instrumentation do
           it_behaves_like 'schema version span'
 
           context 'when configured with global tag headers' do
-            let(:headers) { { 'Request-Id' => 'test-request' } }
+            let(:headers) { {'Request-Id' => 'test-request'} }
 
             include_examples 'with request tracer header tags' do
               let(:request_header_tag) { 'request-id' }

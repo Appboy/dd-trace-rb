@@ -8,7 +8,8 @@ require 'datadog/tracing/flush'
 require 'datadog/tracing/sampling/priority_sampler'
 require 'datadog/tracing/tracer'
 require 'datadog/tracing/writer'
-require 'datadog/core/configuration/settings_spec'
+require 'datadog/tracing/contrib/shared_settings_examples'
+require_relative '../../core/configuration/settings_shared_examples'
 
 RSpec.describe Datadog::Tracing::Configuration::Settings do
   # TODO: Core::Configuration::Settings directly extends Tracing::Configuration::Settings
@@ -19,7 +20,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
   let(:options) { {} }
 
   describe '#tracing' do
-    let(:envs) { { '_test_' => nil } }
+    let(:envs) { {'_test_' => nil} }
     around do |example|
       ClimateControl.modify(envs) do
         example.run
@@ -68,7 +69,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
       subject(:propagation_style_extract) { settings.tracing.propagation_style_extract }
 
       context 'when DD_TRACE_PROPAGATION_STYLE_EXTRACT' do
-        let(:envs) { { 'DD_TRACE_PROPAGATION_STYLE_EXTRACT' => var_value } }
+        let(:envs) { {'DD_TRACE_PROPAGATION_STYLE_EXTRACT' => var_value} }
 
         context 'is not defined' do
           let(:var_value) { nil }
@@ -114,7 +115,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
       subject(:propagation_style_inject) { settings.tracing.propagation_style_inject }
 
       context 'with DD_TRACE_PROPAGATION_STYLE_INJECT' do
-        let(:envs) { { 'DD_TRACE_PROPAGATION_STYLE_INJECT' => var_value } }
+        let(:envs) { {'DD_TRACE_PROPAGATION_STYLE_INJECT' => var_value} }
 
         context 'is not defined' do
           let(:var_value) { nil }
@@ -168,7 +169,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
       end
 
       context 'with DD_TRACE_PROPAGATION_STYLE' do
-        let(:envs) { { 'DD_TRACE_PROPAGATION_STYLE' => var_value } }
+        let(:envs) { {'DD_TRACE_PROPAGATION_STYLE' => var_value} }
 
         context 'is not defined' do
           let(:var_value) { nil }
@@ -191,10 +192,12 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
 
           it 'sets propagation_style_extract' do
             expect { propagation_style }.to change { propagation_style_extract }.to(%w[b3multi b3])
+            expect(settings.tracing.send(:resolve_option, :propagation_style_extract).precedence_set).to eq(Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT)
           end
 
           it 'sets propagation_style_inject' do
             expect { propagation_style }.to change { propagation_style_inject }.to(%w[b3multi b3])
+            expect(settings.tracing.send(:resolve_option, :propagation_style_inject).precedence_set).to eq(Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT)
           end
 
           context 'with a mixed case value' do
@@ -209,7 +212,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
 
       context 'with OTEL_PROPAGATORS' do
         context 'and without DD_TRACE_PROPAGATION_STYLE' do
-          let(:envs) { { 'OTEL_PROPAGATORS' => 'tracecontext,jaegar,b3,b3multi' } }
+          let(:envs) { {'OTEL_PROPAGATORS' => 'tracecontext,jaegar,b3,b3multi'} }
           it 'sets propagation_style_extract' do
             expect { propagation_style }.to change { propagation_style_extract }.to(%w[tracecontext b3 b3multi])
           end
@@ -221,7 +224,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
 
         context 'and with DD_TRACE_PROPAGATION_STYLE' do
           let(:envs) do
-            { 'OTEL_PROPAGATORS' => 'tracecontext,jaegar,b3single', 'DD_TRACE_PROPAGATION_STYLE' => 'b3multi,b3' }
+            {'OTEL_PROPAGATORS' => 'tracecontext,jaegar,b3single', 'DD_TRACE_PROPAGATION_STYLE' => 'b3multi,b3'}
           end
 
           it 'sets propagation_style_extract' do
@@ -238,7 +241,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
     describe '#propagation_extract_first' do
       subject(:propagation_extract_first) { settings.tracing.propagation_extract_first }
 
-      let(:envs) { { 'DD_TRACE_PROPAGATION_EXTRACT_FIRST' => var_value } }
+      let(:envs) { {'DD_TRACE_PROPAGATION_EXTRACT_FIRST' => var_value} }
       let(:var_value) { nil }
       it { is_expected.to be false }
 
@@ -303,12 +306,12 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
         end
       end
 
-      context "when #{Datadog::Tracing::Configuration::Ext::ENV_OTEL_TRACES_EXPORTER}" do
+      context 'when OTEL_TRACES_EXPORTER' do
         around do |example|
           ClimateControl.modify(
             {
               Datadog::Tracing::Configuration::Ext::ENV_ENABLED => dd_enable,
-              Datadog::Tracing::Configuration::Ext::ENV_OTEL_TRACES_EXPORTER => otel_exporter
+              'OTEL_TRACES_EXPORTER' => otel_exporter
             }
           ) do
             example.run
@@ -393,6 +396,51 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
           .to change { settings.tracing.header_tags }
           .from(->(actual) { expect(actual.to_s).to be_empty })
           .to(->(actual) { expect(actual.to_s).to eq('content-type') })
+      end
+    end
+
+    describe '#baggage_tag_keys' do
+      subject(:baggage_tag_keys) { settings.tracing.baggage_tag_keys }
+
+      context "when #{Datadog::Tracing::Configuration::Ext::ENV_BAGGAGE_TAG_KEYS}" do
+        around do |example|
+          ClimateControl.modify(Datadog::Tracing::Configuration::Ext::ENV_BAGGAGE_TAG_KEYS => env_var) do
+            example.run
+          end
+        end
+
+        context 'is not defined' do
+          let(:env_var) { nil }
+
+          it { is_expected.to eq(['user.id', 'session.id', 'account.id']) }
+        end
+
+        context 'is set to empty string' do
+          let(:env_var) { '' }
+
+          it { is_expected.to eq [] }
+        end
+
+        context 'is set to wildcard' do
+          let(:env_var) { '*' }
+
+          it { is_expected.to eq(['*']) }
+        end
+
+        context 'is set to custom keys' do
+          let(:env_var) { 'custom.key1,custom.key2' }
+
+          it { is_expected.to eq(['custom.key1', 'custom.key2']) }
+        end
+      end
+    end
+
+    describe '#baggage_tag_keys=' do
+      it 'updates the #baggage_tag_keys setting' do
+        expect { settings.tracing.baggage_tag_keys = ['new.key'] }
+          .to change { settings.tracing.baggage_tag_keys }
+          .from(['user.id', 'session.id', 'account.id'])
+          .to(['new.key'])
       end
     end
 
@@ -506,6 +554,78 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
       end
     end
 
+    describe '#resource_renaming' do
+      describe '#enabled' do
+        context "when #{Datadog::Tracing::Configuration::Ext::ENV_RESOURCE_RENAMING_ENABLED}" do
+          around do |example|
+            ClimateControl.modify(Datadog::Tracing::Configuration::Ext::ENV_RESOURCE_RENAMING_ENABLED => env_var_value) do
+              example.run
+            end
+          end
+
+          context 'is not defined' do
+            let(:env_var_value) { nil }
+
+            it 'returns false' do
+              expect(settings.tracing.resource_renaming.enabled).to eq(false)
+            end
+          end
+
+          context 'is defined' do
+            let(:env_var_value) { 'true' }
+
+            it 'returns true' do
+              expect(settings.tracing.resource_renaming.enabled).to eq(true)
+            end
+          end
+        end
+      end
+
+      describe '#enabled=' do
+        it 'changes the setting' do
+          expect { settings.tracing.resource_renaming.enabled = true }
+            .to change { settings.tracing.resource_renaming.enabled }
+            .from(false)
+            .to(true)
+        end
+      end
+
+      describe '#always_simplified_endpoint' do
+        context "when #{Datadog::Tracing::Configuration::Ext::ENV_RESOURCE_RENAMING_ALWAYS_SIMPLIFIED_ENDPOINT}" do
+          around do |example|
+            ClimateControl.modify(Datadog::Tracing::Configuration::Ext::ENV_RESOURCE_RENAMING_ALWAYS_SIMPLIFIED_ENDPOINT => env_var_value) do
+              example.run
+            end
+          end
+
+          context 'is not defined' do
+            let(:env_var_value) { nil }
+
+            it 'returns false' do
+              expect(settings.tracing.resource_renaming.always_simplified_endpoint).to eq(false)
+            end
+          end
+
+          context 'is defined' do
+            let(:env_var_value) { 'true' }
+
+            it 'returns true' do
+              expect(settings.tracing.resource_renaming.always_simplified_endpoint).to eq(true)
+            end
+          end
+        end
+      end
+
+      describe '#always_simplified_endpoint=' do
+        it 'changes the setting' do
+          expect { settings.tracing.resource_renaming.always_simplified_endpoint = true }
+            .to change { settings.tracing.resource_renaming.always_simplified_endpoint }
+            .from(false)
+            .to(true)
+        end
+      end
+    end
+
     describe '#native_span_events' do
       subject(:native_span_events) { settings.tracing.native_span_events }
 
@@ -549,11 +669,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
         end
 
         context 'when ENV is provided' do
-          around do |example|
-            ClimateControl.modify(Datadog::Tracing::Configuration::Ext::Sampling::ENV_RATE_LIMIT => '20') do
-              example.run
-            end
-          end
+          with_env Datadog::Tracing::Configuration::Ext::Sampling::ENV_RATE_LIMIT => '20'
 
           it { is_expected.to eq(20) }
         end
@@ -567,11 +683,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
         end
 
         context 'when DD_TRACE_SAMPLE_RATE is provided' do
-          around do |example|
-            ClimateControl.modify(Datadog::Tracing::Configuration::Ext::Sampling::ENV_SAMPLE_RATE => '0.5') do
-              example.run
-            end
-          end
+          with_env Datadog::Tracing::Configuration::Ext::Sampling::ENV_SAMPLE_RATE => '0.5'
 
           it { is_expected.to eq(0.5) }
         end
@@ -582,7 +694,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
           let(:dd_sample_rate) { nil }
           around do |example|
             ClimateControl.modify(
-              Datadog::Tracing::Configuration::Ext::Sampling::ENV_OTEL_TRACES_SAMPLER => otel_sampler,
+              'OTEL_TRACES_SAMPLER' => otel_sampler,
               Datadog::Tracing::Configuration::Ext::Sampling::OTEL_TRACES_SAMPLER_ARG => otel_sampler_arg,
               Datadog::Tracing::Configuration::Ext::Sampling::ENV_SAMPLE_RATE => dd_sample_rate,
             ) do
@@ -645,11 +757,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
         end
 
         context 'when ENV is provided' do
-          around do |example|
-            ClimateControl.modify('DD_TRACE_SAMPLING_RULES' => '[{"sample_rate":0.2}]') do
-              example.run
-            end
-          end
+          with_env 'DD_TRACE_SAMPLING_RULES' => '[{"sample_rate":0.2}]'
 
           it { is_expected.to eq('[{"sample_rate":0.2}]') }
         end
@@ -799,7 +907,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
       end
 
       describe '#writer_options=' do
-        let(:options) { { anything: double } }
+        let(:options) { {anything: double} }
 
         it 'updates the #writer_options setting' do
           expect { settings.tracing.test_mode.writer_options = options }
@@ -842,7 +950,7 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
     end
 
     describe '#writer_options=' do
-      let(:options) { { anything: double } }
+      let(:options) { {anything: double} }
 
       it 'updates the #writer_options setting' do
         expect { settings.tracing.writer_options = options }
@@ -994,6 +1102,30 @@ RSpec.describe Datadog::Tracing::Configuration::Settings do
             expect(settings.tracing.client_ip.enabled).to eq(value)
           end
         end
+      end
+    end
+
+    describe '#http_error_statuses' do
+      # We cannot use described_class (as it is Tracing::Configuration::Settings, not Core::Configuration::Settings)
+      # So we need to create a new `Settings` class to access the anonymous parent setting class of server and client options.
+      parent_setting_class = Datadog::Core::Configuration::Settings.new.tracing.http_error_statuses.class
+
+      describe '#server' do
+        it_behaves_like 'with error_status_codes setting',
+          env: 'DD_TRACE_HTTP_SERVER_ERROR_STATUSES',
+          default: 500..599,
+          settings_class: parent_setting_class,
+          option: :server,
+          fallback_to_global: false
+      end
+
+      describe '#client' do
+        it_behaves_like 'with error_status_codes setting',
+          env: 'DD_TRACE_HTTP_CLIENT_ERROR_STATUSES',
+          default: 400..499,
+          settings_class: parent_setting_class,
+          option: :client,
+          fallback_to_global: false
       end
     end
   end

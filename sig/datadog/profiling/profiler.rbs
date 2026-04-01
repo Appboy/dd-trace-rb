@@ -15,15 +15,17 @@ module Datadog
         scheduler: Datadog::Profiling::Scheduler
       ) -> void
 
+      def enabled?: () -> bool
+
       def start: () -> void
 
-      def shutdown!: () -> void
+      def shutdown!: (?report_last_profile: bool) -> void
 
       private
 
       def stop_worker: () -> void
       def stop_scheduler: () -> void
-      def component_failed: (:worker | :scheduler failed_component) -> void
+      def component_failed: (:worker | :scheduler failed_component, ?log_failure: bool) -> void
     end
   end
 end

@@ -18,6 +18,7 @@ RSpec.describe 'Rack integration tests' do
   include Rack::Test::Methods
 
   let(:rack_options) { {} }
+  let(:server_error_statuses) { nil }
   let(:instrument_http) { false }
   let(:remote_enabled) { false }
   let(:apm_tracing_enabled) { true }
@@ -35,7 +36,7 @@ RSpec.describe 'Rack integration tests' do
         {
           status: 200,
           body: request.headers.to_json,
-          headers: { 'Content-Type' => 'application/json' }
+          headers: {'Content-Type' => 'application/json'}
         }
       end
 
@@ -44,14 +45,14 @@ RSpec.describe 'Rack integration tests' do
       {
         status: 200,
         body: request.headers.to_json,
-        headers: { 'Content-Type' => 'application/json' }
+        headers: {'Content-Type' => 'application/json'}
       }
     end
 
     # Sampler with the same settings as APM disabled one, except it is 4 seconds instead of 60 so tests are faster
     unless apm_tracing_enabled
-      post_sampler = Datadog::Core::Configuration::Components.send(:build_rate_limit_post_sampler, **{ seconds: 4 })
-      allow(Datadog::Core::Configuration::Components).to receive(:build_rate_limit_post_sampler).and_return(post_sampler)
+      post_sampler = Datadog::Tracing::Component.send(:build_rate_limit_post_sampler, seconds: 4)
+      allow(Datadog::Tracing::Component).to receive(:build_rate_limit_post_sampler).and_return(post_sampler)
     end
 
     unless remote_enabled
@@ -62,6 +63,7 @@ RSpec.describe 'Rack integration tests' do
         c.tracing.instrument :rack, rack_options
         # Required for APM disablement tests with distributed tracing as rack can extract but not inject headers
         c.tracing.instrument :http if instrument_http
+        c.tracing.http_error_statuses.server = server_error_statuses if server_error_statuses
       end
     end
   end
@@ -119,7 +121,7 @@ RSpec.describe 'Rack integration tests' do
       let(:routes) do
         proc do
           map '/success/' do
-            run(proc { |_env| [200, { 'Content-Type' => 'text/html' }, ['OK']] })
+            run(proc { |_env| [200, {'Content-Type' => 'text/html'}, ['OK']] })
           end
         end
       end
@@ -419,7 +421,7 @@ RSpec.describe 'Rack integration tests' do
       let(:routes) do
         proc do
           map '/success/' do
-            run(proc { |_env| [200, { 'Content-Type' => 'text/html' }, ['OK']] })
+            run(proc { |_env| [200, {'Content-Type' => 'text/html'}, ['OK']] })
           end
 
           map '/requestdownstream' do
@@ -435,7 +437,7 @@ RSpec.describe 'Rack integration tests' do
                   ext_response = http.request(ext_request)
                 end
 
-                [200, { 'Content-Type' => 'application/json' }, [ext_response.body]]
+                [200, {'Content-Type' => 'application/json'}, [ext_response.body]]
               end
             )
           end
@@ -456,7 +458,7 @@ RSpec.describe 'Rack integration tests' do
           it_behaves_like 'a rack GET 200 span'
 
           context 'and default quantization' do
-            let(:rack_options) { { quantize: {} } }
+            let(:rack_options) { {quantize: {}} }
 
             it do
               expect(span.get_tag('http.url')).to eq('/success/')
@@ -466,7 +468,7 @@ RSpec.describe 'Rack integration tests' do
           end
 
           context 'and quantization activated for URL base' do
-            let(:rack_options) { { quantize: { base: :show } } }
+            let(:rack_options) { {quantize: {base: :show}} }
 
             it do
               expect(span.get_tag('http.url')).to eq('http://example.org/success/')
@@ -482,7 +484,7 @@ RSpec.describe 'Rack integration tests' do
           let(:route) { '/success?foo=bar' }
 
           context 'and default quantization' do
-            let(:rack_options) { { quantize: {} } }
+            let(:rack_options) { {quantize: {}} }
 
             it_behaves_like 'a rack GET 200 span'
 
@@ -494,7 +496,7 @@ RSpec.describe 'Rack integration tests' do
           end
 
           context 'and quantization activated for the query' do
-            let(:rack_options) { { quantize: { query: { show: ['foo'] } } } }
+            let(:rack_options) { {quantize: {query: {show: ['foo']}}} }
 
             it_behaves_like 'a rack GET 200 span'
 
@@ -510,7 +512,7 @@ RSpec.describe 'Rack integration tests' do
           subject(:response) { get '/success?foo=bar', {}, 'REQUEST_URI' => '/success?foo=bar' }
 
           context 'and default quantization' do
-            let(:rack_options) { { quantize: {} } }
+            let(:rack_options) { {quantize: {}} }
 
             it_behaves_like 'a rack GET 200 span'
 
@@ -525,7 +527,7 @@ RSpec.describe 'Rack integration tests' do
           end
 
           context 'and quantization activated for the query' do
-            let(:rack_options) { { quantize: { query: { show: ['foo'] } } } }
+            let(:rack_options) { {quantize: {query: {show: ['foo']}}} }
 
             it_behaves_like 'a rack GET 200 span'
 
@@ -540,7 +542,7 @@ RSpec.describe 'Rack integration tests' do
           end
 
           context 'and quantization activated for base' do
-            let(:rack_options) { { quantize: { base: :show } } }
+            let(:rack_options) { {quantize: {base: :show}} }
 
             it_behaves_like 'a rack GET 200 span'
 
@@ -559,7 +561,7 @@ RSpec.describe 'Rack integration tests' do
           subject(:response) { get '/success?foo=bar', {}, 'REQUEST_URI' => 'http://example.org/success?foo=bar' }
 
           context 'and default quantization' do
-            let(:rack_options) { { quantize: {} } }
+            let(:rack_options) { {quantize: {}} }
 
             it_behaves_like 'a rack GET 200 span'
 
@@ -574,7 +576,7 @@ RSpec.describe 'Rack integration tests' do
           end
 
           context 'and quantization activated for the query' do
-            let(:rack_options) { { quantize: { query: { show: ['foo'] } } } }
+            let(:rack_options) { {quantize: {query: {show: ['foo']}}} }
 
             it_behaves_like 'a rack GET 200 span'
 
@@ -589,7 +591,7 @@ RSpec.describe 'Rack integration tests' do
           end
 
           context 'and quantization activated for base' do
-            let(:rack_options) { { quantize: { base: :show } } }
+            let(:rack_options) { {quantize: {base: :show}} }
 
             it_behaves_like 'a rack GET 200 span'
 
@@ -693,7 +695,7 @@ RSpec.describe 'Rack integration tests' do
           end
 
           it do
-            agent_settings = Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings.new(
+            agent_settings = Datadog::Core::Configuration::AgentSettings.new(
               adapter: nil,
               ssl: false,
               uds_path: nil,
@@ -789,18 +791,18 @@ RSpec.describe 'Rack integration tests' do
       let(:routes) do
         proc do
           map '/request_queuing_enabled' do
-            run(proc { |_env| [200, { 'Content-Type' => 'text/html' }, ['OK']] })
+            run(proc { |_env| [200, {'Content-Type' => 'text/html'}, ['OK']] })
           end
         end
       end
 
       describe 'when request queueing enabled' do
-        let(:rack_options) { { request_queuing: true } }
+        let(:rack_options) { {request_queuing: true} }
 
         it 'creates web_server_span and rack span' do
           get 'request_queuing_enabled',
             nil,
-            { Datadog::Tracing::Contrib::Rack::QueueTime::REQUEST_START => "t=#{Time.now.to_f}" }
+            {Datadog::Tracing::Contrib::Rack::QueueTime::REQUEST_START => "t=#{Time.now.to_f}"}
 
           expect(trace.resource).to eq('GET 200')
 
@@ -848,7 +850,7 @@ RSpec.describe 'Rack integration tests' do
       let(:routes) do
         proc do
           map '/failure/' do
-            run(proc { |_env| [400, { 'Content-Type' => 'text/html' }, ['KO']] })
+            run(proc { |_env| [400, {'Content-Type' => 'text/html'}, ['KO']] })
           end
         end
       end
@@ -880,13 +882,40 @@ RSpec.describe 'Rack integration tests' do
             .to eq('server')
         end
       end
+
+      context 'when the server error statuses are configured to include 400' do
+        let(:server_error_statuses) { 400..599 }
+
+        describe 'GET request' do
+          subject(:response) { get '/failure/' }
+
+          it do
+            expect(span.name).to eq('rack.request')
+            expect(span.type).to eq('web')
+            expect(span.service).to eq(Datadog.configuration.service)
+            expect(span.resource).to eq('GET 400')
+            expect(span.get_tag('http.method')).to eq('GET')
+            expect(span.get_tag('http.status_code')).to eq('400')
+            expect(span.get_tag('http.url')).to eq('/failure/')
+            expect(span.get_tag('http.base_url')).to eq('http://example.org')
+            expect(span.status).to eq(1)
+            expect(span).to be_root_span
+            expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_COMPONENT))
+              .to eq('rack')
+            expect(span.get_tag(Datadog::Tracing::Metadata::Ext::TAG_OPERATION))
+              .to eq('request')
+            expect(span.get_tag('span.kind'))
+              .to eq('server')
+          end
+        end
+      end
     end
 
     context 'with a route that has a server error' do
       let(:routes) do
         proc do
           map '/server_error/' do
-            run(proc { |_env| [500, { 'Content-Type' => 'text/html' }, ['KO']] })
+            run(proc { |_env| [500, {'Content-Type' => 'text/html'}, ['KO']] })
           end
         end
       end
@@ -1020,7 +1049,7 @@ RSpec.describe 'Rack integration tests' do
                   request_span.set_tag('http.status_code', 201)
                   request_span.set_tag('http.url', '/app/static/')
 
-                  [200, { 'Content-Type' => 'text/html' }, ['OK']]
+                  [200, {'Content-Type' => 'text/html'}, ['OK']]
                 end
               )
             end
@@ -1063,7 +1092,7 @@ RSpec.describe 'Rack integration tests' do
       end
 
       context 'when `request_queuing` enabled and trace resource overwritten by nested app' do
-        let(:rack_options) { { request_queuing: true } }
+        let(:rack_options) { {request_queuing: true} }
         let(:routes) do
           proc do
             map '/resource_override' do
@@ -1072,7 +1101,7 @@ RSpec.describe 'Rack integration tests' do
                   Datadog::Tracing.trace('nested_app', resource: 'UserController#show') do |span_op, trace_op|
                     trace_op.resource = span_op.resource
 
-                    [200, { 'Content-Type' => 'text/html' }, ['OK']]
+                    [200, {'Content-Type' => 'text/html'}, ['OK']]
                   end
                 end
               )
@@ -1083,7 +1112,7 @@ RSpec.describe 'Rack integration tests' do
         it 'creates 2 web_server spans and rack span with resource overriden' do
           get '/resource_override',
             nil,
-            { Datadog::Tracing::Contrib::Rack::QueueTime::REQUEST_START => "t=#{Time.now.to_f}" }
+            {Datadog::Tracing::Contrib::Rack::QueueTime::REQUEST_START => "t=#{Time.now.to_f}"}
 
           expect(trace.resource).to eq('UserController#show')
 
@@ -1148,7 +1177,7 @@ RSpec.describe 'Rack integration tests' do
                     request_span.status = 1
                     request_span.set_tag('error.stack', 'Handled exception')
 
-                    [500, { 'Content-Type' => 'text/html' }, ['OK']]
+                    [500, {'Content-Type' => 'text/html'}, ['OK']]
                   end
                 )
               end
@@ -1191,7 +1220,7 @@ RSpec.describe 'Rack integration tests' do
                     request_span = env[Datadog::Tracing::Contrib::Rack::Ext::RACK_ENV_REQUEST_SPAN]
                     request_span.set_tag('error.stack', 'Handled exception')
 
-                    [500, { 'Content-Type' => 'text/html' }, ['OK']]
+                    [500, {'Content-Type' => 'text/html'}, ['OK']]
                   end
                 )
               end
@@ -1236,14 +1265,14 @@ RSpec.describe 'Rack integration tests' do
               app_tracer.trace('leaky-span-2')
               app_tracer.trace('leaky-span-3')
 
-              [200, { 'Content-Type' => 'text/html' }, ['OK']]
+              [200, {'Content-Type' => 'text/html'}, ['OK']]
             end
 
             run(handler)
           end
 
           map '/success/' do
-            run(proc { |_env| [200, { 'Content-Type' => 'text/html' }, ['OK']] })
+            run(proc { |_env| [200, {'Content-Type' => 'text/html'}, ['OK']] })
           end
         end
       end
@@ -1422,7 +1451,7 @@ RSpec.describe 'Rack integration tests' do
       context 'when configured with global tag headers' do
         subject(:response) { get '/headers/', {}, headers }
 
-        let(:headers) { { 'HTTP_REQUEST_ID' => 'test-id' } }
+        let(:headers) { {'HTTP_REQUEST_ID' => 'test-id'} }
 
         include_examples 'with request tracer header tags' do
           let(:request_header_tag) { 'request-id' }
@@ -1447,7 +1476,7 @@ RSpec.describe 'Rack integration tests' do
             run(
               proc do |env|
                 env['REQUEST_METHOD'] = 'GET'
-                [200, { 'Content-Type' => 'text/html' }, ['OK']]
+                [200, {'Content-Type' => 'text/html'}, ['OK']]
               end
             )
           end
@@ -1478,7 +1507,7 @@ RSpec.describe 'Rack integration tests' do
         use Datadog::Tracing::Contrib::Rack::TraceMiddleware
 
         map '/success' do
-          run(proc { |_env| [200, { 'Content-Type' => 'text/html' }, ['OK']] })
+          run(proc { |_env| [200, {'Content-Type' => 'text/html'}, ['OK']] })
         end
       end.to_app
     end

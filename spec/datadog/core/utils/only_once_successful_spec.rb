@@ -3,7 +3,7 @@ require 'datadog/core/utils/only_once_successful'
 RSpec.describe Datadog::Core::Utils::OnlyOnceSuccessful do
   subject(:only_once_successful) { described_class.new(limit) }
 
-  let(:limit) { 0 }
+  let(:limit) { nil }
 
   describe '#run' do
     context 'when limitless' do
@@ -92,7 +92,11 @@ RSpec.describe Datadog::Core::Utils::OnlyOnceSuccessful do
       end
 
       it 'runs again' do
-        only_once_successful.run { raise 'boom' } rescue nil
+        begin
+          only_once_successful.run { raise 'boom' }
+        rescue
+          nil
+        end
 
         expect { |block| only_once_successful.run(&block) }.to yield_control
       end

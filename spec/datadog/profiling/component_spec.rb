@@ -12,6 +12,7 @@ RSpec.describe Datadog::Profiling::Component do
     if Datadog::Profiling.supported?
       allow(Datadog::Profiling::Tasks::Setup).to receive(:new).and_return(profiler_setup_task)
       allow(Datadog::Profiling::Ext::DirMonkeyPatches).to receive(:apply!).and_return(true)
+      settings.profiling.advanced.shutdown_on_exec_enabled = false
     end
   end
 
@@ -51,7 +52,7 @@ RSpec.describe Datadog::Profiling::Component do
 
     context "with :enabled true" do
       before do
-        skip_if_profiling_not_supported(self)
+        skip_if_profiling_not_supported
 
         settings.profiling.enabled = true
         # Disabled to avoid warnings on Rubies where it's not supported; there's separate specs that test it when enabled
@@ -69,12 +70,16 @@ RSpec.describe Datadog::Profiling::Component do
           dummy_stack_recorder = instance_double(Datadog::Profiling::StackRecorder, "dummy_stack_recorder")
           allow(Datadog::Profiling::StackRecorder).to receive(:new).and_return(dummy_stack_recorder)
 
-          expect(settings.profiling.advanced).to receive(:max_frames).and_return(:max_frames_config)
+          expect(settings.profiling.advanced)
+            .to receive(:max_frames).and_return(:max_frames_config)
           expect(settings.profiling.advanced)
             .to receive(:timeline_enabled).at_least(:once).and_return(:timeline_enabled_config)
           expect(settings.profiling.advanced.endpoint.collection)
             .to receive(:enabled).and_return(:endpoint_collection_enabled_config)
-          expect(settings.profiling.advanced).to receive(:waiting_for_gvl_threshold_ns).and_return(:threshold_ns_config)
+          expect(settings.profiling.advanced)
+            .to receive(:waiting_for_gvl_threshold_ns).and_return(:threshold_ns_config)
+          expect(settings.profiling.advanced)
+            .to receive(:native_filenames_enabled).and_return(:native_filenames_enabled_config)
 
           expect(Datadog::Profiling::Collectors::ThreadContext).to receive(:new).with(
             recorder: dummy_stack_recorder,
@@ -84,6 +89,7 @@ RSpec.describe Datadog::Profiling::Component do
             timeline_enabled: :timeline_enabled_config,
             waiting_for_gvl_threshold_ns: :threshold_ns_config,
             otel_context_enabled: false,
+            native_filenames_enabled: :native_filenames_enabled_config,
           )
 
           build_profiler_component
@@ -122,6 +128,12 @@ RSpec.describe Datadog::Profiling::Component do
           expect(settings.profiling.advanced)
             .to receive(:allocation_counting_enabled).and_return(:allocation_counting_enabled_config)
           expect(described_class).to receive(:enable_gvl_profiling?).and_return(:gvl_profiling_result)
+          expect(settings.profiling.advanced)
+            .to receive(:sighandler_sampling_enabled).and_return(:sighandler_sampling_enabled_config)
+          expect(settings.profiling.advanced)
+            .to receive(:experimental_cpu_sampling_interval_ms).and_return(:cpu_sampling_interval_ms_config)
+          expect(described_class).to receive(:valid_cpu_sampling_interval)
+            .with(:cpu_sampling_interval_ms_config, logger).and_return(:cpu_sampling_interval_ms_config)
 
           expect(Datadog::Profiling::Collectors::CpuAndWallTimeWorker).to receive(:new).with(
             gc_profiling_enabled: anything,
@@ -131,14 +143,17 @@ RSpec.describe Datadog::Profiling::Component do
             allocation_profiling_enabled: false,
             allocation_counting_enabled: :allocation_counting_enabled_config,
             gvl_profiling_enabled: :gvl_profiling_result,
+            sighandler_sampling_enabled: :sighandler_sampling_enabled_config,
+            cpu_sampling_interval_ms: :cpu_sampling_interval_ms_config,
           )
 
           build_profiler_component
         end
 
-        context "when gc_enabled is true" do
+        context "when gc_enabled is true", ruby: '>= 2.7' do
           before do
             settings.profiling.advanced.gc_enabled = true
+
             stub_const("RUBY_VERSION", testing_version)
           end
 
@@ -202,9 +217,12 @@ RSpec.describe Datadog::Profiling::Component do
           before do
             settings.profiling.allocation_enabled = true
             settings.profiling.advanced.gc_enabled = false # Disable this to avoid any additional warnings coming from it
-            stub_const("RUBY_VERSION", testing_version)
 
-            described_class.const_get(:ALLOCATION_WITH_RACTORS_ONLY_ONCE).send(:reset_ran_once_state_for_tests)
+            # Since RUBY_VERSION is used to test if the ExecMonkeyPatch should be applied, mocking it below on an old
+            # Ruby would cause it to wrongly be triggered, so we avoid running these specs there.
+            skip "Behavior does not apply to current Ruby version" if RUBY_VERSION < "2.7" && testing_version >= "3"
+
+            stub_const("RUBY_VERSION", testing_version)
           end
 
           context "on Ruby 2.x" do
@@ -268,7 +286,7 @@ RSpec.describe Datadog::Profiling::Component do
           ["3.1.4", "3.2.3", "3.3.0"].each do |fixed_ruby|
             context "on a Ruby 3 version where https://bugs.ruby-lang.org/issues/18464 is fixed (#{fixed_ruby})" do
               let(:testing_version) { fixed_ruby }
-              it "initializes CpuAndWallTimeWorker and StackRecorder with allocation sampling support and warns" do
+              it "initializes CpuAndWallTimeWorker and StackRecorder with allocation sampling support and debug logs" do
                 expect(Datadog::Profiling::Collectors::CpuAndWallTimeWorker).to receive(:new).with hash_including(
                   allocation_profiling_enabled: true,
                 )
@@ -276,7 +294,7 @@ RSpec.describe Datadog::Profiling::Component do
                   .with(hash_including(alloc_samples_enabled: true))
                   .and_call_original
 
-                expect(logger).to receive(:info).with(/Ractors.+stopping/)
+                expect(logger).to receive(:debug).with(/Ractors.+stopping/)
                 expect(logger).to receive(:debug).with(/Enabled allocation profiling/)
 
                 build_profiler_component
@@ -302,7 +320,7 @@ RSpec.describe Datadog::Profiling::Component do
           end
         end
 
-        context "when heap profiling is enabled" do
+        context "when heap profiling is enabled", ruby: '>= 2.7' do
           # Universally supported ruby version for allocation profiling by default
           let(:testing_version) { "3.3.0" }
 
@@ -331,16 +349,20 @@ RSpec.describe Datadog::Profiling::Component do
               settings.profiling.allocation_enabled = false
             end
 
-            it "raises an ArgumentError during component initialization" do
-              expect { build_profiler_component }.to raise_error(ArgumentError, /requires allocation profiling/)
+            it "initializes StackRecorder without heap sampling support and warns" do
+              expect(Datadog::Profiling::StackRecorder).to receive(:new)
+                .with(hash_including(heap_samples_enabled: false, heap_size_enabled: false))
+                .and_call_original
+
+              expect(logger).to receive(:warn).with(/allocation profiling is not enabled/)
+
+              build_profiler_component
             end
           end
 
           context "and allocation profiling enabled and supported" do
             before do
               settings.profiling.allocation_enabled = true
-
-              described_class.const_get(:ALLOCATION_WITH_RACTORS_ONLY_ONCE).send(:reset_ran_once_state_for_tests)
             end
 
             it "initializes StackRecorder with heap sampling support and warns" do
@@ -348,12 +370,25 @@ RSpec.describe Datadog::Profiling::Component do
                 .with(hash_including(heap_samples_enabled: true, heap_size_enabled: true))
                 .and_call_original
 
-              expect(logger).to receive(:info).with(/Ractors.+stopping/)
+              expect(logger).to receive(:debug).with(/Ractors.+stopping/)
               expect(logger).to receive(:debug).with(/Enabled allocation profiling/)
-              expect(logger).to receive(:warn).with(/experimental heap profiling/)
-              expect(logger).to receive(:warn).with(/experimental heap size profiling/)
+              expect(logger).to receive(:debug).with(/Enabled heap profiling/)
 
               build_profiler_component
+            end
+
+            context "on Ruby 4.0 or newer" do
+              let(:testing_version) { "4.0.0" }
+
+              before { allow(logger).to receive(:debug) }
+
+              it "initializes StackRecorder with heap sampling support" do
+                expect(Datadog::Profiling::StackRecorder).to receive(:new)
+                  .with(hash_including(heap_samples_enabled: true, heap_size_enabled: true))
+                  .and_call_original
+
+                build_profiler_component
+              end
             end
 
             context "but heap size profiling is disabled" do
@@ -366,10 +401,9 @@ RSpec.describe Datadog::Profiling::Component do
                   .with(hash_including(heap_samples_enabled: true, heap_size_enabled: false))
                   .and_call_original
 
-                expect(logger).to receive(:info).with(/Ractors.+stopping/)
+                expect(logger).to receive(:debug).with(/Ractors.+stopping/)
                 expect(logger).to receive(:debug).with(/Enabled allocation profiling/)
-                expect(logger).to receive(:warn).with(/experimental heap profiling/)
-                expect(logger).not_to receive(:warn).with(/experimental heap size profiling/)
+                expect(logger).to receive(:debug).with(/Enabled heap profiling/)
 
                 build_profiler_component
               end
@@ -507,9 +541,26 @@ RSpec.describe Datadog::Profiling::Component do
           site: settings.site,
           api_key: settings.api_key,
           upload_timeout_seconds: settings.profiling.upload.timeout_seconds,
+          use_system_dns: settings.profiling.advanced.experimental_use_system_dns,
         )
 
         build_profiler_component
+      end
+
+      context "when experimental_use_system_dns is set" do
+        before do
+          allow(settings.profiling.advanced)
+            .to receive(:experimental_use_system_dns)
+            .and_return(:experimental_use_system_dns_setting_value)
+        end
+
+        it "passes the setting value to HttpTransport" do
+          expect(Datadog::Profiling::HttpTransport).to receive(:new).with(
+            hash_including(use_system_dns: :experimental_use_system_dns_setting_value)
+          )
+
+          build_profiler_component
+        end
       end
 
       it "creates a scheduler with an HttpTransport" do
@@ -630,6 +681,43 @@ RSpec.describe Datadog::Profiling::Component do
         end
       end
 
+      describe "exec workaround" do
+        let(:exec_monkey_patch_name) { "Datadog::Profiling::Ext::ExecMonkeyPatch" }
+
+        context "when can_apply_exec_monkey_patch? is false" do
+          before do
+            allow(described_class).to receive(:can_apply_exec_monkey_patch?).and_return(false)
+          end
+
+          it "does not apply the exec monkey patch" do
+            # Validate there's no previous leaked state
+            expect(Object.ancestors.map(&:to_s)).to_not include(exec_monkey_patch_name)
+
+            build_profiler_component
+
+            expect(Object.ancestors.map(&:to_s)).to_not include(exec_monkey_patch_name)
+          end
+        end
+
+        context "when can_apply_exec_monkey_patch? is true", ruby: '>= 2.7' do
+          let(:exec_monkey_patch) { class_double(exec_monkey_patch_name, apply!: true) }
+
+          before do
+            allow(described_class).to receive(:can_apply_exec_monkey_patch?).and_return(true)
+
+            require "datadog/profiling/ext/exec_monkey_patch" # Make sure it's loaded, so we can mock it cleanly
+
+            stub_const(exec_monkey_patch_name, exec_monkey_patch)
+          end
+
+          it "applies the exec monkey patch" do
+            expect(exec_monkey_patch).to receive(:apply!)
+
+            build_profiler_component
+          end
+        end
+      end
+
       context "when GVL profiling is requested" do
         before do
           settings.profiling.advanced.gvl_enabled = true
@@ -726,10 +814,60 @@ RSpec.describe Datadog::Profiling::Component do
     end
   end
 
+  describe ".valid_cpu_sampling_interval" do
+    subject(:valid_cpu_sampling_interval) do
+      described_class.send(:valid_cpu_sampling_interval, cpu_sampling_interval_ms, logger)
+    end
+
+    context "when cpu_sampling_interval_ms is above 10" do
+      let(:cpu_sampling_interval_ms) { 11 }
+
+      it "logs a warning" do
+        expect(logger).to receive(:warn).with(
+          /cpu_sampling_interval_ms is set to 11ms, but values above 10ms are not supported.*overhead_target_percentage/
+        )
+
+        valid_cpu_sampling_interval
+      end
+
+      it "returns 10" do
+        allow(logger).to receive(:warn)
+
+        expect(valid_cpu_sampling_interval).to eq 10
+      end
+    end
+
+    context "when cpu_sampling_interval_ms is below 10" do
+      let(:cpu_sampling_interval_ms) { 5 }
+
+      it "logs a debug message" do
+        expect(logger).to receive(:debug) do |&block|
+          expect(block.call).to match(/cpu_sampling_interval_ms set to 5ms/)
+        end
+
+        valid_cpu_sampling_interval
+      end
+
+      it "returns the value" do
+        allow(logger).to receive(:debug)
+
+        expect(valid_cpu_sampling_interval).to eq 5
+      end
+    end
+
+    context "when cpu_sampling_interval_ms is exactly 10" do
+      let(:cpu_sampling_interval_ms) { 10 }
+
+      it "returns 10" do
+        expect(valid_cpu_sampling_interval).to eq 10
+      end
+    end
+  end
+
   describe ".no_signals_workaround_enabled?" do
     subject(:no_signals_workaround_enabled?) { described_class.send(:no_signals_workaround_enabled?, settings, logger) }
 
-    before { skip_if_profiling_not_supported(self) }
+    before { skip_if_profiling_not_supported }
 
     context "when no_signals_workaround_enabled is false" do
       before do
@@ -1027,6 +1165,46 @@ RSpec.describe Datadog::Profiling::Component do
       end
 
       include_examples "no_signals_workaround_enabled :auto behavior"
+    end
+  end
+
+  describe ".can_apply_exec_monkey_patch?" do
+    subject(:can_apply_exec_monkey_patch?) { described_class.send(:can_apply_exec_monkey_patch?, settings) }
+
+    context "on Ruby < 2.7" do
+      before { stub_const("RUBY_VERSION", "2.6.9") }
+
+      it "returns false and does not require the monkey patch" do
+        expect(described_class).to_not receive(:require)
+
+        expect(can_apply_exec_monkey_patch?).to be false
+      end
+    end
+
+    context "on Ruby >= 2.7" do
+      before do
+        stub_const("RUBY_VERSION", "2.7.0")
+      end
+
+      context "when exec workaround is disabled" do
+        before { settings.profiling.advanced.shutdown_on_exec_enabled = false }
+
+        it "returns false but still requires the monkey patch" do
+          expect(described_class).to receive(:require).with("datadog/profiling/ext/exec_monkey_patch")
+
+          expect(can_apply_exec_monkey_patch?).to be false
+        end
+      end
+
+      context "when exec workaround is enabled" do
+        before { settings.profiling.advanced.shutdown_on_exec_enabled = true }
+
+        it "returns true and requires the monkey patch" do
+          expect(described_class).to receive(:require).with("datadog/profiling/ext/exec_monkey_patch")
+
+          expect(can_apply_exec_monkey_patch?).to be true
+        end
+      end
     end
   end
 end

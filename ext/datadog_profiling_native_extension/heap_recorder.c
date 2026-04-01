@@ -5,6 +5,18 @@
 #include "libdatadog_helpers.h"
 #include "time_helpers.h"
 
+// Note on calloc vs ruby_xcalloc use:
+// * Whenever we're allocating memory after being called by the Ruby VM in a "regular" situation (e.g. initializer)
+//   we should use `ruby_xcalloc` to give the VM visibility into what we're doing + give it a chance to manage GC
+// * BUT, when we're being called during a sample, being in the middle of an object allocation is a very special
+//   situation for the VM to be in, and we've found the hard way (e.g. https://bugs.ruby-lang.org/issues/20629 and
+//   https://github.com/DataDog/dd-trace-rb/pull/4240 ) that it can be easy to do things the VM didn't expect.
+// * Thus, out of caution and to avoid future potential issues such as the ones above, whenever we allocate memory
+//   during **sampling** we use `calloc` instead of `ruby_xcalloc`. Note that we've never seen issues from using
+//   `ruby_xcalloc` at any time, so this is a **precaution** not a "we've seen it break". But it seems a harmless
+//   one to use.
+// This applies to both heap_recorder.c and collectors_thread_context.c
+
 // Minimum age (in GC generations) of heap objects we want to include in heap
 // recorder iterations. Object with age 0 represent objects that have yet to undergo
 // a GC and, thus, may just be noise/trash at instant of iteration and are usually not
@@ -24,80 +36,37 @@
 
 // A compact representation of a stacktrace frame for a heap allocation.
 typedef struct {
-  char *name;
-  char *filename;
+  ddog_prof_ManagedStringId name;
+  ddog_prof_ManagedStringId filename;
   int32_t line;
 } heap_frame;
 
+// We use memcmp/st_hash below to compare/hash an entire array of heap_frames, so want to make sure no padding is added
+// We could define the structure to be packed, but that seems even weirder across compilers, and this seems more portable?
+_Static_assert(
+    sizeof(heap_frame) == sizeof(ddog_prof_ManagedStringId) * 2 + sizeof(int32_t),
+    "Size of heap_frame does not match the sum of its members. Padding detected."
+);
+
 // A compact representation of a stacktrace for a heap allocation.
-//
-// We could use a ddog_prof_Slice_Location instead but it has a lot of
-// unused fields. Because we have to keep these stacks around for at
-// least the lifetime of the objects allocated therein, we would be
-// incurring a non-negligible memory overhead for little purpose.
+// Used to dedup heap allocation stacktraces across multiple objects sharing the same allocation location.
 typedef struct {
+  // How many objects are currently tracked in object_records recorder for this heap record.
+  uint32_t num_tracked_objects;
+
   uint16_t frames_len;
   heap_frame frames[];
-} heap_stack;
-static heap_stack* heap_stack_new(ddog_prof_Slice_Location);
-static void heap_stack_free(heap_stack*);
-static st_index_t heap_stack_hash(heap_stack*, st_index_t);
+} heap_record;
+static heap_record* heap_record_new(heap_recorder*, ddog_prof_Slice_Location);
+static void heap_record_free(heap_recorder*, heap_record*);
 
 #if MAX_FRAMES_LIMIT > UINT16_MAX
   #error Frames len type not compatible with MAX_FRAMES_LIMIT
 #endif
 
-enum heap_record_key_type {
-  HEAP_STACK,
-  LOCATION_SLICE
-};
-// This struct allows us to use two different types of stacks when
-// interacting with a heap_record hash.
-//
-// The idea is that we'll always want to use heap_stack-keys when
-// adding new entries to the hash since that's the compact stack
-// representation we rely on internally.
-//
-// However, when querying for an existing heap record, we'd save a
-// lot of allocations if we could query with the
-// ddog_prof_Slice_Location we receive in our external API.
-//
-// To allow this interchange, we need a union and need to ensure
-// that whatever shape of the union, the heap_record_key_cmp_st
-// and heap_record_hash_st functions return the same results for
-// equivalent stacktraces.
-typedef struct {
-  enum heap_record_key_type type;
-  union {
-    // key never owns this if set
-    heap_stack *heap_stack;
-    // key never owns this if set
-    ddog_prof_Slice_Location *location_slice;
-  };
-} heap_record_key;
-static heap_record_key* heap_record_key_new(heap_stack*);
-static void heap_record_key_free(heap_record_key*);
-static int heap_record_key_cmp_st(st_data_t, st_data_t);
-static st_index_t heap_record_key_hash_st(st_data_t);
-static const struct st_hash_type st_hash_type_heap_record_key = {
-    heap_record_key_cmp_st,
-    heap_record_key_hash_st,
-};
-
-// Need to implement these functions to support the location-slice based keys
-static st_index_t ddog_location_hash(ddog_prof_Location, st_index_t seed);
-static st_index_t ddog_location_slice_hash(ddog_prof_Slice_Location, st_index_t seed);
-
-// A heap record is used for deduping heap allocation stacktraces across multiple
-// objects sharing the same allocation location.
-typedef struct {
-  // How many objects are currently tracked by the heap recorder for this heap record.
-  uint32_t num_tracked_objects;
-  // stack is owned by the associated record and gets cleaned up alongside it
-  heap_stack *stack;
-} heap_record;
-static heap_record* heap_record_new(heap_stack*);
-static void heap_record_free(heap_record*);
+static int heap_record_cmp_st(st_data_t, st_data_t);
+static st_index_t heap_record_hash_st(st_data_t);
+static const struct st_hash_type st_hash_type_heap_record = { .compare = heap_record_cmp_st, .hash = heap_record_hash_st };
 
 // An object record is used for storing data about currently tracked live objects
 typedef struct {
@@ -106,9 +75,19 @@ typedef struct {
   live_object_data object_data;
 } object_record;
 static object_record* object_record_new(long, heap_record*, live_object_data);
-static void object_record_free(object_record*);
-static VALUE object_record_inspect(object_record*);
+static void object_record_free(heap_recorder*, object_record*);
+static VALUE object_record_inspect(heap_recorder*, object_record*);
 static object_record SKIPPED_RECORD = {0};
+
+// A pending recording is used to defer the object_id call on Ruby 4+
+// where calling rb_obj_id during on_newobj_event is unsafe.
+typedef struct {
+  VALUE object_ref;
+  heap_record *heap_record;
+  live_object_data object_data;
+} pending_recording;
+
+#define MAX_PENDING_RECORDINGS 256
 
 struct heap_recorder {
   // Config
@@ -116,12 +95,15 @@ struct heap_recorder {
   bool size_enabled;
   uint sample_rate;
 
-  // Map[key: heap_record_key*, record: heap_record*]
-  // NOTE: We always use heap_record_key.type == HEAP_STACK for storage but support lookups
-  // via heap_record_key.type == LOCATION_SLICE to allow for allocation-free fast-paths.
+  // Map[key: heap_record*, record: nothing] (This is a set, basically)
   // NOTE: This table is currently only protected by the GVL since we never interact with it
   // outside the GVL.
-  // NOTE: This table has ownership of both its heap_record_keys and heap_records.
+  // NOTE: This table has ownership of its heap_records.
+  //
+  // This is a cpu/memory trade-off: Maintaining the "heap_records" map means we spend extra CPU when sampling as we need
+  // to do de-duplication, but we reduce the memory footprint of the heap profiler.
+  // In the future, it may be worth revisiting if we can move this inside libdatadog: if libdatadog was able to track
+  // entire stacks for us, then we wouldn't need to do it on the Ruby side.
   st_table *heap_records;
 
   // Map[obj_id: long, record: object_record*]
@@ -132,6 +114,8 @@ struct heap_recorder {
   //
   // TODO: @ivoanjo We've evolved to actually never need to look up on object_records (we only insert and iterate),
   // so right now this seems to be just a really really fancy self-resizing list/set.
+  // If we replace this with a list, we could record the latest id and compare it when inserting to make sure our
+  // assumption of ids never reused + always increasing always holds. (This as an alternative to checking for duplicates)
   st_table *object_records;
 
   // Map[obj_id: long, record: object_record*]
@@ -156,11 +140,27 @@ struct heap_recorder {
   // Data for a heap recording that was started but not yet ended
   object_record *active_recording;
 
-  // Reusable location array, implementing a flyweight pattern for things like iteration.
+  // Pending recordings that need to be finalized after on_newobj_event completes.
+  // On Ruby 4+, we can't call rb_obj_id during the newobj event, so we store the
+  // VALUE reference here and finalize it via a postponed job.
+  pending_recording pending_recordings[MAX_PENDING_RECORDINGS];
+  // Temporary storage for the recording in progress, used between start and end
+  VALUE active_deferred_object;
+  live_object_data active_deferred_object_data;
+  uint16_t pending_recordings_count;
+
+  // Reusable arrays, implementing a flyweight pattern for things like iteration
+  #define REUSABLE_LOCATIONS_SIZE MAX_FRAMES_LIMIT
   ddog_prof_Location *reusable_locations;
+
+  #define REUSABLE_FRAME_DETAILS_SIZE (2 * MAX_FRAMES_LIMIT) // because it'll be used for both function names AND file names)
+  ddog_prof_ManagedStringId *reusable_ids;
+  ddog_CharSlice *reusable_char_slices;
 
   // Sampling state
   uint num_recordings_skipped;
+
+  ddog_prof_ManagedStringStorage string_storage;
 
   struct stats_last_update {
     size_t objects_alive;
@@ -182,13 +182,16 @@ struct heap_recorder {
     double ewma_objects_alive;
     double ewma_objects_dead;
     double ewma_objects_skipped;
+
+    unsigned long deferred_recordings_skipped_buffer_full;
+    unsigned long deferred_recordings_finalized;
   } stats_lifetime;
 };
 
-struct end_heap_allocation_args {
-  struct heap_recorder *heap_recorder;
+typedef struct {
+  heap_recorder *heap_recorder;
   ddog_prof_Slice_Location locations;
-};
+} end_heap_allocation_args;
 
 static heap_record* get_or_create_heap_record(heap_recorder*, ddog_prof_Slice_Location);
 static void cleanup_heap_record_if_unused(heap_recorder*, heap_record*);
@@ -199,10 +202,15 @@ static int st_object_record_update(st_data_t, st_data_t, st_data_t);
 static int st_object_records_iterate(st_data_t, st_data_t, st_data_t);
 static int st_object_records_debug(st_data_t key, st_data_t value, st_data_t extra);
 static int update_object_record_entry(st_data_t*, st_data_t*, st_data_t, int);
+static void inc_tracked_objects_or_fail(heap_record *heap_record);
 static void commit_recording(heap_recorder *, heap_record *, object_record *active_recording);
 static VALUE end_heap_allocation_recording(VALUE end_heap_allocation_args);
 static void heap_recorder_update(heap_recorder *heap_recorder, bool full_update);
 static inline double ewma_stat(double previous, double current);
+static void unintern_or_raise(heap_recorder *, ddog_prof_ManagedStringId);
+static void unintern_all_or_raise(heap_recorder *recorder, ddog_prof_Slice_ManagedStringId ids);
+static VALUE get_ruby_string_or_raise(heap_recorder*, ddog_prof_ManagedStringId);
+static long obj_id_or_fail(VALUE obj);
 
 // ==========================
 // Heap Recorder External API
@@ -213,16 +221,20 @@ static inline double ewma_stat(double previous, double current);
 // happens under the GVL.
 //
 // ==========================
-heap_recorder* heap_recorder_new(void) {
+heap_recorder* heap_recorder_new(ddog_prof_ManagedStringStorage string_storage) {
   heap_recorder *recorder = ruby_xcalloc(1, sizeof(heap_recorder));
 
-  recorder->heap_records = st_init_table(&st_hash_type_heap_record_key);
+  recorder->heap_records = st_init_table(&st_hash_type_heap_record);
   recorder->object_records = st_init_numtable();
   recorder->object_records_snapshot = NULL;
-  recorder->reusable_locations = ruby_xcalloc(MAX_FRAMES_LIMIT, sizeof(ddog_prof_Location));
+  recorder->reusable_locations = ruby_xcalloc(REUSABLE_LOCATIONS_SIZE, sizeof(ddog_prof_Location));
+  recorder->reusable_ids = ruby_xcalloc(REUSABLE_FRAME_DETAILS_SIZE, sizeof(ddog_prof_ManagedStringId));
+  recorder->reusable_char_slices = ruby_xcalloc(REUSABLE_FRAME_DETAILS_SIZE, sizeof(ddog_CharSlice));
   recorder->active_recording = NULL;
   recorder->size_enabled = true;
   recorder->sample_rate = 1; // By default do no sampling on top of what allocation profiling already does
+  recorder->string_storage = string_storage;
+  recorder->active_deferred_object = Qnil;
 
   return recorder;
 }
@@ -239,19 +251,21 @@ void heap_recorder_free(heap_recorder *heap_recorder) {
   }
 
   // Clean-up all object records
-  st_foreach(heap_recorder->object_records, st_object_record_entry_free, 0);
+  st_foreach(heap_recorder->object_records, st_object_record_entry_free, (st_data_t) heap_recorder);
   st_free_table(heap_recorder->object_records);
 
   // Clean-up all heap records (this includes those only referred to by queued_samples)
-  st_foreach(heap_recorder->heap_records, st_heap_record_entry_free, 0);
+  st_foreach(heap_recorder->heap_records, st_heap_record_entry_free, (st_data_t) heap_recorder);
   st_free_table(heap_recorder->heap_records);
 
   if (heap_recorder->active_recording != NULL && heap_recorder->active_recording != &SKIPPED_RECORD) {
     // If there's a partial object record, clean it up as well
-    object_record_free(heap_recorder->active_recording);
+    object_record_free(heap_recorder, heap_recorder->active_recording);
   }
 
   ruby_xfree(heap_recorder->reusable_locations);
+  ruby_xfree(heap_recorder->reusable_ids);
+  ruby_xfree(heap_recorder->reusable_char_slices);
 
   ruby_xfree(heap_recorder);
 }
@@ -270,7 +284,7 @@ void heap_recorder_set_sample_rate(heap_recorder *heap_recorder, int sample_rate
   }
 
   if (sample_rate <= 0) {
-    rb_raise(rb_eArgError, "Heap sample rate must be a positive integer value but was %d", sample_rate);
+    raise_error(rb_eArgError, "Heap sample rate must be a positive integer value but was %d", sample_rate);
   }
 
   heap_recorder->sample_rate = sample_rate;
@@ -305,81 +319,144 @@ void heap_recorder_after_fork(heap_recorder *heap_recorder) {
   heap_recorder->stats_lifetime = (struct stats_lifetime) {0};
 }
 
-void start_heap_allocation_recording(heap_recorder *heap_recorder, VALUE new_obj, unsigned int weight, ddog_CharSlice alloc_class) {
+bool start_heap_allocation_recording(heap_recorder *heap_recorder, VALUE new_obj, unsigned int weight, ddog_CharSlice alloc_class) {
   if (heap_recorder == NULL) {
-    return;
+    return false;
   }
 
   if (heap_recorder->active_recording != NULL) {
-    rb_raise(rb_eRuntimeError, "Detected consecutive heap allocation recording starts without end.");
+    raise_error(rb_eRuntimeError, "Detected consecutive heap allocation recording starts without end.");
   }
 
-  if (++heap_recorder->num_recordings_skipped < heap_recorder->sample_rate) {
+  if (++heap_recorder->num_recordings_skipped < heap_recorder->sample_rate ||
+      #ifdef NO_IMEMO_OBJECT_ID
+        // On Ruby 4, we can't ask the object_id from IMEMOs (https://github.com/ruby/ruby/pull/13347)
+        RB_BUILTIN_TYPE(new_obj) == RUBY_T_IMEMO
+      #else
+        false
+      #endif
+      // If we got really unlucky and an allocation showed up during an update (because it triggered an allocation
+      // directly OR because the GVL got released in the middle of an update), let's skip this sample as well.
+      // See notes on `heap_recorder_update` for details.
+      || heap_recorder->updating
+    ) {
     heap_recorder->active_recording = &SKIPPED_RECORD;
-    return;
+    return false;
   }
+
+  bool needs_after_allocation = false;
+
+  #ifdef USE_DEFERRED_HEAP_ALLOCATION_RECORDING
+  // Skip if we've hit the pending recordings limit or if there's already a deferred object being recorded
+  if (heap_recorder->pending_recordings_count >= MAX_PENDING_RECORDINGS) {
+    heap_recorder->stats_lifetime.deferred_recordings_skipped_buffer_full++;
+    heap_recorder->active_recording = &SKIPPED_RECORD;
+    return true; // If the buffer is full, we keep asking for a callback (see `needs_after_allocation` below)
+  } else {
+    // The intuition here is: We start by asking for an `after_allocation` callback when the buffer is about to go
+    // from empty -> non-empty, because this is going to be mapped onto a postponed job, so after it gets queued once
+    // it doesn't seem worth it to keep spamming requests.
+    //
+    // Yet, if for some reason the postponed job doesn't flush the pending list (or if e.g. it ran with `during_sample == true` and thus
+    // was skipped) we need to have some mechanism to recover -- and so if the buffer starts accumulating too much we
+    // start always requesting the callback to happen so that we eventually flush the buffer.
+    needs_after_allocation =
+      heap_recorder->pending_recordings_count == 0 || heap_recorder->pending_recordings_count >= (MAX_PENDING_RECORDINGS / 2);
+  }
+  #endif
 
   heap_recorder->num_recordings_skipped = 0;
 
-  VALUE ruby_obj_id = rb_obj_id(new_obj);
-  if (!FIXNUM_P(ruby_obj_id)) {
-    rb_raise(rb_eRuntimeError, "Detected a bignum object id. These are not supported by heap profiling.");
-  }
+  live_object_data object_data = (live_object_data) {
+    .weight = weight * heap_recorder->sample_rate,
+    .class = intern_or_raise(heap_recorder->string_storage, alloc_class),
+    .alloc_gen = rb_gc_count(),
+  };
 
-  heap_recorder->active_recording = object_record_new(
-    FIX2LONG(ruby_obj_id),
-    NULL,
-    (live_object_data) {
-      .weight = weight * heap_recorder->sample_rate,
-      .class = string_from_char_slice(alloc_class),
-      .alloc_gen = rb_gc_count(),
-    }
-  );
+  #ifdef USE_DEFERRED_HEAP_ALLOCATION_RECORDING
+    // On Ruby 4+, we can't call rb_obj_id during on_newobj_event as it mutates the object.
+    // Instead, we store the VALUE reference and will get the object_id later via a postponed job.
+    // active_deferred_object != Qnil indicates we're in deferred mode.
+    heap_recorder->active_deferred_object = new_obj;
+    heap_recorder->active_deferred_object_data = object_data;
+  #else
+    heap_recorder->active_recording = object_record_new(obj_id_or_fail(new_obj), NULL, object_data);
+  #endif
+
+  return needs_after_allocation;
 }
 
 // end_heap_allocation_recording_with_rb_protect gets called while the stack_recorder is holding one of the profile
 // locks. To enable us to correctly unlock the profile on exception, we wrap the call to end_heap_allocation_recording
 // with an rb_protect.
 __attribute__((warn_unused_result))
-int end_heap_allocation_recording_with_rb_protect(struct heap_recorder *heap_recorder, ddog_prof_Slice_Location locations) {
+int end_heap_allocation_recording_with_rb_protect(heap_recorder *heap_recorder, ddog_prof_Slice_Location locations) {
   if (heap_recorder == NULL) {
+    return 0;
+  }
+  if (heap_recorder->active_recording == &SKIPPED_RECORD) {
+    // Short circuit, in this case there's nothing to be done
+    heap_recorder->active_recording = NULL;
     return 0;
   }
 
   int exception_state;
-  struct end_heap_allocation_args end_heap_allocation_args = {
+  end_heap_allocation_args args = {
     .heap_recorder = heap_recorder,
     .locations = locations,
   };
-  rb_protect(end_heap_allocation_recording, (VALUE) &end_heap_allocation_args, &exception_state);
+  rb_protect(end_heap_allocation_recording, (VALUE) &args, &exception_state);
   return exception_state;
 }
 
-static VALUE end_heap_allocation_recording(VALUE end_heap_allocation_args) {
-  struct end_heap_allocation_args *args = (struct end_heap_allocation_args *) end_heap_allocation_args;
+static VALUE end_heap_allocation_recording(VALUE protect_args) {
+  end_heap_allocation_args *args = (end_heap_allocation_args *) protect_args;
 
-  struct heap_recorder *heap_recorder = args->heap_recorder;
+  heap_recorder *heap_recorder = args->heap_recorder;
   ddog_prof_Slice_Location locations = args->locations;
 
-  object_record *active_recording = heap_recorder->active_recording;
+  #ifdef USE_DEFERRED_HEAP_ALLOCATION_RECORDING
+    if (heap_recorder->active_deferred_object == Qnil) {
+      // Recording ended without having been started?
+      raise_error(rb_eRuntimeError, "Ended a heap recording that was not started");
+    }
+  #else
+    object_record *active_recording = heap_recorder->active_recording;
 
-  if (active_recording == NULL) {
-    // Recording ended without having been started?
-    rb_raise(rb_eRuntimeError, "Ended a heap recording that was not started");
-  }
-  // From now on, mark the global active recording as invalid so we can short-circuit at any point
-  // and not end up with a still active recording. the local active_recording still holds the
-  // data required for committing though.
-  heap_recorder->active_recording = NULL;
+    if (active_recording == NULL) {
+      // Recording ended without having been started?
+      raise_error(rb_eRuntimeError, "Ended a heap recording that was not started");
+    }
+    // From now on, mark the global active recording as invalid so we can short-circuit at any point
+    // and not end up with a still active recording. the local active_recording still holds the
+    // data required for committing though.
+    heap_recorder->active_recording = NULL;
 
-  if (active_recording == &SKIPPED_RECORD) { // special marker when we decided to skip due to sampling
-    return Qnil;
-  }
+    if (active_recording == &SKIPPED_RECORD) {
+      raise_error(
+        rb_eRuntimeError,
+        "BUG: end_heap_allocation_recording should never observe SKIPPED_RECORDING because " \
+        "end_heap_allocation_recording_with_rb_protect is supposed to test for it directly"
+      );
+    }
+  #endif
 
   heap_record *heap_record = get_or_create_heap_record(heap_recorder, locations);
+  inc_tracked_objects_or_fail(heap_record);
 
-  // And then commit the new allocation.
-  commit_recording(heap_recorder, heap_record, active_recording);
+  #ifdef USE_DEFERRED_HEAP_ALLOCATION_RECORDING
+    // Commit is delayed, so we need to record all we'll need for it
+    pending_recording *pending = &heap_recorder->pending_recordings[heap_recorder->pending_recordings_count++];
+    pending->object_ref = heap_recorder->active_deferred_object;
+    pending->heap_record = heap_record;
+    pending->object_data = heap_recorder->active_deferred_object_data;
+
+    heap_recorder->active_deferred_object = Qnil;
+    heap_recorder->active_deferred_object_data = (live_object_data) {0};
+  #else
+    // And then commit the new allocation
+    commit_recording(heap_recorder, heap_record, active_recording);
+  #endif
 
   return Qnil;
 }
@@ -392,15 +469,70 @@ void heap_recorder_update_young_objects(heap_recorder *heap_recorder) {
   heap_recorder_update(heap_recorder, /* full_update: */ false);
 }
 
+void heap_recorder_finalize_pending_recordings(heap_recorder *heap_recorder) {
+  if (heap_recorder == NULL) {
+    return; // Nothing to do
+  }
+
+  uint count = heap_recorder->pending_recordings_count;
+  if (count == 0) {
+    return; // Nothing to do
+  }
+
+  heap_recorder->stats_lifetime.deferred_recordings_finalized += count;
+
+  for (uint i = 0; i < count; i++) {
+    pending_recording *pending = &heap_recorder->pending_recordings[i];
+
+    // This is the step we couldn't do during the original sample call -- we're now expected to be called in a context
+    // where it's finally safe to call this
+    long obj_id = obj_id_or_fail(pending->object_ref);
+
+    // Create the object record now that we have the object_id
+    object_record *record = object_record_new(obj_id, pending->heap_record, pending->object_data);
+
+    commit_recording(heap_recorder, pending->heap_record, record);
+  }
+
+  heap_recorder->pending_recordings_count = 0;
+}
+
+// Mark pending recordings to prevent GC from collecting the objects
+// while they're waiting to be finalized
+void heap_recorder_mark_pending_recordings(heap_recorder *heap_recorder) {
+  if (heap_recorder == NULL) {
+    return;
+  }
+
+  for (uint i = 0; i < heap_recorder->pending_recordings_count; i++) {
+    rb_gc_mark(heap_recorder->pending_recordings[i].object_ref);
+  }
+
+  rb_gc_mark(heap_recorder->active_deferred_object);
+}
+
+// NOTE: This function needs and assumes it gets called with the GVL being held.
+//       But importantly **some of the operations inside `st_object_record_update` may cause a thread switch**,
+//       so we can't assume a single update happens in a single "atomic" step -- other threads may get some running time
+//       in the meanwhile.
 static void heap_recorder_update(heap_recorder *heap_recorder, bool full_update) {
   if (heap_recorder->updating) {
-    if (full_update) rb_raise(rb_eRuntimeError, "BUG: full_update should not be triggered during another update");
-
-    // If we try to update while another update is still running, short-circuit.
-    // NOTE: This runs while holding the GVL. But since updates may be triggered from GC activity, there's still
-    //       a chance for updates to be attempted concurrently if scheduling gods so determine.
-    heap_recorder->stats_lifetime.updates_skipped_concurrent++;
-    return;
+    if (full_update) {
+      // There's another thread that's already doing an update :(
+      //
+      // Because there's a lock on the `StackRecorder` (see @no_concurrent_serialize_mutex) then it's not possible that
+      // the other update is a full update.
+      // Thus we expect is happening is that the GVL got released by the other thread in the middle of a non-full update
+      // and the scheduler thread decided now was a great time to serialize the profile.
+      //
+      // So, let's yield the time on the current thread until Ruby goes back to the other thread doing the update and
+      // it finishes cleanly.
+      while (heap_recorder->updating) { rb_thread_schedule(); }
+    } else {
+      // Non-full updates are optional, so let's walk away
+      heap_recorder->stats_lifetime.updates_skipped_concurrent++;
+      return;
+    }
   }
 
   if (heap_recorder->object_records_snapshot != NULL) {
@@ -467,14 +599,14 @@ void heap_recorder_prepare_iteration(heap_recorder *heap_recorder) {
 
   if (heap_recorder->object_records_snapshot != NULL) {
     // we could trivially handle this but we raise to highlight and catch unexpected usages.
-    rb_raise(rb_eRuntimeError, "New heap recorder iteration prepared without the previous one having been finished.");
+    raise_error(rb_eRuntimeError, "New heap recorder iteration prepared without the previous one having been finished.");
   }
 
   heap_recorder_update(heap_recorder, /* full_update: */ true);
 
   heap_recorder->object_records_snapshot = st_copy(heap_recorder->object_records);
   if (heap_recorder->object_records_snapshot == NULL) {
-    rb_raise(rb_eRuntimeError, "Failed to create heap snapshot.");
+    raise_error(rb_eRuntimeError, "Failed to create heap snapshot.");
   }
 }
 
@@ -485,7 +617,7 @@ void heap_recorder_finish_iteration(heap_recorder *heap_recorder) {
 
   if (heap_recorder->object_records_snapshot == NULL) {
     // we could trivially handle this but we raise to highlight and catch unexpected usages.
-    rb_raise(rb_eRuntimeError, "Heap recorder iteration finished without having been prepared.");
+    raise_error(rb_eRuntimeError, "Heap recorder iteration finished without having been prepared.");
   }
 
   st_free_table(heap_recorder->object_records_snapshot);
@@ -527,20 +659,21 @@ bool heap_recorder_for_each_live_object(
 
 VALUE heap_recorder_state_snapshot(heap_recorder *heap_recorder) {
   VALUE arguments[] = {
-    ID2SYM(rb_intern("num_object_records")), /* => */ LONG2NUM(heap_recorder->object_records->num_entries),
-    ID2SYM(rb_intern("num_heap_records")),   /* => */ LONG2NUM(heap_recorder->heap_records->num_entries),
+    ID2SYM(rb_intern("num_object_records")), /* => */ ULONG2NUM(heap_recorder->object_records->num_entries),
+    ID2SYM(rb_intern("num_heap_records")),   /* => */ ULONG2NUM(heap_recorder->heap_records->num_entries),
+    ID2SYM(rb_intern("pending_recordings_count")), /* => */ ULONG2NUM(heap_recorder->pending_recordings_count),
 
     // Stats as of last update
-    ID2SYM(rb_intern("last_update_objects_alive")), /* => */ LONG2NUM(heap_recorder->stats_last_update.objects_alive),
-    ID2SYM(rb_intern("last_update_objects_dead")), /* => */ LONG2NUM(heap_recorder->stats_last_update.objects_dead),
-    ID2SYM(rb_intern("last_update_objects_skipped")), /* => */ LONG2NUM(heap_recorder->stats_last_update.objects_skipped),
-    ID2SYM(rb_intern("last_update_objects_frozen")), /* => */ LONG2NUM(heap_recorder->stats_last_update.objects_frozen),
+    ID2SYM(rb_intern("last_update_objects_alive")), /* => */ ULONG2NUM(heap_recorder->stats_last_update.objects_alive),
+    ID2SYM(rb_intern("last_update_objects_dead")), /* => */ ULONG2NUM(heap_recorder->stats_last_update.objects_dead),
+    ID2SYM(rb_intern("last_update_objects_skipped")), /* => */ ULONG2NUM(heap_recorder->stats_last_update.objects_skipped),
+    ID2SYM(rb_intern("last_update_objects_frozen")), /* => */ ULONG2NUM(heap_recorder->stats_last_update.objects_frozen),
 
     // Lifetime stats
-    ID2SYM(rb_intern("lifetime_updates_successful")), /* => */ LONG2NUM(heap_recorder->stats_lifetime.updates_successful),
-    ID2SYM(rb_intern("lifetime_updates_skipped_concurrent")), /* => */ LONG2NUM(heap_recorder->stats_lifetime.updates_skipped_concurrent),
-    ID2SYM(rb_intern("lifetime_updates_skipped_gcgen")), /* => */ LONG2NUM(heap_recorder->stats_lifetime.updates_skipped_gcgen),
-    ID2SYM(rb_intern("lifetime_updates_skipped_time")), /* => */ LONG2NUM(heap_recorder->stats_lifetime.updates_skipped_time),
+    ID2SYM(rb_intern("lifetime_updates_successful")), /* => */ ULONG2NUM(heap_recorder->stats_lifetime.updates_successful),
+    ID2SYM(rb_intern("lifetime_updates_skipped_concurrent")), /* => */ ULONG2NUM(heap_recorder->stats_lifetime.updates_skipped_concurrent),
+    ID2SYM(rb_intern("lifetime_updates_skipped_gcgen")), /* => */ ULONG2NUM(heap_recorder->stats_lifetime.updates_skipped_gcgen),
+    ID2SYM(rb_intern("lifetime_updates_skipped_time")), /* => */ ULONG2NUM(heap_recorder->stats_lifetime.updates_skipped_time),
     ID2SYM(rb_intern("lifetime_ewma_young_objects_alive")), /* => */ DBL2NUM(heap_recorder->stats_lifetime.ewma_young_objects_alive),
     ID2SYM(rb_intern("lifetime_ewma_young_objects_dead")), /* => */ DBL2NUM(heap_recorder->stats_lifetime.ewma_young_objects_dead),
       // Note: Here "young" refers to the young update; objects skipped includes non-young objects
@@ -548,61 +681,52 @@ VALUE heap_recorder_state_snapshot(heap_recorder *heap_recorder) {
     ID2SYM(rb_intern("lifetime_ewma_objects_alive")), /* => */ DBL2NUM(heap_recorder->stats_lifetime.ewma_objects_alive),
     ID2SYM(rb_intern("lifetime_ewma_objects_dead")), /* => */ DBL2NUM(heap_recorder->stats_lifetime.ewma_objects_dead),
     ID2SYM(rb_intern("lifetime_ewma_objects_skipped")), /* => */ DBL2NUM(heap_recorder->stats_lifetime.ewma_objects_skipped),
+
+    ID2SYM(rb_intern("lifetime_deferred_recordings_skipped_buffer_full")), /* => */ ULONG2NUM(heap_recorder->stats_lifetime.deferred_recordings_skipped_buffer_full),
+    ID2SYM(rb_intern("lifetime_deferred_recordings_finalized")), /* => */ ULONG2NUM(heap_recorder->stats_lifetime.deferred_recordings_finalized),
   };
   VALUE hash = rb_hash_new();
   for (long unsigned int i = 0; i < VALUE_COUNT(arguments); i += 2) rb_hash_aset(hash, arguments[i], arguments[i+1]);
+
   return hash;
 }
 
-void heap_recorder_testonly_assert_hash_matches(ddog_prof_Slice_Location locations) {
-  heap_stack *stack = heap_stack_new(locations);
-  heap_record_key stack_based_key = (heap_record_key) {
-    .type = HEAP_STACK,
-    .heap_stack = stack,
-  };
-  heap_record_key location_based_key = (heap_record_key) {
-    .type = LOCATION_SLICE,
-    .location_slice = &locations,
-  };
-
-  st_index_t stack_hash = heap_record_key_hash_st((st_data_t) &stack_based_key);
-  st_index_t location_hash = heap_record_key_hash_st((st_data_t) &location_based_key);
-
-  heap_stack_free(stack);
-
-  if (stack_hash != location_hash) {
-    rb_raise(rb_eRuntimeError, "Heap record key hashes built from the same locations differ. stack_based_hash=%"PRI_VALUE_PREFIX"u location_based_hash=%"PRI_VALUE_PREFIX"u", stack_hash, location_hash);
-  }
-}
+typedef struct {
+  heap_recorder *recorder;
+  VALUE debug_ary;
+} debug_context;
 
 VALUE heap_recorder_testonly_debug(heap_recorder *heap_recorder) {
   if (heap_recorder == NULL) {
-    rb_raise(rb_eArgError, "heap_recorder is NULL");
+    raise_error(rb_eArgError, "heap_recorder is NULL");
   }
 
-  VALUE debug_str = rb_str_new2("object records:\n");
-  st_foreach(heap_recorder->object_records, st_object_records_debug, (st_data_t) debug_str);
+  VALUE debug_ary = rb_ary_new();
+  debug_context context = (debug_context) {.recorder = heap_recorder, .debug_ary = debug_ary};
+  st_foreach(heap_recorder->object_records, st_object_records_debug, (st_data_t) &context);
 
-  rb_str_catf(debug_str, "state snapshot: %"PRIsVALUE"\n------\n", heap_recorder_state_snapshot(heap_recorder));
-
-  return debug_str;
+  return rb_ary_new_from_args(2,
+    rb_ary_new_from_args(2, ID2SYM(rb_intern("records")), debug_ary),
+    rb_ary_new_from_args(2, ID2SYM(rb_intern("state")), heap_recorder_state_snapshot(heap_recorder))
+  );
 }
 
 // ==========================
 // Heap Recorder Internal API
 // ==========================
-static int st_heap_record_entry_free(st_data_t key, st_data_t value, DDTRACE_UNUSED st_data_t extra_arg) {
-  heap_record_key *record_key = (heap_record_key*) key;
-  heap_record_key_free(record_key);
-  heap_record_free((heap_record *) value);
+static int st_heap_record_entry_free(st_data_t key, DDTRACE_UNUSED st_data_t value, st_data_t extra_arg) {
+  heap_recorder *recorder = (heap_recorder *) extra_arg;
+  heap_record_free(recorder, (heap_record *) key);
   return ST_DELETE;
 }
 
-static int st_object_record_entry_free(DDTRACE_UNUSED st_data_t key, st_data_t value, DDTRACE_UNUSED st_data_t extra_arg) {
-  object_record_free((object_record *) value);
+static int st_object_record_entry_free(DDTRACE_UNUSED st_data_t key, st_data_t value, st_data_t extra_arg) {
+  heap_recorder *recorder = (heap_recorder *) extra_arg;
+  object_record_free(recorder, (object_record *) value);
   return ST_DELETE;
 }
 
+// NOTE: Some operations inside this function can cause the GVL to be released! Plan accordingly.
 static int st_object_record_update(st_data_t key, st_data_t value, st_data_t extra_arg) {
   long obj_id = (long) key;
   object_record *record = (object_record*) value;
@@ -628,7 +752,7 @@ static int st_object_record_update(st_data_t key, st_data_t value, st_data_t ext
     return ST_CONTINUE;
   }
 
-  if (!ruby_ref_from_id(LONG2NUM(obj_id), &ref)) {
+  if (!ruby_ref_from_id(LONG2NUM(obj_id), &ref)) { // Note: This function call can cause the GVL to be released
     // Id no longer associated with a valid ref. Need to delete this object record!
     on_committed_object_record_cleanup(recorder, record);
     recorder->stats_last_update.objects_dead++;
@@ -644,7 +768,8 @@ static int st_object_record_update(st_data_t key, st_data_t value, st_data_t ext
   ) {
     // if we were asked to update sizes and this object was not already seen as being frozen,
     // update size again.
-    record->object_data.size = ruby_obj_memsize_of(ref);
+    record->object_data.size = ruby_obj_memsize_of(ref); // Note: This function call can cause the GVL to be released... maybe?
+                                                         //       (With T_DATA for instance, since it can be a custom method supplied by extensions)
     // Check if it's now frozen so we skip a size update next time
     record->object_data.is_frozen = RB_OBJ_FROZEN(ref);
   }
@@ -664,7 +789,7 @@ static int st_object_record_update(st_data_t key, st_data_t value, st_data_t ext
 // WARN: This can get called outside the GVL. NO HEAP ALLOCATIONS OR EXCEPTIONS ARE ALLOWED.
 static int st_object_records_iterate(DDTRACE_UNUSED st_data_t key, st_data_t value, st_data_t extra) {
   object_record *record = (object_record*) value;
-  const heap_stack *stack = record->heap_record->stack;
+  const heap_record *stack = record->heap_record;
   iteration_context *context = (iteration_context*) extra;
 
   const heap_recorder *recorder = context->heap_recorder;
@@ -680,8 +805,10 @@ static int st_object_records_iterate(DDTRACE_UNUSED st_data_t key, st_data_t val
     locations[i] = (ddog_prof_Location) {
       .mapping = {.filename = DDOG_CHARSLICE_C(""), .build_id = DDOG_CHARSLICE_C(""), .build_id_id = {}},
       .function = {
-        .name = {.ptr = frame->name, .len = strlen(frame->name)},
-        .filename = {.ptr = frame->filename, .len = strlen(frame->filename)},
+        .name = DDOG_CHARSLICE_C(""),
+        .name_id = frame->name,
+        .filename = DDOG_CHARSLICE_C(""),
+        .filename_id = frame->filename,
       },
       .line = frame->line,
     };
@@ -700,11 +827,11 @@ static int st_object_records_iterate(DDTRACE_UNUSED st_data_t key, st_data_t val
 }
 
 static int st_object_records_debug(DDTRACE_UNUSED st_data_t key, st_data_t value, st_data_t extra) {
-  VALUE debug_str = (VALUE) extra;
+  debug_context *context = (debug_context*) extra;
 
   object_record *record = (object_record*) value;
 
-  rb_str_catf(debug_str, "%"PRIsVALUE"\n", object_record_inspect(record));
+  rb_ary_push(context->debug_ary, object_record_inspect(context->recorder, record));
 
   return ST_CONTINUE;
 }
@@ -718,75 +845,53 @@ static int update_object_record_entry(DDTRACE_UNUSED st_data_t *key, st_data_t *
   return ST_CONTINUE;
 }
 
+static void inc_tracked_objects_or_fail(heap_record *heap_record) {
+  if (heap_record->num_tracked_objects == UINT32_MAX) {
+    raise_error(rb_eRuntimeError, "Reached maximum number of tracked objects for heap record");
+  }
+  heap_record->num_tracked_objects++;
+}
+
 static void commit_recording(heap_recorder *heap_recorder, heap_record *heap_record, object_record *active_recording) {
   // Link the object record with the corresponding heap record. This was the last remaining thing we
   // needed to fully build the object_record.
   active_recording->heap_record = heap_record;
-  if (heap_record->num_tracked_objects == UINT32_MAX) {
-    rb_raise(rb_eRuntimeError, "Reached maximum number of tracked objects for heap record");
-  }
-  heap_record->num_tracked_objects++;
 
   int existing_error = st_update(heap_recorder->object_records, active_recording->obj_id, update_object_record_entry, (st_data_t) active_recording);
   if (existing_error) {
     object_record *existing_record = NULL;
     st_lookup(heap_recorder->object_records, active_recording->obj_id, (st_data_t *) &existing_record);
-    if (existing_record == NULL) rb_raise(rb_eRuntimeError, "Unexpected NULL when reading existing record");
+    if (existing_record == NULL) raise_error(rb_eRuntimeError, "Unexpected NULL when reading existing record");
 
-    VALUE existing_inspect = object_record_inspect(existing_record);
-    VALUE new_inspect = object_record_inspect(active_recording);
-    rb_raise(rb_eRuntimeError, "Object ids are supposed to be unique. We got 2 allocation recordings with "
+    VALUE existing_inspect = object_record_inspect(heap_recorder, existing_record);
+    VALUE new_inspect = object_record_inspect(heap_recorder, active_recording);
+    raise_error(rb_eRuntimeError, "Object ids are supposed to be unique. We got 2 allocation recordings with "
       "the same id. previous={%"PRIsVALUE"} new={%"PRIsVALUE"}", existing_inspect, new_inspect);
   }
 }
 
-// Struct holding data required for an update operation on heap_records
-typedef struct {
-  // [in] The locations we did this update with
-  ddog_prof_Slice_Location locations;
-  // [out] Pointer that will be updated to the updated heap record to prevent having to do
-  // another lookup to access the updated heap record.
-  heap_record **record;
-} heap_record_update_data;
-
-// This function assumes ownership of stack_data is passed on to it so it'll either transfer ownership or clean-up.
 static int update_heap_record_entry_with_new_allocation(st_data_t *key, st_data_t *value, st_data_t data, int existing) {
-  heap_record_update_data *update_data = (heap_record_update_data*) data;
+  heap_record **new_or_existing_record = (heap_record **) data;
+  (*new_or_existing_record) = (heap_record *) (*key);
 
   if (!existing) {
-    // there was no matching heap record so lets create a new one...
-    // we need to initialize a heap_record_key with a new stack and use that for the key storage. We can't use the
-    // locations-based key we used for the update call because we don't own its lifecycle. So we create a new
-    // heap stack and will pass ownership of it to the heap_record.
-    heap_stack *stack = heap_stack_new(update_data->locations);
-    (*key) = (st_data_t) heap_record_key_new(stack);
-    (*value) = (st_data_t) heap_record_new(stack);
+    (*value) = (st_data_t) true; // We're only using this hash as a set
   }
-
-  heap_record *record = (heap_record*) (*value);
-  (*update_data->record) = record;
 
   return ST_CONTINUE;
 }
 
 static heap_record* get_or_create_heap_record(heap_recorder *heap_recorder, ddog_prof_Slice_Location locations) {
-  // For performance reasons we use a stack-allocated location-slice based key. This allows us
-  // to do allocation-free lookups and reuse of a matching existing heap record.
-  // NOTE: If we end up creating a new record, we'll create a heap-allocated key we own and use that for storage
-  //       instead of this one.
-  heap_record_key lookup_key = (heap_record_key) {
-    .type = LOCATION_SLICE,
-    .location_slice = &locations,
-  };
+  // See note on "heap_records" definition for why we keep this map.
+  heap_record *stack = heap_record_new(heap_recorder, locations);
 
-  heap_record *heap_record = NULL;
-  heap_record_update_data update_data = (heap_record_update_data) {
-    .locations = locations,
-    .record = &heap_record,
-  };
-  st_update(heap_recorder->heap_records, (st_data_t) &lookup_key, update_heap_record_entry_with_new_allocation, (st_data_t) &update_data);
+  heap_record *new_or_existing_record = NULL; // Will be set inside update_heap_record_entry_with_new_allocation
+  bool existing = st_update(heap_recorder->heap_records, (st_data_t) stack, update_heap_record_entry_with_new_allocation, (st_data_t) &new_or_existing_record);
+  if (existing) {
+    heap_record_free(heap_recorder, stack);
+  }
 
-  return heap_record;
+  return new_or_existing_record;
 }
 
 static void cleanup_heap_record_if_unused(heap_recorder *heap_recorder, heap_record *heap_record) {
@@ -795,18 +900,10 @@ static void cleanup_heap_record_if_unused(heap_recorder *heap_recorder, heap_rec
     return;
   }
 
-  heap_record_key heap_key = (heap_record_key) {
-    .type = HEAP_STACK,
-    .heap_stack = heap_record->stack,
+  if (!st_delete(heap_recorder->heap_records, (st_data_t*) &heap_record, NULL)) {
+    raise_error(rb_eRuntimeError, "Attempted to cleanup an untracked heap_record");
   };
-  // We need to access the deleted key to free it since we gave ownership of the keys to the hash.
-  // st_delete will change this pointer to point to the removed key if one is found.
-  heap_record_key *deleted_key = &heap_key;
-  if (!st_delete(heap_recorder->heap_records, (st_data_t*) &deleted_key, NULL)) {
-    rb_raise(rb_eRuntimeError, "Attempted to cleanup an untracked heap_record");
-  };
-  heap_record_key_free(deleted_key);
-  heap_record_free(heap_record);
+  heap_record_free(heap_recorder, heap_record);
 }
 
 static void on_committed_object_record_cleanup(heap_recorder *heap_recorder, object_record *record) {
@@ -814,67 +911,52 @@ static void on_committed_object_record_cleanup(heap_recorder *heap_recorder, obj
   // (See PROF-10656 Datadog-internal for details). Just in case, I've sprinkled a bunch of NULL tests in this function for now.
   // Once we figure out the issue we can get rid of them again.
 
-  if (heap_recorder == NULL) rb_raise(rb_eRuntimeError, "heap_recorder was NULL in on_committed_object_record_cleanup");
-  if (heap_recorder->heap_records == NULL) rb_raise(rb_eRuntimeError, "heap_recorder->heap_records was NULL in on_committed_object_record_cleanup");
-  if (record == NULL) rb_raise(rb_eRuntimeError, "record was NULL in on_committed_object_record_cleanup");
+  if (heap_recorder == NULL) raise_error(rb_eRuntimeError, "heap_recorder was NULL in on_committed_object_record_cleanup");
+  if (heap_recorder->heap_records == NULL) raise_error(rb_eRuntimeError, "heap_recorder->heap_records was NULL in on_committed_object_record_cleanup");
+  if (record == NULL) raise_error(rb_eRuntimeError, "record was NULL in on_committed_object_record_cleanup");
 
   // Starting with the associated heap record. There will now be one less tracked object pointing to it
   heap_record *heap_record = record->heap_record;
 
-  if (heap_record == NULL) rb_raise(rb_eRuntimeError, "heap_record was NULL in on_committed_object_record_cleanup");
-  if (heap_record->stack == NULL) rb_raise(rb_eRuntimeError, "heap_record->stack was NULL in on_committed_object_record_cleanup");
+  if (heap_record == NULL) raise_error(rb_eRuntimeError, "heap_record was NULL in on_committed_object_record_cleanup");
 
   heap_record->num_tracked_objects--;
 
   // One less object using this heap record, it may have become unused...
   cleanup_heap_record_if_unused(heap_recorder, heap_record);
 
-  object_record_free(record);
-}
-
-// ===============
-// Heap Record API
-// ===============
-heap_record* heap_record_new(heap_stack *stack) {
-  heap_record *record = ruby_xcalloc(1, sizeof(heap_record));
-  record->num_tracked_objects = 0;
-  record->stack = stack;
-  return record;
-}
-
-void heap_record_free(heap_record *record) {
-  heap_stack_free(record->stack);
-  ruby_xfree(record);
+  object_record_free(heap_recorder, record);
 }
 
 // =================
 // Object Record API
 // =================
 object_record* object_record_new(long obj_id, heap_record *heap_record, live_object_data object_data) {
-  object_record *record = ruby_xcalloc(1, sizeof(object_record));
+  object_record *record = calloc(1, sizeof(object_record)); // See "note on calloc vs ruby_xcalloc use" above
   record->obj_id = obj_id;
   record->heap_record = heap_record;
   record->object_data = object_data;
   return record;
 }
 
-void object_record_free(object_record *record) {
-  if (record->object_data.class != NULL) {
-    ruby_xfree(record->object_data.class);
-  }
-  ruby_xfree(record);
+void object_record_free(heap_recorder *recorder, object_record *record) {
+  unintern_or_raise(recorder, record->object_data.class);
+  free(record); // See "note on calloc vs ruby_xcalloc use" above
 }
 
-VALUE object_record_inspect(object_record *record) {
-  heap_frame top_frame = record->heap_record->stack->frames[0];
+VALUE object_record_inspect(heap_recorder *recorder, object_record *record) {
+  heap_frame top_frame = record->heap_record->frames[0];
+  VALUE filename = get_ruby_string_or_raise(recorder, top_frame.filename);
   live_object_data object_data = record->object_data;
-  VALUE inspect = rb_sprintf("obj_id=%ld weight=%d size=%zu location=%s:%d alloc_gen=%zu gen_age=%zu frozen=%d ",
-      record->obj_id, object_data.weight, object_data.size, top_frame.filename,
+
+  VALUE inspect = rb_sprintf("obj_id=%ld weight=%d size=%zu location=%"PRIsVALUE":%d alloc_gen=%zu gen_age=%zu frozen=%d ",
+      record->obj_id, object_data.weight, object_data.size, filename,
       (int) top_frame.line, object_data.alloc_gen, object_data.gen_age, object_data.is_frozen);
 
-  const char *class = record->object_data.class;
-  if (class != NULL) {
-    rb_str_catf(inspect, "class=%s ", class);
+  if (record->object_data.class.value > 0) {
+    VALUE class = get_ruby_string_or_raise(recorder, record->object_data.class);
+
+    rb_str_catf(inspect, "class=%"PRIsVALUE" ", class);
   }
   VALUE ref;
 
@@ -894,202 +976,114 @@ VALUE object_record_inspect(object_record *record) {
 }
 
 // ==============
-// Heap Frame API
+// Heap Record API
 // ==============
-// WARN: Must be kept in-sync with ::char_slice_hash
-st_index_t string_hash(char *str, st_index_t seed) {
-  return st_hash(str, strlen(str), seed);
-}
-
-// WARN: Must be kept in-sync with ::string_hash
-st_index_t char_slice_hash(ddog_CharSlice char_slice, st_index_t seed) {
-  return st_hash(char_slice.ptr, char_slice.len, seed);
-}
-
-// WARN: Must be kept in-sync with ::ddog_location_hash
-st_index_t heap_frame_hash(heap_frame *frame, st_index_t seed) {
-  st_index_t hash = string_hash(frame->name, seed);
-  hash = string_hash(frame->filename, hash);
-  hash = st_hash(&frame->line, sizeof(frame->line), hash);
-  return hash;
-}
-
-// WARN: Must be kept in-sync with ::heap_frame_hash
-st_index_t ddog_location_hash(ddog_prof_Location location, st_index_t seed) {
-  st_index_t hash = char_slice_hash(location.function.name, seed);
-  hash = char_slice_hash(location.function.filename, hash);
-  // Convert ddog_prof line type to the same type we use for our heap_frames to
-  // ensure we have compatible hashes
-  int32_t line_as_int32 = (int32_t) location.line;
-  hash = st_hash(&line_as_int32, sizeof(line_as_int32), hash);
-  return hash;
-}
-
-// ==============
-// Heap Stack API
-// ==============
-heap_stack* heap_stack_new(ddog_prof_Slice_Location locations) {
+heap_record* heap_record_new(heap_recorder *recorder, ddog_prof_Slice_Location locations) {
   uint16_t frames_len = locations.len;
   if (frames_len > MAX_FRAMES_LIMIT) {
     // This is not expected as MAX_FRAMES_LIMIT is shared with the stacktrace construction mechanism
-    rb_raise(rb_eRuntimeError, "Found stack with more than %d frames (%d)", MAX_FRAMES_LIMIT, frames_len);
+    raise_error(rb_eRuntimeError, "Found stack with more than %d frames (%d)", MAX_FRAMES_LIMIT, frames_len);
   }
-  heap_stack *stack = ruby_xcalloc(1, sizeof(heap_stack) + frames_len * sizeof(heap_frame));
+  heap_record *stack = calloc(1, sizeof(heap_record) + frames_len * sizeof(heap_frame)); // See "note on calloc vs ruby_xcalloc use" above
+  stack->num_tracked_objects = 0;
   stack->frames_len = frames_len;
+
+  // Intern all these strings...
+  ddog_CharSlice *strings = recorder->reusable_char_slices;
+  // Put all the char slices in the same array; we'll pull them out in the same order from the ids array
   for (uint16_t i = 0; i < stack->frames_len; i++) {
     const ddog_prof_Location *location = &locations.ptr[i];
+    strings[i] = location->function.filename;
+    strings[i + stack->frames_len] = location->function.name;
+  }
+  intern_all_or_raise(recorder->string_storage, (ddog_prof_Slice_CharSlice) { .ptr = strings, .len = stack->frames_len * 2 }, recorder->reusable_ids, stack->frames_len * 2);
+
+  // ...and record them for later use
+  for (uint16_t i = 0; i < stack->frames_len; i++) {
     stack->frames[i] = (heap_frame) {
-      .name = string_from_char_slice(location->function.name),
-      .filename = string_from_char_slice(location->function.filename),
+      .filename = recorder->reusable_ids[i],
+      .name = recorder->reusable_ids[i + stack->frames_len],
       // ddog_prof_Location is a int64_t. We don't expect to have to profile files with more than
       // 2M lines so this cast should be fairly safe?
-      .line = (int32_t) location->line,
+      .line = (int32_t) locations.ptr[i].line,
     };
   }
+
   return stack;
 }
 
-void heap_stack_free(heap_stack *stack) {
-  for (uint64_t i = 0; i < stack->frames_len; i++) {
-    heap_frame *frame = &stack->frames[i];
-    ruby_xfree(frame->name);
-    ruby_xfree(frame->filename);
+void heap_record_free(heap_recorder *recorder, heap_record *stack) {
+  ddog_prof_ManagedStringId *ids = recorder->reusable_ids;
+
+  // Put all the ids in the same array; doesn't really matter the order
+  for (u_int16_t i = 0; i < stack->frames_len; i++) {
+    ids[i] = stack->frames[i].filename;
+    ids[i + stack->frames_len] = stack->frames[i].name;
   }
-  ruby_xfree(stack);
+  unintern_all_or_raise(recorder, (ddog_prof_Slice_ManagedStringId) { .ptr = ids, .len = stack->frames_len * 2 });
+
+  free(stack); // See "note on calloc vs ruby_xcalloc use" above
 }
 
-// WARN: Must be kept in-sync with ::ddog_location_slice_hash
-st_index_t heap_stack_hash(heap_stack *stack, st_index_t seed) {
-  st_index_t hash = seed;
-  for (uint64_t i = 0; i < stack->frames_len; i++) {
-    hash = heap_frame_hash(&stack->frames[i], hash);
-  }
-  return hash;
-}
+// The entire stack is represented by ids (name, filename) and lines (integers) so we can treat is as just
+// a big string of bytes and compare it all in one go.
+int heap_record_cmp_st(st_data_t key1, st_data_t key2) {
+  heap_record *stack1 = (heap_record*) key1;
+  heap_record *stack2 = (heap_record*) key2;
 
-// WARN: Must be kept in-sync with ::heap_stack_hash
-st_index_t ddog_location_slice_hash(ddog_prof_Slice_Location locations, st_index_t seed) {
-  st_index_t hash = seed;
-  for (uint64_t i = 0; i < locations.len; i++) {
-    hash = ddog_location_hash(locations.ptr[i], hash);
-  }
-  return hash;
-}
-
-// ===================
-// Heap Record Key API
-// ===================
-heap_record_key* heap_record_key_new(heap_stack *stack) {
-  heap_record_key *key = ruby_xmalloc(sizeof(heap_record_key));
-  key->type = HEAP_STACK;
-  key->heap_stack = stack;
-  return key;
-}
-
-void heap_record_key_free(heap_record_key *key) {
-  ruby_xfree(key);
-}
-
-static inline size_t heap_record_key_len(heap_record_key *key) {
-  if (key->type == HEAP_STACK) {
-    return key->heap_stack->frames_len;
+  if (stack1->frames_len != stack2->frames_len) {
+    return ((int) stack1->frames_len) - ((int) stack2->frames_len);
   } else {
-    return key->location_slice->len;
+    return memcmp(stack1->frames, stack2->frames, stack1->frames_len * sizeof(heap_frame));
   }
 }
 
-static inline int64_t heap_record_key_entry_line(heap_record_key *key, size_t entry_i) {
-  if (key->type == HEAP_STACK) {
-    return key->heap_stack->frames[entry_i].line;
-  } else {
-    return key->location_slice->ptr[entry_i].line;
-  }
-}
-
-static inline size_t heap_record_key_entry_name(heap_record_key *key, size_t entry_i, const char **name_ptr) {
-  if (key->type == HEAP_STACK) {
-    char *name = key->heap_stack->frames[entry_i].name;
-    (*name_ptr) = name;
-    return strlen(name);
-  } else {
-    ddog_CharSlice name = key->location_slice->ptr[entry_i].function.name;
-    (*name_ptr) = name.ptr;
-    return name.len;
-  }
-}
-
-static inline size_t heap_record_key_entry_filename(heap_record_key *key, size_t entry_i, const char **filename_ptr) {
-  if (key->type == HEAP_STACK) {
-    char *filename = key->heap_stack->frames[entry_i].filename;
-    (*filename_ptr) = filename;
-    return strlen(filename);
-  } else {
-    ddog_CharSlice filename = key->location_slice->ptr[entry_i].function.filename;
-    (*filename_ptr) = filename.ptr;
-    return filename.len;
-  }
-}
-
-int heap_record_key_cmp_st(st_data_t key1, st_data_t key2) {
-  heap_record_key *key_record1 = (heap_record_key*) key1;
-  heap_record_key *key_record2 = (heap_record_key*) key2;
-
-  // Fast path, check if lengths differ
-  size_t key_record1_len = heap_record_key_len(key_record1);
-  size_t key_record2_len = heap_record_key_len(key_record2);
-
-  if (key_record1_len != key_record2_len) {
-    return ((int) key_record1_len) - ((int) key_record2_len);
-  }
-
-  // If we got this far, we have same lengths so need to check item-by-item
-  for (size_t i = 0; i < key_record1_len; i++) {
-    // Lines are faster to compare, lets do that first
-    size_t line1 = heap_record_key_entry_line(key_record1, i);
-    size_t line2 = heap_record_key_entry_line(key_record2, i);
-    if (line1 != line2) {
-      return ((int) line1) - ((int)line2);
-    }
-
-    // Then come names, they are usually smaller than filenames
-    const char *name1, *name2;
-    size_t name1_len = heap_record_key_entry_name(key_record1, i, &name1);
-    size_t name2_len = heap_record_key_entry_name(key_record2, i, &name2);
-    if (name1_len != name2_len) {
-      return ((int) name1_len) - ((int) name2_len);
-    }
-    int name_cmp_result = strncmp(name1, name2, name1_len);
-    if (name_cmp_result != 0) {
-      return name_cmp_result;
-    }
-
-    // Then come filenames
-    const char *filename1, *filename2;
-    int64_t filename1_len = heap_record_key_entry_filename(key_record1, i, &filename1);
-    int64_t filename2_len = heap_record_key_entry_filename(key_record2, i, &filename2);
-    if (filename1_len != filename2_len) {
-      return ((int) filename1_len) - ((int) filename2_len);
-    }
-    int filename_cmp_result = strncmp(filename1, filename2, filename1_len);
-    if (filename_cmp_result != 0) {
-      return filename_cmp_result;
-    }
-  }
-
-  // If we survived the above for, then everything matched
-  return 0;
-}
-
-// Initial seed for hash functions
+// Initial seed for hash function, same as Ruby uses
 #define FNV1_32A_INIT 0x811c9dc5
 
-st_index_t heap_record_key_hash_st(st_data_t key) {
-  heap_record_key *record_key = (heap_record_key*) key;
-  if (record_key->type == HEAP_STACK) {
-    return heap_stack_hash(record_key->heap_stack, FNV1_32A_INIT);
-  } else {
-    return ddog_location_slice_hash(*record_key->location_slice, FNV1_32A_INIT);
+// The entire stack is represented by ids (name, filename) and lines (integers) so we can treat is as just
+// a big string of bytes and hash it all in one go.
+st_index_t heap_record_hash_st(st_data_t key) {
+  heap_record *stack = (heap_record*) key;
+  return st_hash(stack->frames, stack->frames_len * sizeof(heap_frame), FNV1_32A_INIT);
+}
+
+static void unintern_or_raise(heap_recorder *recorder, ddog_prof_ManagedStringId id) {
+  if (id.value == 0) return; // Empty string, nothing to do
+
+  ddog_prof_MaybeError result = ddog_prof_ManagedStringStorage_unintern(recorder->string_storage, id);
+  if (result.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
+    raise_error(rb_eRuntimeError, "Failed to unintern id: %"PRIsVALUE, get_error_details_and_drop(&result.some));
   }
+}
+
+static void unintern_all_or_raise(heap_recorder *recorder, ddog_prof_Slice_ManagedStringId ids) {
+  ddog_prof_MaybeError result = ddog_prof_ManagedStringStorage_unintern_all(recorder->string_storage, ids);
+  if (result.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
+    raise_error(rb_eRuntimeError, "Failed to unintern_all: %"PRIsVALUE, get_error_details_and_drop(&result.some));
+  }
+}
+
+static VALUE get_ruby_string_or_raise(heap_recorder *recorder, ddog_prof_ManagedStringId id) {
+  ddog_StringWrapperResult get_string_result = ddog_prof_ManagedStringStorage_get_string(recorder->string_storage, id);
+  if (get_string_result.tag == DDOG_STRING_WRAPPER_RESULT_ERR) {
+    raise_error(rb_eRuntimeError, "Failed to get string: %"PRIsVALUE, get_error_details_and_drop(&get_string_result.err));
+  }
+  VALUE ruby_string = ruby_string_from_vec_u8(get_string_result.ok.message);
+  ddog_StringWrapper_drop((ddog_StringWrapper *) &get_string_result.ok);
+
+  return ruby_string;
+}
+
+static long obj_id_or_fail(VALUE obj) {
+  VALUE ruby_obj_id = rb_obj_id(obj);
+  if (!FIXNUM_P(ruby_obj_id)) {
+    // Bignum object ids indicate the fixnum range is exhausted - all future IDs will also be bignums.
+    // Heap profiling cannot continue.
+    raise_error(rb_eRuntimeError, "Heap profiling: bignum object id detected. Heap profiling cannot continue.");
+  }
+
+  return FIX2LONG(ruby_obj_id);
 }
 
 static inline double ewma_stat(double previous, double current) {
@@ -1099,7 +1093,7 @@ static inline double ewma_stat(double previous, double current) {
 
 VALUE heap_recorder_testonly_is_object_recorded(heap_recorder *heap_recorder, VALUE obj_id) {
   if (heap_recorder == NULL) {
-    rb_raise(rb_eArgError, "heap_recorder is NULL");
+    raise_error(rb_eArgError, "heap_recorder is NULL");
   }
 
   // Check if object records contains an object with this object_id
@@ -1108,8 +1102,28 @@ VALUE heap_recorder_testonly_is_object_recorded(heap_recorder *heap_recorder, VA
 
 void heap_recorder_testonly_reset_last_update(heap_recorder *heap_recorder) {
   if (heap_recorder == NULL) {
-    rb_raise(rb_eArgError, "heap_recorder is NULL");
+    raise_error(rb_eArgError, "heap_recorder is NULL");
   }
 
   heap_recorder->last_update_ns = 0;
+}
+
+void heap_recorder_testonly_benchmark_intern(heap_recorder *heap_recorder, ddog_CharSlice string, int times, bool use_all) {
+  if (heap_recorder == NULL) raise_error(rb_eArgError, "heap profiling must be enabled");
+  if (times > REUSABLE_FRAME_DETAILS_SIZE) raise_error(rb_eArgError, "times cannot be > than REUSABLE_FRAME_DETAILS_SIZE");
+
+  if (use_all) {
+    ddog_CharSlice *strings = heap_recorder->reusable_char_slices;
+
+    for (int i = 0; i < times; i++) strings[i] = string;
+
+    intern_all_or_raise(
+      heap_recorder->string_storage,
+      (ddog_prof_Slice_CharSlice) { .ptr = strings, .len = times },
+      heap_recorder->reusable_ids,
+      times
+    );
+  } else {
+    for (int i = 0; i < times; i++) intern_or_raise(heap_recorder->string_storage, string);
+  }
 }

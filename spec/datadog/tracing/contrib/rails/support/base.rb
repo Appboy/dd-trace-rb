@@ -14,6 +14,11 @@ RSpec.shared_context 'Rails base application' do
   end
 
   after do
+    # NOTE: We forsibly close connection pool to avoid leaking connection between
+    #       test cases.
+    #       This call is safe to be used on already closed connection pool.
+    application_record.connection.disconnect! if application_record&.connected?
+
     # Reset references stored in the Rails class
     Rails.application = nil
     Rails.logger = nil
@@ -58,4 +63,7 @@ RSpec.shared_context 'Rails base application' do
       middleware.each { |m| config.middleware.use m }
     end
   end
+
+  # Workaround for a `pg` gem bug on Mac, when the process forks: https://github.com/ged/ruby-pg/issues/538
+  with_env 'PGGSSENCMODE' => 'disable'
 end

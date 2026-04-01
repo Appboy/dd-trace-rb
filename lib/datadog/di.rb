@@ -1,40 +1,20 @@
 # frozen_string_literal: true
 
-require_relative 'di/logger'
-require_relative 'di/base'
-require_relative 'di/error'
-require_relative 'di/code_tracker'
-require_relative 'di/component'
 require_relative 'di/configuration'
 require_relative 'di/extensions'
-require_relative 'di/instrumenter'
-require_relative 'di/probe'
-require_relative 'di/probe_builder'
-require_relative 'di/probe_manager'
-require_relative 'di/probe_notification_builder'
-require_relative 'di/probe_notifier_worker'
-require_relative 'di/redactor'
 require_relative 'di/remote'
-require_relative 'di/serializer'
-#require_relative 'di/transport'
-require_relative 'di/transport/http'
-require_relative 'di/utils'
 
 module Datadog
   # Namespace for Datadog dynamic instrumentation.
   #
   # @api private
   module DI
+    INSTRUMENTED_COUNTERS_LOCK = Mutex.new
+
     class << self
       def enabled?
         Datadog.configuration.dynamic_instrumentation.enabled
       end
-    end
-
-    # Expose DI to global shared objects
-    Extensions.activate!
-
-    class << self
 
       # This method is called from DI Remote handler to issue DI operations
       # to the probe manager (add or remove probes).
@@ -48,23 +28,65 @@ module Datadog
       def component
         Datadog.send(:components).dynamic_instrumentation
       end
+
+      # Track how many outstanding instrumentations are in DI.
+      #
+      # It is hard to find the actual instrumentations - there is no
+      # method provided by Ruby to list all trace points, and we would
+      # need to manually track our instrumentation modules for method probes.
+      # Plus, tracking the modules could create active references to
+      # instrumentation, which is not desired.
+      #
+      # A simpler solution is to maintain a counter which is increased
+      # whenever a probe is installed and decreased when a probe is removed.
+      #
+      # This counter does not include pending probes - being not installed,
+      # those pose no concerns to customer applications.
+      def instrumented_count(kind = nil)
+        INSTRUMENTED_COUNTERS_LOCK.synchronize do
+          if defined?(@instrumented_count)
+            if kind
+              validate_kind!(kind)
+              @instrumented_count[kind] || 0
+            else
+              @instrumented_count.inject(0) do |sum, (_kind, count)|
+                sum + count
+              end
+            end
+          else
+            0
+          end
+        end
+      end
+
+      def instrumented_count_inc(kind)
+        validate_kind!(kind)
+        INSTRUMENTED_COUNTERS_LOCK.synchronize do
+          @instrumented_count = Hash.new(0) unless defined?(@instrumented_count)
+          @instrumented_count[kind] += 1
+        end
+      end
+
+      def instrumented_count_dec(kind)
+        validate_kind!(kind)
+        INSTRUMENTED_COUNTERS_LOCK.synchronize do
+          @instrumented_count = Hash.new(0) unless defined?(@instrumented_count)
+          if @instrumented_count[kind] <= 0
+            Datadog.logger.debug { "di: attempting to decrease instrumented count below zero for #{kind}" }
+            return
+          end
+          @instrumented_count[kind] -= 1
+        end
+      end
+
+      private def validate_kind!(kind)
+        unless %i[line method].include?(kind)
+          raise ArgumentError, "Invalid kind: #{kind}"
+        end
+      end
     end
+
+    # Expose DI to global shared objects
+    Extensions.activate!
   end
 end
-
-if %w(1 true).include?(ENV['DD_DYNAMIC_INSTRUMENTATION_ENABLED']) # steep:ignore
-  # For initial release of Dynamic Instrumentation, activate code tracking
-  # only if DI is explicitly requested in the environment.
-  # Code tracking is required for line probes to work; see the comments
-  # above for the implementation of the method.
-  #
-  # If DI is enabled programmatically, the application can (and must,
-  # for line probes to work) activate tracking in an initializer.
-  # We seem to have Datadog.logger here already
-  Datadog.logger.debug("di: activating code tracking")
-  Datadog::DI.activate_tracking
-end
-
-require_relative 'di/contrib'
-
-Datadog::DI::Contrib.load_now_or_later

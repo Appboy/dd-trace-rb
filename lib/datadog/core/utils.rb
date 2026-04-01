@@ -38,6 +38,8 @@ module Datadog
 
       # Ensure `str` is a valid UTF-8, ready to be
       # sent through the tracer transport.
+      # DEV-3.0: This method should unconditionally handle invalid byte sequences
+      # DEV-3.0: and return a safe string to display.
       #
       # @param [String,#to_s] str object to be converted to a UTF-8 string
       # @param [Boolean] binary whether to expect binary data in the `str` parameter
@@ -64,6 +66,13 @@ module Datadog
         Datadog.logger.debug("Error encoding string in UTF-8: #{e}")
 
         placeholder
+      end
+
+      def self.encode_tags(hash)
+        # Make sure everything is an utf-8 string, to avoid encoding issues in downstream
+        hash.each_with_object({}) do |(key, value), h|
+          h[utf8_encode(key)] = utf8_encode(value)
+        end
       end
 
       # @!visibility private

@@ -11,12 +11,14 @@ module Datadog
       # Client communicates with the agent and sync remote configuration
       class Client
         class TransportError < StandardError; end
+
         class SyncError < StandardError; end
 
-        attr_reader :transport, :repository, :id, :dispatcher, :logger
+        attr_reader :transport, :repository, :id, :dispatcher, :settings, :logger
 
-        def initialize(transport, capabilities, logger: Datadog.logger, repository: Configuration::Repository.new)
+        def initialize(transport, capabilities, settings:, logger:, repository: Configuration::Repository.new)
           @transport = transport
+          @settings = settings
           @logger = logger
 
           @repository = repository
@@ -96,7 +98,9 @@ module Datadog
               content = contents.find_content(path, target)
 
               # abort entirely if matching content not found
-              raise SyncError, "no valid content for target at path '#{path}'" if content.nil?
+              if content.nil?
+                raise SyncError, "no valid content for target at path '#{path}'"
+              end
 
               # to be added or updated << config
               # TODO: metadata (hash, version, etc...)
@@ -119,7 +123,7 @@ module Datadog
           end
         end
 
-        def payload # rubocop:disable Metrics/MethodLength
+        def payload # standard:disable Metrics/MethodLength
           state = repository.state
 
           client_tracer_tags = [
@@ -134,24 +138,36 @@ module Datadog
             "ruby.runtime.engine.name:#{RUBY_ENGINE}",
             "ruby.runtime.engine.version:#{ruby_engine_version}",
             "ruby.rubygems.platform.local:#{Gem::Platform.local}",
-            "ruby.gem.libddwaf.version:#{gem_spec('libddwaf').version}",
-            "ruby.gem.libddwaf.platform:#{gem_spec('libddwaf').platform}",
-            "ruby.gem.libdatadog.version:#{gem_spec('libdatadog').version}",
-            "ruby.gem.libdatadog.platform:#{gem_spec('libdatadog').platform}",
+            "ruby.gem.libddwaf.version:#{gem_spec("libddwaf").version}",
+            "ruby.gem.libddwaf.platform:#{gem_spec("libddwaf").platform}",
+            "ruby.gem.libdatadog.version:#{gem_spec("libdatadog").version}",
+            "ruby.gem.libdatadog.platform:#{gem_spec("libdatadog").platform}",
           ]
+
+          if (git_repository_url = Core::Environment::Git.git_repository_url)
+            client_tracer_tags << "git.repository_url:#{git_repository_url}"
+          end
+          if (git_commit_sha = Core::Environment::Git.git_commit_sha)
+            client_tracer_tags << "git.commit.sha:#{git_commit_sha}"
+          end
 
           client_tracer = {
             runtime_id: Core::Environment::Identity.id,
             language: Core::Environment::Identity.lang,
             tracer_version: tracer_version,
             service: service_name,
-            env: Datadog.configuration.env,
+            env: settings.env,
             tags: client_tracer_tags,
           }
 
-          app_version = Datadog.configuration.version
+          app_version = settings.version
 
           client_tracer[:app_version] = app_version if app_version
+
+          if settings.experimental_propagate_process_tags_enabled
+            process_tags = Core::Environment::Process.tags
+            client_tracer[:process_tags] = process_tags if process_tags.any?
+          end
 
           {
             client: {
@@ -176,7 +192,7 @@ module Datadog
         end
 
         def service_name
-          Datadog.configuration.remote.service || Datadog.configuration.service
+          settings.remote.service || settings.service
         end
 
         def tracer_version
@@ -195,37 +211,37 @@ module Datadog
           return @native_platform unless @native_platform.nil?
 
           os = if RUBY_ENGINE == 'jruby'
-                 os_name = java.lang.System.get_property('os.name')
+            os_name = java.lang.System.get_property('os.name')
 
-                 case os_name
-                 when /linux/i then 'linux'
-                 when /mac/i   then 'darwin'
-                 else os_name
-                 end
-               else
-                 Gem::Platform.local.os
-               end
+            case os_name
+            when /linux/i then 'linux'
+            when /mac/i then 'darwin'
+            else os_name
+            end
+          else
+            Gem::Platform.local.os
+          end
 
           version = if os != 'linux'
-                      nil
-                    elsif RUBY_PLATFORM =~ /linux-(.+)$/
-                      # Old rubygems don't handle non-gnu linux correctly
-                      Regexp.last_match(1)
-                    else
-                      'gnu'
-                    end
+            nil
+          elsif RUBY_PLATFORM =~ /linux-(.+)$/
+            # Old rubygems don't handle non-gnu linux correctly
+            Regexp.last_match(1)
+          else
+            'gnu'
+          end
 
           cpu = if RUBY_ENGINE == 'jruby'
-                  os_arch = java.lang.System.get_property('os.arch')
+            os_arch = java.lang.System.get_property('os.arch')
 
-                  case os_arch
-                  when 'amd64' then 'x86_64'
-                  when 'aarch64' then os == 'darwin' ? 'arm64' : 'aarch64'
-                  else os_arch
-                  end
-                else
-                  Gem::Platform.local.cpu
-                end
+            case os_arch
+            when 'amd64' then 'x86_64'
+            when 'aarch64' then (os == 'darwin') ? 'arm64' : 'aarch64'
+            else os_arch
+            end
+          else
+            Gem::Platform.local.cpu
+          end
 
           @native_platform = [cpu, os, version].compact.join('-')
         end

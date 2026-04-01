@@ -16,7 +16,7 @@ module Datadog
           register_as :excon
 
           def self.version
-            Gem.loaded_specs['excon'] && Gem.loaded_specs['excon'].version
+            Gem.loaded_specs['excon']&.version
           end
 
           def self.loaded?
@@ -24,7 +24,7 @@ module Datadog
           end
 
           def self.compatible?
-            super && version >= MINIMUM_VERSION
+            super && !!(version&.>= MINIMUM_VERSION)
           end
 
           def self.auto_instrument?

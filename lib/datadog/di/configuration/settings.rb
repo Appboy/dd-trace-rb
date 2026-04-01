@@ -45,6 +45,28 @@ module Datadog
                 o.default []
               end
 
+              # An array of variable and key names to exclude from the
+              # built-in redaction list.
+              #
+              # This allows users to capture values of variables that would
+              # otherwise be redacted by the default identifier list.
+              # For example, if an application has a "session" variable
+              # that does not contain sensitive data, "session" can be added
+              # to this list to exclude it from redaction.
+              #
+              # The names will be normalized the same way as redacted_identifiers,
+              # by removing the following symbols: _, -, @, $, and then matched
+              # against the complete variable or key name while ignoring the case.
+              option :redaction_excluded_identifiers do |o|
+                o.env "DD_DYNAMIC_INSTRUMENTATION_REDACTION_EXCLUDED_IDENTIFIERS"
+                o.env_parser do |value|
+                  value&.split(",")&.map(&:strip)
+                end
+
+                o.type :array
+                o.default []
+              end
+
               # An array of class names, values of which will be redacted from
               # dynamic instrumentation snapshots. Example: FooClass.
               # If a name is suffixed by '*', it becomes a wildcard and
@@ -201,6 +223,15 @@ module Datadog
                   # will likely need a way to turn on remote config
                   # debugging (since DI uses RC for configuration).
                   o.env 'DD_TRACE_DEBUG'
+                end
+
+                # If the CPU time consumed by the thread performing instrumentation
+                # exceeds this amount, the offending probe will be automatically disabled.
+                # Set to nil to disable the circuit breaker.
+                # Set to zero to disable every probe after it executes once.
+                option :max_processing_time do |o|
+                  o.type :float
+                  o.default 0.5
                 end
               end
             end

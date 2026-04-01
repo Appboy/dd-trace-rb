@@ -185,7 +185,7 @@ module Datadog
               end
             end
 
-            # Update existimng repository's contents
+            # Update existing repository's contents
             class Update
               attr_reader :path, :target, :content
 
@@ -237,6 +237,10 @@ module Datadog
                 @path = path
                 @previous = previous
               end
+
+              def type
+                :delete
+              end
             end
 
             # Insert change
@@ -246,6 +250,10 @@ module Datadog
               def initialize(path, content)
                 @path = path
                 @content = content
+              end
+
+              def type
+                :insert
               end
             end
 
@@ -257,6 +265,10 @@ module Datadog
                 @path = path
                 @content = content
                 @previous = previous
+              end
+
+              def type
+                :update
               end
             end
           end

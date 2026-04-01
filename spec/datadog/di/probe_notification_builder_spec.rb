@@ -17,6 +17,10 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
     double("settings").tap do |settings|
       allow(settings).to receive(:dynamic_instrumentation).and_return(di_settings)
       allow(settings).to receive(:service).and_return('test service')
+      allow(settings).to receive(:env).and_return('test env')
+      allow(settings).to receive(:version).and_return('test version')
+      allow(settings).to receive(:tags).and_return({})
+      allow(settings).to receive(:experimental_propagate_process_tags_enabled).and_return(false)
     end
   end
 
@@ -24,6 +28,7 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
     double("di settings").tap do |settings|
       allow(settings).to receive(:enabled).and_return(true)
       allow(settings).to receive(:redacted_identifiers).and_return([])
+      allow(settings).to receive(:redaction_excluded_identifiers).and_return([])
       allow(settings).to receive(:redacted_type_names).and_return(%w[])
       allow(settings).to receive(:max_capture_collection_size).and_return(10)
       allow(settings).to receive(:max_capture_attribute_count).and_return(10)
@@ -143,6 +148,10 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
             probeVersion: 0,
             runtimeId: String,
             status: 'ERROR',
+            exception: {
+              type: 'Exception',
+              message: 'Test message',
+            },
           },
         },
         message: "Instrumentation for probe 123 failed: Test message",
@@ -157,13 +166,89 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
     end
   end
 
+  describe '#build_disabled' do
+    let(:payload) do
+      builder.build_disabled(probe, 0.75)
+    end
+
+    let(:expected) do
+      {
+        ddsource: 'dd_debugger',
+        debugger: {
+          diagnostics: {
+            parentId: nil,
+            probeId: '123',
+            probeVersion: 0,
+            runtimeId: String,
+            status: 'ERROR',
+            exception: {
+              type: 'Error',
+              message: "Probe 123 was disabled because it consumed 0.75 seconds of CPU time in DI processing",
+            },
+          },
+        },
+        message: "Probe 123 was disabled because it consumed 0.75 seconds of CPU time in DI processing",
+        service: 'test service',
+        timestamp: Integer,
+      }
+    end
+
+    it 'returns a hash with expected contents' do
+      expect(payload).to be_a(Hash)
+      expect(payload).to match(expected)
+    end
+  end
+
+  describe '#build_status with ERROR status and no exception' do
+    let(:payload) do
+      builder.send(:build_status, probe,
+        message: "Custom error message",
+        status: 'ERROR',
+        exception: nil)
+    end
+
+    let(:expected) do
+      {
+        ddsource: 'dd_debugger',
+        debugger: {
+          diagnostics: {
+            parentId: nil,
+            probeId: '123',
+            probeVersion: 0,
+            runtimeId: String,
+            status: 'ERROR',
+            exception: {
+              type: 'Error',
+              message: 'Custom error message',
+            },
+          },
+        },
+        message: "Custom error message",
+        service: 'test service',
+        timestamp: Integer,
+      }
+    end
+
+    it 'returns a hash with exception field using fallback values' do
+      expect(payload).to be_a(Hash)
+      expect(payload).to match(expected)
+    end
+  end
+
   describe '#build_executed' do
-    let(:payload) { builder.build_executed(probe) }
+    let(:payload) { builder.build_executed(context) }
+
+    let(:context) do
+      Datadog::DI::Context.new(
+        settings: settings, serializer: serializer,
+        probe: probe
+      )
+    end
 
     context 'with template' do
       let(:probe) do
         Datadog::DI::Probe.new(id: '123', type: :log, file: 'X', line_no: 1,
-          template: 'hello world')
+          template_segments: ['hello world'])
       end
 
       let(:expected) do
@@ -171,27 +256,30 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
           ddsource: 'dd_debugger',
           "dd.span_id": nil,
           "dd.trace_id": nil,
-          "debugger.snapshot": {
-            captures: nil,
-            evaluationErrors: [],
-            id: String,
-            language: 'ruby',
-            probe: {
-              id: '123',
-              location: {
-                file: nil,
-                lines: [1],
+          debugger: {
+            type: 'snapshot',
+            snapshot: {
+              captures: {},
+              evaluationErrors: [],
+              id: String,
+              language: 'ruby',
+              probe: {
+                id: '123',
+                location: {
+                  file: nil,
+                  lines: ['1'],
+                },
+                version: 0,
               },
-              version: 0,
+              stack: nil,
+              timestamp: Integer,
             },
-            stack: nil,
-            timestamp: Integer,
           },
           message: "hello world",
           service: 'test service',
           timestamp: Integer,
           logger: {
-            method: 'no_method',
+            method: nil,
             name: 'X',
             thread_id: nil,
             thread_name: 'Thread.main',
@@ -219,27 +307,30 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
           ddsource: 'dd_debugger',
           "dd.span_id": nil,
           "dd.trace_id": nil,
-          "debugger.snapshot": {
-            captures: nil,
-            evaluationErrors: [],
-            id: String,
-            language: 'ruby',
-            probe: {
-              id: '123',
-              location: {
-                file: nil,
-                lines: [1],
+          debugger: {
+            type: 'snapshot',
+            snapshot: {
+              captures: {},
+              evaluationErrors: [],
+              id: String,
+              language: 'ruby',
+              probe: {
+                id: '123',
+                location: {
+                  file: nil,
+                  lines: ['1'],
+                },
+                version: 0,
               },
-              version: 0,
+              stack: nil,
+              timestamp: Integer,
             },
-            stack: nil,
-            timestamp: Integer,
           },
           message: nil,
           service: 'test service',
           timestamp: Integer,
           logger: {
-            method: 'no_method',
+            method: nil,
             name: 'X',
             thread_id: nil,
             thread_name: 'Thread.main',
@@ -262,21 +353,19 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
           capture_snapshot: true,)
       end
 
-      let(:trace_point) do
-        instance_double(TracePoint).tap do |tp|
-          # Returns an empty binding
-          expect(tp).to receive(:binding).and_return(get_binding)
-          expect(tp).to receive(:path).and_return('/foo.rb')
-        end
+      let(:context) do
+        Datadog::DI::Context.new(probe: probe,
+          settings: settings, serializer: serializer,
+          path: '/foo.rb',
+          locals: locals, target_self: Object.new)
       end
 
-      let(:get_binding) do
-        x = 1
-        binding
+      let(:locals) do
+        {foo: 1234}
       end
 
-      let(:payload) do
-        builder.build_executed(probe, trace_point: trace_point)
+      let(:serialized_locals) do
+        {foo: {type: 'Integer', value: '1234'}}.freeze
       end
 
       let(:expected) do
@@ -284,33 +373,40 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
           ddsource: 'dd_debugger',
           "dd.span_id": nil,
           "dd.trace_id": nil,
-          "debugger.snapshot": {
-            captures: {
-              lines: {
-                1 => {
-                  locals: local_captures,
+          debugger: {
+            type: 'snapshot',
+            snapshot: {
+              captures: {
+                lines: {
+                  1 => {
+                    locals: serialized_locals,
+                    arguments: {self: {
+                      type: 'Object',
+                      fields: {},
+                    }},
+                  },
                 },
               },
-            },
-            evaluationErrors: [],
-            id: String,
-            language: 'ruby',
-            probe: {
-              id: '123',
-              location: {
-                file: '/foo.rb',
-                lines: [1],
+              evaluationErrors: [],
+              id: String,
+              language: 'ruby',
+              probe: {
+                id: '123',
+                location: {
+                  file: '/foo.rb',
+                  lines: ['1'],
+                },
+                version: 0,
               },
-              version: 0,
+              stack: nil,
+              timestamp: Integer,
             },
-            stack: nil,
-            timestamp: Integer,
           },
           message: nil,
           service: 'test service',
           timestamp: Integer,
           logger: {
-            method: 'no_method',
+            method: nil,
             name: 'X',
             thread_id: nil,
             thread_name: 'Thread.main',
@@ -321,36 +417,84 @@ RSpec.describe Datadog::DI::ProbeNotificationBuilder do
         }
       end
 
-      shared_examples 'returns a hash with expected contents' do
-        it 'returns a hash with expected contents' do
-          expect(payload).to be_a(Hash)
-          expect(payload).to match(expected)
-        end
+      it 'returns a hash with expected contents' do
+        expect(payload).to be_a(Hash)
+        expect(payload).to match(expected)
+      end
+    end
+  end
+
+  describe '#evaluate_template' do
+    context 'when there are variables to be substituted' do
+      let(:compiler) { Datadog::DI::EL::Compiler.new }
+
+      let(:template_segments) do
+        [
+          Datadog::DI::EL::Expression.new('(expression)', compiler.compile('ref' => 'hello')),
+          ' ',
+          Datadog::DI::EL::Expression.new('(expression)', compiler.compile('ref' => 'world')),
+        ]
       end
 
-      context 'when binding is empty' do
-        let(:get_binding) do
-          binding
-        end
-
-        let(:local_captures) do
-          {}
-        end
-
-        include_examples 'returns a hash with expected contents'
+      let(:vars) do
+        {
+          hello: 'test',
+          # We need double backslash to check for proper sub/gsub usage.
+          world: %("'\\\\a\#{value}),
+        }
       end
 
-      context 'when binding is not empty' do
-        let(:get_binding) do
-          x = 1
-          binding
-        end
+      let(:context) do
+        Datadog::DI::Context.new(
+          settings: settings, serializer: serializer,
+          locals: vars,
+          probe: probe
+        )
+      end
 
-        let(:local_captures) do
-          {x: {type: 'Integer', value: '1'}}
-        end
+      let(:expected) { %(test "'\\\\a\#{value}) }
 
-        include_examples 'returns a hash with expected contents'
+      it 'substitutes correctly' do
+        expect(builder.send(:evaluate_template, template_segments, context)).to eq([expected, []])
+      end
+    end
+  end
+
+  describe 'process tags' do
+    let(:probe) do
+      Datadog::DI::Probe.new(id: '123', type: :log, file: 'X', line_no: 1)
+    end
+
+    let(:context) do
+      Datadog::DI::Context.new(
+        settings: settings, serializer: serializer,
+        probe: probe
+      )
+    end
+
+    context 'when process tags propagation is enabled' do
+      before do
+        allow(settings).to receive(:experimental_propagate_process_tags_enabled).and_return(true)
+      end
+
+      it 'includes process tags in the payload' do
+        payload = builder.build_executed(context)
+        expect(payload[:process_tags]).to eq(Datadog::Core::Environment::Process.serialized)
+        expect(payload[:process_tags]).to include('entrypoint.workdir')
+        expect(payload[:process_tags]).to include('entrypoint.name')
+        expect(payload[:process_tags]).to include('entrypoint.basedir')
+        expect(payload[:process_tags]).to include('entrypoint.type')
+      end
+    end
+
+    context 'when process tags propagation is not enabled' do
+      before do
+        allow(settings).to receive(:experimental_propagate_process_tags_enabled).and_return(false)
+      end
+
+      it 'excludes process tags in the payload' do
+        payload = builder.build_executed(context)
+        expect(payload).not_to include(:process_tags)
       end
     end
   end

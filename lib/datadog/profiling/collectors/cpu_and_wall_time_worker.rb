@@ -23,6 +23,8 @@ module Datadog
           allocation_profiling_enabled:,
           allocation_counting_enabled:,
           gvl_profiling_enabled:,
+          sighandler_sampling_enabled:,
+          cpu_sampling_interval_ms:,
           # **NOTE**: This should only be used for testing; disabling the dynamic sampling rate will increase the
           # profiler overhead!
           dynamic_sampling_rate_enabled: true,
@@ -33,6 +35,13 @@ module Datadog
             Datadog.logger.warn(
               "Profiling dynamic sampling rate disabled. This should only be used for testing, and will increase overhead!"
             )
+            Datadog::Core::Telemetry::Logger.error(
+              "Profiling dynamic sampling rate disabled. This should only be used for testing, and will increase overhead!"
+            )
+          end
+
+          if cpu_sampling_interval_ms < 1
+            raise ArgumentError, "cpu_sampling_interval_ms must be a positive integer, got #{cpu_sampling_interval_ms}"
           end
 
           self.class._native_initialize(
@@ -46,7 +55,9 @@ module Datadog
             allocation_profiling_enabled: allocation_profiling_enabled,
             allocation_counting_enabled: allocation_counting_enabled,
             gvl_profiling_enabled: gvl_profiling_enabled,
+            sighandler_sampling_enabled: sighandler_sampling_enabled,
             skip_idle_samples_for_testing: skip_idle_samples_for_testing,
+            cpu_sampling_interval_ms: cpu_sampling_interval_ms,
           )
           @worker_thread = nil
           @failure_exception = nil
@@ -70,13 +81,22 @@ module Datadog
               self.class._native_sampling_loop(self)
 
               Datadog.logger.debug("CpuAndWallTimeWorker thread stopping cleanly")
-            rescue Exception => e # rubocop:disable Lint/RescueException
+            rescue Profiling::ExistingSignalHandler => e
               @failure_exception = e
               Datadog.logger.warn(
+                "Profiling was not started as another profiler or gem is already using the SIGPROF signal. " \
+                "Please disable the other profiler to use Datadog profiling."
+              )
+              on_failure_proc&.call(log_failure: false)
+            rescue Exception => e # rubocop:disable Lint/RescueException
+              @failure_exception = e
+              operation_name = self.class._native_failure_exception_during_operation(self).inspect
+              Datadog.logger.warn(
                 "CpuAndWallTimeWorker thread error. " \
-                "Cause: #{e.class.name} #{e.message} Location: #{Array(e.backtrace).first}"
+                "Operation: #{operation_name} Cause: #{e.class.name} #{e.message} Location: #{Array(e.backtrace).first}"
               )
               on_failure_proc&.call
+              Datadog::Core::Telemetry::Logger.report(e, description: "CpuAndWallTimeWorker thread error: #{operation_name}")
             end
             @worker_thread.name = self.class.name # Repeated from above to make sure thread gets named asap
             @worker_thread.thread_variable_set(:fork_safe, true)

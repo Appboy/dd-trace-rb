@@ -1,8 +1,10 @@
 require "datadog/profiling/spec_helper"
 require "datadog/profiling/stack_recorder"
 
+require "objspace"
+
 RSpec.describe Datadog::Profiling::StackRecorder do
-  before { skip_if_profiling_not_supported(self) }
+  before { skip_if_profiling_not_supported }
 
   let(:numeric_labels) { [] }
   let(:cpu_time_enabled) { true }
@@ -320,21 +322,8 @@ RSpec.describe Datadog::Profiling::StackRecorder do
         expect(labels).to eq(label_a: "value_a", label_b: "value_b")
       end
 
-      it "encodes a single empty mapping" do
-        expect(decoded_profile.mapping.size).to be 1
-
-        expect(decoded_profile.mapping.first).to have_attributes(
-          id: 1,
-          memory_start: 0,
-          memory_limit: 0,
-          file_offset: 0,
-          filename: 0,
-          build_id: 0,
-          has_functions: false,
-          has_filenames: false,
-          has_line_numbers: false,
-          has_inline_frames: false,
-        )
+      it "does not emit any mappings" do
+        expect(decoded_profile.mapping).to be_empty
       end
 
       it "returns stats reporting one recorded sample" do
@@ -346,25 +335,6 @@ RSpec.describe Datadog::Profiling::StackRecorder do
             heap_profile_build_time_ns: be >= 0,
           )
         )
-      end
-    end
-
-    context "when sample is invalid" do
-      context "because the local root span id is being defined using a string instead of as a number" do
-        let(:metric_values) { {"cpu-time" => 123, "cpu-samples" => 456, "wall-time" => 789} }
-
-        it do
-          # We're using `_native_sample` here to test the behavior of `record_sample` in `stack_recorder.c`
-          expect do
-            Datadog::Profiling::Collectors::Stack::Testing._native_sample(
-              Thread.current,
-              stack_recorder,
-              metric_values,
-              {"local root span id" => "incorrect", "state" => "unknown"}.to_a,
-              [],
-            )
-          end.to raise_error(ArgumentError)
-        end
       end
     end
 
@@ -439,6 +409,16 @@ RSpec.describe Datadog::Profiling::StackRecorder do
         described_class::Testing._native_track_object(stack_recorder, obj, sample_rate, obj.class.name)
         Datadog::Profiling::Collectors::Stack::Testing
           ._native_sample(Thread.current, stack_recorder, metric_values, labels, numeric_labels)
+        # On Ruby 4+, heap recordings are deferred and need to be finalized after the sample is recorded
+        described_class::Testing._native_finalize_pending_heap_recordings(stack_recorder)
+      end
+
+      def introduce_distinct_stacktraces(i, obj)
+        if i.even?
+          sample_allocation(obj) # standard:disable Style/IdenticalConditionalBranches
+        else # rubocop:disable Lint/DuplicateBranch
+          sample_allocation(obj) # standard:disable Style/IdenticalConditionalBranches
+        end
       end
 
       before do
@@ -446,12 +426,7 @@ RSpec.describe Datadog::Profiling::StackRecorder do
           {"z" => -1, "y" => "-2", "x" => false}, Object.new]
         @num_allocations = 0
         allocations.each_with_index do |obj, i|
-          # Sample allocations with 2 distinct stacktraces
-          if i.even?
-            sample_allocation(obj) # standard:disable Style/IdenticalConditionalBranches
-          else # rubocop:disable Lint/DuplicateBranch
-            sample_allocation(obj) # standard:disable Style/IdenticalConditionalBranches
-          end
+          introduce_distinct_stacktraces(i, obj)
           @num_allocations += 1
           GC.start # Force each allocation to be done in its own GC epoch for interesting GC age labels
         end
@@ -478,8 +453,7 @@ RSpec.describe Datadog::Profiling::StackRecorder do
         # This is here to facilitate troubleshooting when this test fails. Otherwise
         # it's very hard to understand what may be happening.
         if example.exception
-          puts("Heap recorder debugging info:")
-          puts(described_class::Testing._native_debug_heap_recorder(stack_recorder))
+          puts("Heap recorder debugging info: #{described_class::Testing._native_debug_heap_recorder(stack_recorder).inspect}")
         end
       end
 
@@ -620,7 +594,7 @@ RSpec.describe Datadog::Profiling::StackRecorder do
           end
         end
 
-        it "aren't lost when they happen concurrently with a long serialization" do
+        it "tracks allocations that happen concurrently with a long serialization" do
           described_class::Testing._native_start_fake_slow_heap_serialization(stack_recorder)
 
           test_num_allocated_object = 123
@@ -667,13 +641,31 @@ RSpec.describe Datadog::Profiling::StackRecorder do
           )
         end
 
+        it "records stack traces that match the allocations' stack traces" do
+          expect(samples.map(&:locations).uniq.size).to be 2
+        end
+
+        it "records correct stack traces" do
+          unique_heap_stacks = heap_samples.map(&:locations).uniq
+
+          expect(unique_heap_stacks.size).to be 2
+
+          stack1, stack2 = unique_heap_stacks
+          unique_line1 = stack1.find { |it| it.base_label == 'introduce_distinct_stacktraces' }
+          unique_line2 = stack2.find { |it| it.base_label == 'introduce_distinct_stacktraces' }
+
+          expect(stack1.reject { |it| it == unique_line1 }).to eq(stack2.reject { |it| it == unique_line2 })
+          expect(unique_line1.lineno).to be_within(2).of(unique_line2.lineno)
+        end
+
         context "with custom heap sample rate configuration" do
           let(:heap_sample_every) { 2 }
 
           it "only keeps track of some allocations" do
             # By only sampling every 2nd allocation we only track the odd objects which means our array
             # should be the only heap sample captured (string is index 0, array is index 1, hash is 4)
-            expect(heap_samples.size).to eq(1)
+            expect(heap_samples.size)
+              .to eq(1), "Expected one heap sample, got #{heap_samples.size}; heap_samples is #{heap_samples}"
 
             heap_sample = heap_samples.first
             expect(heap_sample.labels[:"allocation class"]).to eq("Array")
@@ -688,7 +680,7 @@ RSpec.describe Datadog::Profiling::StackRecorder do
             expect do
               Datadog::Profiling::Collectors::Stack::Testing
                 ._native_sample(Thread.current, stack_recorder, metric_values, labels, numeric_labels)
-            end.to raise_error(RuntimeError, /Ended a heap recording/)
+            end.to raise_error(::RuntimeError, include("Ended a heap recording"))
           end
 
           it "does not keep the active slot mutex locked" do
@@ -705,6 +697,43 @@ RSpec.describe Datadog::Profiling::StackRecorder do
             expect(active_slot).to be 1
             expect(slot_one_mutex_locked?).to be false
             expect(slot_two_mutex_locked?).to be true
+          end
+        end
+
+        describe "pending heap recordings cleanup", ruby: ">= 4" do
+          def has_pending_recordings?
+            described_class::Testing._native_debug_heap_recorder(stack_recorder).to_h.dig(:state, :pending_recordings_count) > 0
+          end
+
+          def track_object_without_finalize(obj)
+            described_class::Testing._native_track_object(stack_recorder, obj, sample_rate, obj.class.name)
+            Datadog::Profiling::Collectors::Stack::Testing
+              ._native_sample(Thread.current, stack_recorder, metric_values, labels, numeric_labels)
+          end
+
+          it "clears pending recordings after finalization" do
+            test_object = Object.new
+
+            track_object_without_finalize(test_object)
+
+            expect(has_pending_recordings?).to be true
+
+            described_class::Testing._native_finalize_pending_heap_recordings(stack_recorder)
+
+            expect(has_pending_recordings?).to be false
+          end
+
+          it "clears all pending recordings after multiple allocations" do
+            3.times do
+              test_object = Object.new
+              track_object_without_finalize(test_object)
+            end
+
+            expect(has_pending_recordings?).to be true
+
+            described_class::Testing._native_finalize_pending_heap_recordings(stack_recorder)
+
+            expect(has_pending_recordings?).to be false
           end
         end
 
@@ -740,6 +769,14 @@ RSpec.describe Datadog::Profiling::StackRecorder do
               expect(@object_ids.map { |it| is_object_recorded?(it) }).to eq [true, true, false, false]
 
               stack_recorder.serialize
+
+              GC.enable
+              GC.start
+
+              # Sanity check: All the objects should've been garbage collected
+              @object_ids.map do |object_id|
+                expect { ObjectSpace._id2ref(object_id) }.to raise_error(RangeError)
+              end
 
               # Older objects are only cleared at serialization time
               expect(@object_ids.map { |it| is_object_recorded?(it) }).to eq [false, false, false, false]
@@ -813,7 +850,7 @@ RSpec.describe Datadog::Profiling::StackRecorder do
 
     context "when there is a failure during serialization" do
       before do
-        allow(Datadog.logger).to receive(:error)
+        allow(Datadog.logger).to receive(:warn)
         allow(Datadog::Core::Telemetry::Logger).to receive(:error)
 
         # Real failures in serialization are hard to trigger, so we're using a mock failure instead
@@ -823,13 +860,13 @@ RSpec.describe Datadog::Profiling::StackRecorder do
       it { is_expected.to be nil }
 
       it "logs an error message" do
-        expect(Datadog.logger).to receive(:error).with(/test error message/)
+        expect(Datadog.logger).to receive(:warn).with(/test error message/)
 
         serialize
       end
 
       it "sends a telemetry log" do
-        expect(Datadog::Core::Telemetry::Logger).to receive(:error).with("Failed to serialize profiling data")
+        expect(Datadog::Core::Telemetry::Logger).to receive(:error).with(/Failed to serialize profiling data/)
 
         serialize
       end
@@ -996,21 +1033,14 @@ RSpec.describe Datadog::Profiling::StackRecorder do
         skip "Heap profiling is only supported on Ruby >= 2.7" if RUBY_VERSION < "2.7"
       end
 
-      after do |example|
-        # This is here to facilitate troubleshooting when this test fails. Otherwise
-        # it's very hard to understand what may be happening.
-        if example.exception
-          puts("Heap recorder debugging info:")
-          puts(described_class::Testing._native_debug_heap_recorder(stack_recorder))
-        end
-      end
-
       def sample_allocation(obj)
         # Heap sampling currently requires this 2-step process to first pass data about the allocated object...
         described_class::Testing._native_track_object(stack_recorder, obj, 1, obj.class.name)
         Datadog::Profiling::Collectors::Stack::Testing._native_sample(
           Thread.current, stack_recorder, {"alloc-samples" => 1, "heap_sample" => true}, [], [],
         )
+        # On Ruby 4+, heap recordings are deferred and need to be finalized after the sample is recorded
+        described_class::Testing._native_finalize_pending_heap_recordings(stack_recorder)
       end
 
       it "includes heap recorder snapshot" do
@@ -1025,9 +1055,8 @@ RSpec.describe Datadog::Profiling::StackRecorder do
         # and so the test causes flakiness.
         # See also the discussion on commit 2fc03d5ae5860d4e9a75ce3825fba95ed288a1 for an earlier attempt at fixing this.
         dead_heap_samples = 10
-        dead_heap_samples.times do |_i|
-          obj = []
-          sample_allocation(obj)
+        dead_heap_samples.times do |i|
+          sample_allocation([i])
         end
 
         live_heap_samples = 6
@@ -1053,89 +1082,41 @@ RSpec.describe Datadog::Profiling::StackRecorder do
           GC.enable
         end
 
-        expect(stack_recorder.stats).to match(
-          hash_including(
-            heap_recorder_snapshot: hash_including(
-              # Records for dead objects should have gone away
-              num_object_records: live_heap_samples + age0_heap_samples,
-              # We allocate from 3 different locations in this test but only 2
-              # of them are for objects which should be alive at serialization time
-              num_heap_records: 2,
+        expect(stack_recorder.stats.fetch(:heap_recorder_snapshot)).to include(
+          # Records for dead objects should have gone away
+          num_object_records: live_heap_samples + age0_heap_samples,
+          # We allocate from 3 different locations in this test but only 2
+          # of them are for objects which should be alive at serialization time
+          num_heap_records: 2,
 
-              # The update done during serialization should reflect the
-              # state of the tracked heap objects at that time
-              last_update_objects_alive: live_heap_samples,
-              last_update_objects_dead: dead_heap_samples,
-              last_update_objects_skipped: age0_heap_samples,
-              last_update_objects_frozen: live_heap_samples / 2,
-            )
-          )
-        )
+          # The update done during serialization should reflect the
+          # state of the tracked heap objects at that time
+          last_update_objects_alive: live_heap_samples,
+          last_update_objects_dead: dead_heap_samples,
+          last_update_objects_skipped: age0_heap_samples,
+          last_update_objects_frozen: live_heap_samples / 2,
+        ), "Heap recorder debugging info: #{described_class::Testing._native_debug_heap_recorder(stack_recorder)}"
       end
     end
   end
 
-  describe "Heap_recorder" do
-    context "produces the same hash code for stack-based and location-based keys" do
-      it "with empty stacks" do
-        described_class::Testing._native_check_heap_hashes([])
-      end
+  context "libdatadog managed string storage regression test" do
+    context "when reusing managed string ids across multiple profiles" do
+      it "produces correct profiles" do
+        profile1, profile2 = described_class::Testing._native_test_managed_string_storage_produces_valid_profiles
 
-      it "with single-frame stacks" do
-        described_class::Testing._native_check_heap_hashes(
-          [
-            ["a name", "a filename", 123]
-          ]
-        )
-      end
+        decoded_profile1 = decode_profile(profile1)
 
-      it "with multi-frame stacks" do
-        described_class::Testing._native_check_heap_hashes(
-          [
-            ["a name", "a filename", 123],
-            ["another name", "anoter filename", 456],
-          ]
-        )
-      end
+        expect(decoded_profile1.string_table).to include("key", "hello", "world")
+        expect { samples_from_pprof(profile1) }.to_not raise_error
 
-      it "with empty names" do
-        described_class::Testing._native_check_heap_hashes(
-          [
-            ["", "a filename", 123],
-          ]
-        )
-      end
+        # Early versions of the managed string storage in datadog mistakenly omitted the strings from the string table,
+        # see https://github.com/DataDog/libdatadog/pull/896 for details.
 
-      it "with empty filenames" do
-        described_class::Testing._native_check_heap_hashes(
-          [
-            ["a name", "", 123],
-          ]
-        )
-      end
+        decoded_profile2 = decode_profile(profile2)
 
-      it "with zero lines" do
-        described_class::Testing._native_check_heap_hashes(
-          [
-            ["a name", "a filename", 0]
-          ]
-        )
-      end
-
-      it "with negative lines" do
-        described_class::Testing._native_check_heap_hashes(
-          [
-            ["a name", "a filename", -123]
-          ]
-        )
-      end
-
-      it "with biiiiiiig lines" do
-        described_class::Testing._native_check_heap_hashes(
-          [
-            ["a name", "a filename", 4_000_000]
-          ]
-        )
+        expect(decoded_profile2.string_table).to include("key", "hello", "world")
+        expect { samples_from_pprof(profile2) }.to_not raise_error
       end
     end
   end

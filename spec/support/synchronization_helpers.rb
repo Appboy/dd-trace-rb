@@ -1,10 +1,17 @@
 require 'English'
 
 module SynchronizationHelpers
-  def expect_in_fork(fork_expectations: nil, timeout_seconds: 10)
+  def expect_in_fork(fork_expectations: nil, timeout_seconds: 10, trigger_stacktrace_on_kill: false, debug: false)
     fork_expectations ||= proc { |status:, stdout:, stderr:|
       expect(status && status.success?).to be(true), "STDOUT:`#{stdout}` STDERR:`#{stderr}"
     }
+
+    if debug
+      rv = expect_in_fork_debug(fork_expectations: fork_expectations) do
+        yield
+      end
+      return rv
+    end
 
     fork_stdout = Tempfile.new('datadog-rspec-expect-in-fork-stdout')
     fork_stderr = Tempfile.new('datadog-rspec-expect-in-fork-stderr')
@@ -13,13 +20,12 @@ module SynchronizationHelpers
       pid = fork do
         # Capture forked output
         $stdout.reopen(fork_stdout)
+        $stdout.sync = true
         $stderr.reopen(fork_stderr) # STDERR captures RSpec failures. We print it in case the fork fails on exit.
+        $stderr.sync = true
 
         yield
       end
-
-      fork_stderr.close
-      fork_stdout.close
 
       # Wait for fork to finish, retrieve its status.
       # Enforce timeout to ensure test fork doesn't hang the test suite.
@@ -29,26 +35,53 @@ module SynchronizationHelpers
       stderr = File.read(fork_stderr.path)
 
       # Capture forked execution information
-      result = { status: status, stdout: stdout, stderr: stderr }
+      result = {status: status, stdout: stdout, stderr: stderr}
 
       # Expect fork and assertions to have completed successfully.
       fork_expectations.call(**result)
 
       result
     rescue => e
-      stdout ||= File.read(fork_stdout.path)
-      stderr ||= File.read(fork_stderr.path)
+      crash_note = nil
 
-      puts stdout
-      warn stderr
+      if trigger_stacktrace_on_kill
+        crash_note = ' (Crashing Ruby to get stacktrace as requested by `trigger_stacktrace_on_kill`)'
+        begin
+          Process.kill('SEGV', pid)
+          warn "Waiting for child process to exit after SEGV signal... #{crash_note}"
+          Process.wait(pid)
+        rescue
+          nil
+        end
+      end
 
-      raise e
+      stdout = File.read(fork_stdout.path)
+      stderr = File.read(fork_stderr.path)
+
+      raise "Failure or timeout in `expect_in_fork`#{crash_note}, STDOUT: `#{stdout}`, STDERR: `#{stderr}`", cause: e
     ensure
-      Process.kill('KILL', pid) rescue nil # Prevent zombie processes on failure
+      begin
+        Process.kill('KILL', pid)
+      rescue
+        nil
+      end # Prevent zombie processes on failure
 
+      fork_stderr.close
+      fork_stdout.close
       fork_stdout.unlink
       fork_stderr.unlink
     end
+  end
+
+  # Debug version of expect_in_fork that does not redirect I/O streams and
+  # has no timeout on execution. The idea is to use it for interactive
+  # debugging where you would set a break point in the fork.
+  def expect_in_fork_debug(fork_expectations:, timeout_seconds: 10, trigger_stacktrace_on_kill: false)
+    pid = fork do
+      yield
+    end
+    _, status = Process.wait2(pid)
+    fork_expectations.call(status: status, stdout: '', stderr: '')
   end
 
   # Waits for the condition provided by the block argument to return truthy.
@@ -67,12 +100,12 @@ module SynchronizationHelpers
     raise 'Provider either `seconds` or `attempts` & `backoff`, not both' if seconds && (attempts || backoff)
 
     spec = if seconds
-             "#{seconds} seconds"
-           elsif attempts || backoff
-             "#{attempts} attempts with backoff #{backoff}"
-           else
-             'none'
-           end
+      "#{seconds} seconds"
+    elsif attempts || backoff
+      "#{attempts} attempts with backoff: #{backoff}"
+    else
+      'none'
+    end
 
     if seconds
       attempts = seconds * 10
@@ -105,7 +138,7 @@ module SynchronizationHelpers
     end
 
     elapsed = Datadog::Core::Utils::Time.get_time - start_time
-    actual = "#{'%.2f' % elapsed} seconds, #{attempts} attempts with backoff #{backoff}" # rubocop:disable Style/FormatString
+    actual = "#{"%.2f" % elapsed} seconds, #{attempts} attempts with backoff #{backoff}" # rubocop:disable Style/FormatString
 
     raise("Wait time exhausted! Requested: #{spec}, waited: #{actual}")
   end

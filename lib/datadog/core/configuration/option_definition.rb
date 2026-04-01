@@ -13,7 +13,6 @@ module Datadog
           :default,
           :default_proc,
           :env,
-          :deprecated_env,
           :env_parser,
           :name,
           :after_set,
@@ -22,11 +21,10 @@ module Datadog
           :type,
           :type_options
 
-        def initialize(name, meta = {}, &block)
+        def initialize(name, meta, &block)
           @default = meta[:default]
           @default_proc = meta[:default_proc]
           @env = meta[:env]
-          @deprecated_env = meta[:deprecated_env]
           @env_parser = meta[:env_parser]
           @name = name.to_sym
           @after_set = meta[:after_set]
@@ -44,14 +42,14 @@ module Datadog
         # Acts as DSL for building OptionDefinitions
         # @public_api
         class Builder
-          class InvalidOptionError < StandardError; end
+          # Steep: https://github.com/soutaro/steep/issues/1880
+          InvalidOptionError = Class.new(StandardError) # steep:ignore IncompatibleAssignment
 
           attr_reader \
             :helpers
 
           def initialize(name, options = {})
             @env = nil
-            @deprecated_env = nil
             @env_parser = nil
             @default = nil
             @default_proc = nil
@@ -71,12 +69,8 @@ module Datadog
             validate_options!
           end
 
-          def env(value)
+          def env(value) # standard:disable Style/TrivialAccessors
             @env = value
-          end
-
-          def deprecated_env(value)
-            @deprecated_env = value
           end
 
           # Invoked when the option is first read, and {#env} is defined.
@@ -111,7 +105,7 @@ module Datadog
 
           def type(value, nilable: false)
             @type = value
-            @type_options = { nilable: nilable }
+            @type_options = {nilable: nilable}
 
             value
           end
@@ -123,11 +117,11 @@ module Datadog
             default(options[:default]) if options.key?(:default)
             default_proc(&options[:default_proc]) if options.key?(:default_proc)
             env(options[:env]) if options.key?(:env)
-            deprecated_env(options[:deprecated_env]) if options.key?(:deprecated_env)
             env_parser(&options[:env_parser]) if options.key?(:env_parser)
             after_set(&options[:after_set]) if options.key?(:after_set)
             resetter(&options[:resetter]) if options.key?(:resetter)
-            setter(&options[:setter]) if options.key?(:setter)
+            # Steep: https://github.com/soutaro/steep/issues/1979
+            setter(&options[:setter]) if options.key?(:setter) # steep:ignore BlockTypeMismatch
             type(options[:type], **(options[:type_options] || {})) if options.key?(:type)
           end
 
@@ -140,7 +134,6 @@ module Datadog
               default: @default,
               default_proc: @default_proc,
               env: @env,
-              deprecated_env: @deprecated_env,
               env_parser: @env_parser,
               after_set: @after_set,
               resetter: @resetter,
@@ -156,7 +149,7 @@ module Datadog
             if !@default.nil? && @default_proc
               raise InvalidOptionError,
                 'Using `default` and `default_proc` is not allowed. Please use one or the other.' \
-                                'If you want to store a block as the default value use `default_proc`'\
+                                'If you want to store a block as the default value use `default_proc`' \
                                 ' otherwise use `default`'
             end
           end

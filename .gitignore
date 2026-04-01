@@ -1,6 +1,8 @@
+.DS_Store
 *.gem
 *.rbc
 *.swp
+*~
 *.vim
 /.config
 /coverage/
@@ -15,9 +17,8 @@
 TODO
 ext/**/skipped_reason.txt
 .cursor/
-
-# Used by dotenv library to load environment variables.
-# .env
+.cache/
+compile_commands.json
 
 ## Documentation cache and generated files:
 /.yardoc/
@@ -56,3 +57,4 @@ lib/*.so
 
 # Benchmark result files
 /benchmarks/*.json
+.worktrees/

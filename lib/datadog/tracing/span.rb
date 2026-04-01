@@ -80,7 +80,7 @@ module Datadog
 
         @meta = meta || {}
         @metrics = metrics || {}
-        @metastruct = metastruct || {}
+        @metastruct = metastruct || Metastruct.new
         @status = status || 0
 
         # start_time and end_time track wall clock. In Ruby, wall clock
@@ -113,7 +113,7 @@ module Datadog
       def stopped?
         !@end_time.nil?
       end
-      alias :finished? :stopped?
+      alias_method :finished?, :stopped?
 
       def duration
         return @duration if @duration

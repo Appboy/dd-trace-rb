@@ -19,8 +19,11 @@ module Datadog
             @out = out
             @encoder = encoder
 
+            # Note: The :encode option was previously supported but is no longer used.
+            # Data is now expected to be pre-encoded in the Parcel before reaching this client,
+            # matching the behavior of other transports (e.g., HTTP transport).
+            # If provided, the :encode option will be silently ignored for backwards compatibility.
             @request_block = options.fetch(:request, method(:send_default_request))
-            @encode_block = options.fetch(:encode, method(:encode_data))
             @write_block = options.fetch(:write, method(:write_data))
             @response_block = options.fetch(:response, method(:build_response))
           end
@@ -30,19 +33,18 @@ module Datadog
             # If block is given, allow it to handle writing
             # Otherwise do a standard encode/write/response.
             response = if block_given?
-                         yield(out, request)
-                       else
-                         @request_block.call(out, request)
-                       end
+              yield(out, request)
+            else
+              @request_block.call(out, request)
+            end
 
             # Update statistics
             update_stats_from_response!(response)
 
-            # Return response
             response
-          rescue StandardError => e
+          rescue => e
             message =
-              "Internal error during IO transport request. Cause: #{e.class.name} #{e.message} " \
+              "Internal error during IO transport request. Cause: #{e.class.name}: #{e.message} " \
                 "Location: #{Array(e.backtrace).first}"
 
             # Log error
@@ -59,10 +61,6 @@ module Datadog
             InternalErrorResponse.new(e)
           end
 
-          def encode_data(encoder, request)
-            request.parcel.encode_with(encoder)
-          end
-
           def write_data(out, data)
             out.puts(data)
           end
@@ -74,8 +72,7 @@ module Datadog
           private
 
           def send_default_request(out, request)
-            # Encode data
-            data = @encode_block.call(encoder, request)
+            data = request.parcel.data
 
             # Write to IO
             result = @write_block.call(out, data)

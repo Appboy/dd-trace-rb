@@ -13,13 +13,17 @@ module Datadog
       # to be side-effect free.
       #
       # @return [Boolean] whether a resource conforms with the current limit
-      def allow?(size = 1); end
+      def allow?(size = 1)
+        raise NotImplementedError
+      end
 
       # The effective rate limiting ratio based on
       # recent calls to `allow?`.
       #
       # @return [Float] recent allowance ratio
-      def effective_rate; end
+      def effective_rate
+        raise NotImplementedError
+      end
     end
 
     # Implementation of the Token Bucket metering algorithm
@@ -79,6 +83,10 @@ module Datadog
 
         return current_window_rate if @prev_conforming_messages.nil? || @prev_total_messages.nil?
 
+        # Steep: Due to https://github.com/soutaro/steep/issues/477,
+        # the previous nil check does not narrow type to Integer
+        # The annotation fixes the typing error, but it takes effect in the method
+        # @type ivar @prev_total_messages: Integer
         (@conforming_messages.to_f + @prev_conforming_messages.to_f) / (@total_messages + @prev_total_messages)
       end
 
@@ -152,7 +160,11 @@ module Datadog
         if @current_window.nil?
           @current_window = now
         # If more than 1 second has past since last window, reset
-        elsif now - @current_window >= 1
+        #
+        # Steep: @current_window is a Float, but for some reason annotations does not work here
+        # Once a fix will be out for nil checks on instance variables, we can remove the ignore comment
+        # https://github.com/soutaro/steep/issues/477
+        elsif now - @current_window >= 1 # steep:ignore UnresolvedOverloading
           @prev_conforming_messages = @conforming_messages
           @prev_total_messages = @total_messages
           @conforming_messages = 0

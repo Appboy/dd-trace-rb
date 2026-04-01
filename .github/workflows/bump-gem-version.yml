@@ -1,0 +1,82 @@
+name: Bump datadog gem version
+
+on: # yamllint disable-line rule:truthy
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to update to
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: Version to update to
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default permissions for all jobs
+permissions: {}
+
+jobs:
+  update-version-file:
+    name: Create Pull Request to update the version file
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NEXT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@90be1154f987f4dc0fe0dd0feedac9e473aa4ba8 # v1.286.0
+        with:
+          ruby-version: "3.3.7"
+
+      - run: bundle install
+
+      - name: Update version file
+        run: |
+          echo "Updating version to ${NEXT_VERSION}"
+          bundle exec rake version:bump["${NEXT_VERSION}]"
+
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+          branch: auto-generate/bump-datadog-gem-version
+          title: "[🤖] Bump datadog gem version to ${{ inputs.version }}"
+          base: master
+          labels: dev/internal
+          commit-message: "[🤖] Update datadog gem version to ${{ inputs.version }}"
+          delete-branch: true
+          sign-commits: true
+          add-paths: gemfiles,lib/datadog/version.rb
+          body: |
+            _This is an auto-generated PR from [here](${{github.server_url}}/${{ github.repository }}/blob/master/.github/workflows/bump-datadog-gem-version.yml)_
+            The PR updates the version of datadog gem to ${{ inputs.version }}
+
+            **Trigger Information:**
+            - Event: ${{ github.event_name }}
+            - Triggered by: ${{ github.event.client_payload.triggered_by || 'Manual/Scheduled' }}
+            - Source repo: ${{ github.event.client_payload.source_repo || 'N/A' }}
+            - Source commit: ${{ github.event.client_payload.source_commit || 'N/A' }}
+
+            Please review the changes and merge when ready

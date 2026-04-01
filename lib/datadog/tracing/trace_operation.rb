@@ -40,6 +40,7 @@ module Datadog
         :baggage
 
       attr_reader \
+        :logger,
         :active_span_count,
         :active_span,
         :id,
@@ -54,7 +55,14 @@ module Datadog
         :sampled,
         :service
 
+      # Creates a new TraceOperation.
+      #
+      # @param auto_finish [Boolean] when true, automatically finishes the trace when the local root span finishes.
+      #   When false, the trace remains unfinished until {#finish!} is called.
+      #   This is useful when this {TraceOperation} represents the continuation of a remote {TraceDigest},
+      #   in which case local root spans in this {TraceOperation} are children of the {TraceDigest}'s last active span.
       def initialize(
+        logger: Datadog.logger,
         agent_sample_rate: nil,
         events: nil,
         hostname: nil,
@@ -77,10 +85,12 @@ module Datadog
         trace_state: nil,
         trace_state_unknown_fields: nil,
         remote_parent: false,
-        tracer: nil,
-        baggage: nil
-
+        tracer: nil, # DEV-3.0: deprecated, remove in 3.0
+        baggage: nil,
+        auto_finish: true
       )
+        @logger = logger
+
         # Attributes
         @id = id || Tracing::Utils::TraceId.next_id
         @max_length = max_length || DEFAULT_MAX_LENGTH
@@ -103,7 +113,6 @@ module Datadog
         @apm_tracing_enabled = apm_tracing_enabled
         @trace_state = trace_state
         @trace_state_unknown_fields = trace_state_unknown_fields
-        @tracer = tracer
         @baggage = baggage
 
         # Generic tags
@@ -117,6 +126,7 @@ module Datadog
         @events = events || Events.new
         @finished = false
         @spans = []
+        @auto_finish = !!auto_finish
       end
 
       def full?
@@ -161,20 +171,20 @@ module Datadog
       end
 
       def name
-        @name || (root_span && root_span.name)
+        @name || root_span&.name
       end
 
       def resource
-        @resource || (root_span && root_span.resource)
+        @resource || root_span&.resource
       end
 
       # When retrieving tags or metrics we need to include root span tags for sampling purposes
       def get_tag(key)
-        super || (root_span && root_span.get_tag(key))
+        super || root_span&.get_tag(key)
       end
 
       def get_metric(key)
-        super || (root_span && root_span.get_metric(key))
+        super || root_span&.get_metric(key)
       end
 
       def set_distributed_source(product_bit)
@@ -199,11 +209,12 @@ module Datadog
       end
 
       def service
-        @service || (root_span && root_span.service)
+        @service || root_span&.service
       end
 
       def measure(
         op_name,
+        logger: Datadog.logger,
         events: nil,
         on_error: nil,
         resource: nil,
@@ -217,7 +228,11 @@ module Datadog
         # Don't allow more span measurements if the
         # trace is already completed. Prevents multiple
         # root spans with parent_span_id = 0.
-        return yield(SpanOperation.new(op_name), TraceOperation.new) if finished? || full?
+        if finished? || full?
+          return yield(
+            SpanOperation.new(op_name, logger: logger),
+            TraceOperation.new(logger: logger))
+        end
 
         # Create new span
         span_op = build_span(
@@ -238,6 +253,7 @@ module Datadog
 
       def build_span(
         op_name,
+        logger: Datadog.logger,
         events: nil,
         on_error: nil,
         resource: nil,
@@ -247,50 +263,49 @@ module Datadog
         type: nil,
         id: nil
       )
-        begin
-          # Resolve span options:
-          # Parent, service name, etc.
-          # Add default options
-          trace_id = @id
-          parent = @active_span
+        # Resolve span options:
+        # Parent, service name, etc.
+        # Add default options
+        trace_id = @id
+        parent = @active_span
 
-          # Use active span's span ID if available. Otherwise, the parent span ID.
-          # Necessary when this trace continues from another, e.g. distributed trace.
-          parent_id = parent ? parent.id : @parent_span_id || 0
+        # Use active span's span ID if available. Otherwise, the parent span ID.
+        # Necessary when this trace continues from another, e.g. distributed trace.
+        parent_id = parent ? parent.id : @parent_span_id || 0
 
-          # Build events
-          events ||= SpanOperation::Events.new
+        # Build events
+        events ||= SpanOperation::Events.new(logger: logger)
 
-          # Before start: activate the span, publish events.
-          events.before_start.subscribe do |span_op|
-            start_span(span_op)
-          end
-
-          # After finish: deactivate the span, record, publish events.
-          events.after_finish.subscribe do |span, span_op|
-            finish_span(span, span_op, parent)
-          end
-
-          # Build a new span operation
-          SpanOperation.new(
-            op_name,
-            events: events,
-            on_error: on_error,
-            parent_id: parent_id,
-            resource: resource || op_name,
-            service: service,
-            start_time: start_time,
-            tags: tags,
-            trace_id: trace_id,
-            type: type,
-            id: id
-          )
-        rescue StandardError => e
-          Datadog.logger.debug { "Failed to build new span: #{e}" }
-
-          # Return dummy span
-          SpanOperation.new(op_name)
+        # Before start: activate the span, publish events.
+        events.before_start.subscribe do |span_op|
+          start_span(span_op)
         end
+
+        # After finish: deactivate the span, record, publish events.
+        events.after_finish.subscribe do |span, span_op|
+          finish_span(span, span_op, parent)
+        end
+
+        # Build a new span operation
+        SpanOperation.new(
+          op_name,
+          logger: logger,
+          events: events,
+          on_error: on_error,
+          parent_id: parent_id,
+          resource: resource || op_name,
+          service: service,
+          start_time: start_time,
+          tags: tags,
+          trace_id: trace_id,
+          type: type,
+          id: id
+        )
+      rescue => e
+        logger.debug { "Failed to build new span: #{e}" }
+
+        # Return dummy span
+        SpanOperation.new(op_name, logger: logger)
       end
 
       # Returns a {TraceSegment} with all finished spans that can be flushed
@@ -311,6 +326,29 @@ module Datadog
         build_trace(spans, !finished)
       end
 
+      # When automatic context management is disabled (@auto_finish is false),
+      # this method finishes the trace, marking it as completed.
+      #
+      # The trace will **not** automatically finish when its local root span
+      # when @auto_finish is false, thus calling this method is mandatory
+      # in such scenario.
+      #
+      # Unfinished spans are discarded.
+      #
+      # This method is idempotent and safe to call after the trace is finished.
+      # It is also a no-op when @auto_finish is true, to prevent misuse.
+      #
+      # @!visibility private
+      def finish!
+        return if @auto_finish || finished?
+
+        @finished = true
+        @active_span = nil
+        @active_span_count = 0
+
+        events.trace_finished.publish(self)
+      end
+
       # Returns a set of trace headers used for continuing traces.
       # Used for propagation across execution contexts.
       # Data should reflect the active state of the trace.
@@ -318,10 +356,10 @@ module Datadog
       # We should move the sample call to inject and right before moving to new contexts(threads, forking etc.)
       def to_digest
         # Resolve current span ID
-        span_id = @active_span && @active_span.id
+        span_id = @active_span&.id
         span_id ||= @parent_span_id unless finished?
         # sample the trace_operation with the tracer
-        @tracer&.sample_trace(self) unless sampling_priority
+        events.trace_propagated.publish(self)
 
         TraceDigest.new(
           span_id: span_id,
@@ -342,13 +380,13 @@ module Datadog
           trace_state: @trace_state,
           trace_state_unknown_fields: @trace_state_unknown_fields,
           span_remote: @remote_parent && @active_span.nil?,
-          baggage: @baggage.nil? || @baggage.empty? ? nil : @baggage
+          baggage: (@baggage.nil? || @baggage.empty?) ? nil : @baggage
         ).freeze
       end
 
       def to_correlation
         # Resolve current span ID
-        span_id = @active_span && @active_span.id
+        span_id = @active_span&.id
         span_id ||= @parent_span_id unless finished?
 
         Correlation::Identifier.new(
@@ -362,22 +400,22 @@ module Datadog
       def fork_clone
         self.class.new(
           agent_sample_rate: @agent_sample_rate,
-          events: @events && @events.dup,
-          hostname: @hostname && @hostname.dup,
+          events: @events&.dup,
+          hostname: @hostname&.dup,
           id: @id,
           max_length: @max_length,
-          name: name && name.dup,
-          origin: @origin && @origin.dup,
-          parent_span_id: (@active_span && @active_span.id) || @parent_span_id,
+          name: name&.dup,
+          origin: @origin&.dup,
+          parent_span_id: @active_span&.id || @parent_span_id,
           rate_limiter_rate: @rate_limiter_rate,
-          resource: resource && resource.dup,
+          resource: resource&.dup,
           rule_sample_rate: @rule_sample_rate,
           sample_rate: @sample_rate,
           sampled: @sampled,
           sampling_priority: @sampling_priority,
-          service: service && service.dup,
-          trace_state: @trace_state && @trace_state.dup,
-          trace_state_unknown_fields: @trace_state_unknown_fields && @trace_state_unknown_fields.dup,
+          service: service&.dup,
+          trace_state: @trace_state&.dup,
+          trace_state_unknown_fields: @trace_state_unknown_fields&.dup,
           tags: meta.dup,
           metrics: metrics.dup,
           remote_parent: @remote_parent
@@ -391,12 +429,14 @@ module Datadog
         attr_reader \
           :span_before_start,
           :span_finished,
-          :trace_finished
+          :trace_finished,
+          :trace_propagated
 
         def initialize
           @span_before_start = SpanBeforeStart.new
           @span_finished = SpanFinished.new
           @trace_finished = TraceFinished.new
+          @trace_propagated = TracePropagated.new
         end
 
         # Triggered before a span starts.
@@ -410,6 +450,13 @@ module Datadog
         class SpanFinished < Tracing::Event
           def initialize
             super(:span_finished)
+          end
+        end
+
+        #  Triggered when trace is being propagated between applications or contexts
+        class TracePropagated < Tracing::Event
+          def initialize
+            super(:trace_propagated)
           end
         end
 
@@ -444,7 +491,7 @@ module Datadog
 
         @active_span = span_op
 
-        set_root_span!(span_op) unless root_span
+        set_local_root_span!(span_op)
       end
 
       def deactivate_span!(span_op)
@@ -456,45 +503,48 @@ module Datadog
       end
 
       def start_span(span_op)
-        begin
-          activate_span!(span_op)
+        activate_span!(span_op)
 
-          # Update active span count
-          @active_span_count += 1
+        # Update active span count
+        @active_span_count += 1
 
-          # Publish :span_before_start event
-          events.span_before_start.publish(span_op, self)
-        rescue StandardError => e
-          Datadog.logger.debug { "Error starting span on trace: #{e} Backtrace: #{e.backtrace.first(3)}" }
-        end
+        # Publish :span_before_start event
+        events.span_before_start.publish(span_op, self)
+      rescue => e
+        logger.debug { "Error starting span on trace: #{e} Backtrace: #{e.backtrace.first(3)}" }
       end
 
+      # For traces with automatic context management (auto_finish),
+      # when the local root span finishes, the trace also finishes.
+      # The trace cannot receive new spans after finished.
+      #
+      # Without auto_finish, the trace can still receive spans
+      # until explicitly finished.
       def finish_span(span, span_op, parent)
-        begin
-          # Save finished span & root span
-          @spans << span unless span.nil?
+        # Save finished span & root span
+        @spans << span unless span.nil?
 
-          # Deactivate the span, re-activate parent.
-          deactivate_span!(span_op)
+        # Deactivate the span, re-activate parent.
+        deactivate_span!(span_op)
 
-          # Set finished, to signal root span has completed.
-          @finished = true if span_op == root_span
+        # Finish if the local root span is finished and automatic
+        # context management is enabled.
+        @finished = true if span_op == root_span && @auto_finish
 
-          # Update active span count
-          @active_span_count -= 1
+        # Update active span count
+        @active_span_count -= 1
 
-          # Publish :span_finished event
-          events.span_finished.publish(span, self)
+        # Publish :span_finished event
+        events.span_finished.publish(span, self)
 
-          # Publish :trace_finished event
-          events.trace_finished.publish(self) if finished?
-        rescue StandardError => e
-          Datadog.logger.debug { "Error finishing span on trace: #{e} Backtrace: #{e.backtrace.first(3)}" }
-        end
+        # Publish :trace_finished event
+        events.trace_finished.publish(self) if finished?
+      rescue => e
+        logger.debug { "Error finishing span on trace: #{e} Backtrace: #{e.backtrace.first(3)}" }
       end
 
-      # Track the root span
-      def set_root_span!(span)
+      # Track the root {SpanOperation} object from the current execution context.
+      def set_local_root_span!(span)
         return if span.nil? || root_span
 
         @root_span = span
@@ -519,7 +569,7 @@ module Datadog
           service: service,
           tags: meta,
           metrics: metrics,
-          root_span_id: !partial ? root_span && root_span.id : nil,
+          root_span_id: (!partial) ? root_span&.id : nil,
           profiling_enabled: @profiling_enabled,
           apm_tracing_enabled: @apm_tracing_enabled
         )

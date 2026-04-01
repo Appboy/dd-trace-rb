@@ -13,12 +13,25 @@ end
 
 RSpec.describe 'AppSec ActiveRecord integration for SQLite3 adapter' do
   let(:telemetry) { instance_double(Datadog::Core::Telemetry::Component) }
-  let(:ruleset) { Datadog::AppSec::Processor::RuleLoader.load_rules(ruleset: :recommended, telemetry: telemetry) }
-  let(:processor) { Datadog::AppSec::Processor.new(ruleset: ruleset, telemetry: telemetry) }
-  let(:context) { Datadog::AppSec::Context.new(trace, span, processor) }
+  let(:settings) do
+    Datadog::Core::Configuration::Settings.new.tap do |settings|
+      settings.appsec.enabled = true
+    end
+  end
+
+  let(:security_engine) do
+    Datadog::AppSec::SecurityEngine::Engine.new(appsec_settings: settings.appsec, telemetry: telemetry)
+  end
 
   let(:span) { Datadog::Tracing::SpanOperation.new('root') }
   let(:trace) { Datadog::Tracing::TraceOperation.new }
+  let(:context) { Datadog::AppSec::Context.new(trace, span, security_engine.new_runner) }
+
+  before do
+    allow(telemetry).to receive(:inc)
+    allow(telemetry).to receive(:report)
+    allow(telemetry).to receive(:error)
+  end
 
   let!(:user_class) do
     stub_const('User', Class.new(ActiveRecord::Base)).tap do |klass|
@@ -37,7 +50,7 @@ RSpec.describe 'AppSec ActiveRecord integration for SQLite3 adapter' do
   end
 
   let(:db_config) do
-    { adapter: 'sqlite3', database: ':memory:' }
+    {adapter: 'sqlite3', database: ':memory:'}
   end
 
   before do
@@ -53,9 +66,8 @@ RSpec.describe 'AppSec ActiveRecord integration for SQLite3 adapter' do
 
   after do
     Datadog.configuration.reset!
-
     Datadog::AppSec::Context.deactivate
-    processor.finalize
+    Datadog::AppSec::Contrib::ActiveRecord::Patcher.instance_variable_set(:@patched, false)
   end
 
   context 'when RASP is disabled' do
@@ -117,11 +129,13 @@ RSpec.describe 'AppSec ActiveRecord integration for SQLite3 adapter' do
       let(:result) do
         Datadog::AppSec::SecurityEngine::Result::Match.new(
           events: [],
-          actions: { 'generate_stack' => { 'stack_id' => 'some-id' } },
-          derivatives: {},
+          actions: {'generate_stack' => {'stack_id' => 'some-id'}},
+          attributes: {},
+          keep: false,
           timeout: false,
           duration_ns: 0,
-          duration_ext_ns: 0
+          duration_ext_ns: 0,
+          input_truncated: false
         )
       end
 

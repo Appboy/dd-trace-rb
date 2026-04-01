@@ -14,7 +14,27 @@ require 'datadog/tracing/contrib/elasticsearch/support/client'
 RSpec.describe Datadog::Tracing::Contrib::Elasticsearch::Patcher do
   include_context 'Elasticsearch client'
 
-  let(:client) { Elasticsearch::Client.new(url: server, adapter: :net_http) }
+  # Elasticsearch 9.x updates the Server API compatibility to v9
+  #
+  # Need to set the headers to be compatible with 8.x to avoid
+  # https://github.com/elastic/elasticsearch-ruby/issues/2665
+  let(:headers) do
+    {
+      accept: 'application/vnd.elasticsearch+json; compatible-with=8',
+      content_type: 'application/vnd.elasticsearch+json; compatible-with=8'
+    }
+  end
+
+  let(:client) do
+    Elasticsearch::Client.new(
+      url: server,
+      adapter: :net_http,
+      transport_options: {
+        headers: headers
+      },
+      request_timeout: 5
+    )
+  end
   let(:configuration_options) { {} }
 
   before do
@@ -117,7 +137,7 @@ RSpec.describe Datadog::Tracing::Contrib::Elasticsearch::Patcher do
       end
 
       context 'when configured_with `on_error`' do
-        let(:configuration_options) { { on_error: ->(_span, _error) { false } } }
+        let(:configuration_options) { {on_error: ->(_span, _error) { false }} }
 
         it 'does not mark span with error' do
           expect { request }.to raise_error(exception_class)
@@ -136,8 +156,8 @@ RSpec.describe Datadog::Tracing::Contrib::Elasticsearch::Patcher do
         },
         nested_array: %w[a b],
         nested_object_array: [
-          { a: 'a' },
-          { b: 'b' }
+          {a: 'a'},
+          {b: 'b'}
         ]
       }
     end

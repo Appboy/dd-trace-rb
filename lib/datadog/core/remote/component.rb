@@ -11,21 +11,26 @@ module Datadog
   module Core
     module Remote
       # Configures the HTTP transport to communicate with the agent
-      # to fetch and sync the remote configuration
+      # to fetch and sync the remote configuration.
+      #
+      # @api private
       class Component
-        attr_reader :logger, :client, :healthy
+        attr_reader :logger, :client, :healthy, :worker
 
         def initialize(settings, capabilities, agent_settings, logger:)
           @logger = logger
+          @settings = settings
+          @capabilities = capabilities
+          @agent_settings = agent_settings
 
           negotiation = Negotiation.new(settings, agent_settings, logger: logger)
-          transport_v7 = Datadog::Core::Remote::Transport::HTTP.v7(agent_settings: agent_settings, logger: logger)
+          @transport = Datadog::Core::Remote::Transport::HTTP.v7(agent_settings: agent_settings, logger: logger)
 
           @barrier = Barrier.new(settings.remote.boot_timeout_seconds)
 
-          @client = Client.new(transport_v7, capabilities, logger: logger)
+          @client = Client.new(@transport, @capabilities, settings: settings, logger: logger)
           @healthy = false
-          logger.debug { "new remote configuration client: #{@client.id}" }
+          logger.debug { "new remote configuration client: #{@client.id} products: #{@capabilities.products.sort.join(', ')}" }
 
           @worker = Worker.new(interval: settings.remote.poll_interval_seconds, logger: logger) do
             unless @healthy || negotiation.endpoint?('/v0.7/config')
@@ -42,7 +47,7 @@ module Datadog
               logger.error do
                 "remote worker client sync error: #{e.message} location: #{Array(e.backtrace).first}. skipping sync"
               end
-            rescue StandardError => e
+            rescue => e
               # In case of unexpected errors, reset the negotiation object
               # given external conditions have changed and the negotiation
               # negotiation object stores error logging state that should be reset.
@@ -50,14 +55,14 @@ module Datadog
 
               # Transient errors due to network or agent. Logged the error but not via telemetry
               logger.error do
-                "remote worker error: #{e.class.name} #{e.message} location: #{Array(e.backtrace).first}. "\
-                'reseting client state'
+                "remote worker error: #{e.class.name} #{e.message} location: #{Array(e.backtrace).first}. " \
+                'resetting client state'
               end
 
               # client state is unknown, state might be corrupted
-              @client = Client.new(transport_v7, capabilities, logger: logger)
+              @client = Client.new(@transport, @capabilities, settings: settings, logger: logger)
               @healthy = false
-              logger.debug { "new remote configuration client: #{@client.id}" }
+              logger.debug { "new remote configuration client: #{@client.id} products: #{@capabilities.products.sort.join(', ')}" }
 
               # TODO: bail out if too many errors?
             end
@@ -86,6 +91,14 @@ module Datadog
 
         def shutdown!
           @worker.stop
+        end
+
+        # Recreates the remote configuration client after a fork.
+        # This ensures each forked process has a unique client ID and fresh state.
+        def after_fork
+          @client = Client.new(@transport, @capabilities, settings: @settings, logger: @logger)
+          @healthy = false
+          logger.debug { "remote configuration client recreated after fork: #{@client.id} products: #{@capabilities.products.sort.join(', ')}" }
         end
 
         # Barrier provides a mechanism to fence execution until a condition happens
@@ -135,13 +148,11 @@ module Datadog
 
           # Release all current waiters
           def lift
-            @mutex.lock
+            @mutex.synchronize do
+              @once ||= true
 
-            @once ||= true
-
-            @condition.broadcast
-          ensure
-            @mutex.unlock
+              @condition.broadcast
+            end
           end
         end
 

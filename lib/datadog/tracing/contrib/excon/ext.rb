@@ -8,6 +8,7 @@ module Datadog
         # @public_api Changing resource names, tag names, or environment variables creates breaking changes.
         module Ext
           ENV_ENABLED = 'DD_TRACE_EXCON_ENABLED'
+          ENV_DISTRIBUTED_TRACING = 'DD_TRACE_EXCON_DISTRIBUTED_TRACING'
           ENV_SERVICE_NAME = 'DD_TRACE_EXCON_SERVICE_NAME'
           ENV_PEER_SERVICE = 'DD_TRACE_EXCON_PEER_SERVICE'
 
@@ -19,10 +20,11 @@ module Datadog
           SPAN_REQUEST = 'excon.request'
           TAG_COMPONENT = 'excon'
           TAG_OPERATION_REQUEST = 'request'
-          PEER_SERVICE_SOURCES = Array[
+          PEER_SERVICE_SOURCES = [
             Tracing::Metadata::Ext::TAG_PEER_HOSTNAME,
             Tracing::Metadata::Ext::NET::TAG_DESTINATION_NAME,
-            Tracing::Metadata::Ext::NET::TAG_TARGET_HOST,].freeze
+            Tracing::Metadata::Ext::NET::TAG_TARGET_HOST,
+          ].freeze
         end
       end
     end

@@ -1,6 +1,6 @@
 services:
   tracer-2.5:
-    image: ghcr.io/datadog/images-rb/engines/ruby:2.5
+    image: ghcr.io/datadog/images-rb/engines/ruby:2.5-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: &common-depends-on
@@ -14,6 +14,8 @@ services:
       - presto
       - redis
       - testagent
+    links: &common-links
+      - mongodb:mongodb_secondary
     env_file: ./.env
     environment: &common-environment
       BUNDLE_GEMFILE: /app/ruby-2.5.gemfile
@@ -23,6 +25,7 @@ services:
       TEST_ELASTICSEARCH_HOST: elasticsearch
       TEST_MEMCACHED_HOST: memcached
       TEST_MONGODB_HOST: mongodb
+      TEST_MONGODB_SECONDARY_HOST: mongodb_secondary
       TEST_MYSQL_HOST: mysql
       TEST_OPENSEARCH_HOST: opensearch
       TEST_OPENSEARCH_PORT: 9200
@@ -38,10 +41,11 @@ services:
       - bundle-2.5:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-2.6:
-    image: ghcr.io/datadog/images-rb/engines/ruby:2.6
+    image: ghcr.io/datadog/images-rb/engines/ruby:2.6-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -54,10 +58,11 @@ services:
       - bundle-2.6:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-2.7:
-    image: ghcr.io/datadog/images-rb/engines/ruby:2.7
+    image: ghcr.io/datadog/images-rb/engines/ruby:2.7-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -70,10 +75,11 @@ services:
       - bundle-2.7:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-3.0:
-    image: ghcr.io/datadog/images-rb/engines/ruby:3.0
+    image: ghcr.io/datadog/images-rb/engines/ruby:3.0-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -86,10 +92,11 @@ services:
       - bundle-3.0:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-3.1:
-    image: ghcr.io/datadog/images-rb/engines/ruby:3.1
+    image: ghcr.io/datadog/images-rb/engines/ruby:3.1-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -102,10 +109,11 @@ services:
       - bundle-3.1:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-3.2:
-    image: ghcr.io/datadog/images-rb/engines/ruby:3.2
+    image: ghcr.io/datadog/images-rb/engines/ruby:3.2-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -118,10 +126,11 @@ services:
       - bundle-3.2:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-3.3:
-    image: ghcr.io/datadog/images-rb/engines/ruby:3.3
+    image: ghcr.io/datadog/images-rb/engines/ruby:3.3-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -134,10 +143,11 @@ services:
       - bundle-3.3:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-3.4:
-    image: ghcr.io/datadog/images-rb/engines/ruby:3.4
+    image: ghcr.io/datadog/images-rb/engines/ruby:3.4-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -149,12 +159,30 @@ services:
       - extension-build-tmp:/app/tmp
       - bundle-3.4:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
-  # ADD NEW RUBIES HERE
-  tracer-jruby-9.2:
-    image: ghcr.io/datadog/images-rb/engines/jruby:9.2
+  tracer-4.0:
+    image: ghcr.io/datadog/images-rb/engines/ruby:4.0-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
+    env_file: ./.env
+    environment:
+      <<: *common-environment
+      BUNDLE_GEMFILE: /app/ruby-4.0.gemfile
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/app
+      - extension-build-tmp:/app/tmp
+      - bundle-4.0:/usr/local/bundle
+      - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
+  # ADD NEW RUBIES HERE
+  tracer-jruby-9.2:
+    image: ghcr.io/datadog/images-rb/engines/jruby:9.2-gnu-gcc
+    working_dir: /app
+    command: /bin/bash
+    depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -166,10 +194,11 @@ services:
       - bundle-jruby-9.2:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-jruby-9.3:
-    image: ghcr.io/datadog/images-rb/engines/jruby:9.3
+    image: ghcr.io/datadog/images-rb/engines/jruby:9.3-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -181,10 +210,11 @@ services:
       - bundle-jruby-9.3:/usr/local/bundle
       - "ddagent_var_run:${TEST_DDAGENT_VAR_RUN}"
   tracer-jruby-9.4:
-    image: ghcr.io/datadog/images-rb/engines/jruby:9.4
+    image: ghcr.io/datadog/images-rb/engines/jruby:9.4-gnu-gcc
     working_dir: /app
     command: /bin/bash
     depends_on: *common-depends-on
+    links: *common-links
     env_file: ./.env
     environment:
       <<: *common-environment
@@ -214,9 +244,11 @@ services:
       - ddagent_var_run:/var/run/datadog
 
   testagent:
-    image: ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent:v1.12.0
+    image: ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent:v1.37.0
     ports:
       - "127.0.0.1:${DD_TRACE_AGENT_PORT}:9126"
+      - "127.0.0.1:${OTLP_GRPC_PORT}:4317"
+      - "127.0.0.1:${OTLP_HTTP_PORT}:4318"
     depends_on:
       - ddagent
     env_file: ./.env
@@ -225,12 +257,14 @@ services:
       - TRACE_LANGUAGE=ruby
       - DD_TRACE_AGENT_URL=http://${DD_REAL_AGENT_HOST}:${DD_REAL_AGENT_PORT}
       - PORT=${DD_TRACE_AGENT_PORT}
+      - OTLP_GRPC_PORT=${OTLP_GRPC_PORT}
+      - OTLP_HTTP_PORT=${OTLP_HTTP_PORT}
       - DD_POOL_TRACE_CHECK_FAILURES=true
       - DD_DISABLE_ERROR_RESPONSES=true
       - ENABLED_CHECKS=trace_content_length,trace_stall,meta_tracer_version_header,trace_count_header,trace_peer_service,trace_dd_service
 
   elasticsearch:
-    image: elasticsearch:8.1.3
+    image: elasticsearch:8.19.11
     expose:
       - "9200"
       - "9300"
@@ -314,6 +348,7 @@ volumes:
   bundle-3.2:
   bundle-3.3:
   bundle-3.4:
+  bundle-4.0:
   # ADD NEW RUBIES HERE
   bundle-jruby-9.2:
   bundle-jruby-9.3:

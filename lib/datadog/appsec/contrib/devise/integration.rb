@@ -16,7 +16,7 @@ module Datadog
           register_as :devise, auto_patch: true
 
           def self.version
-            Gem.loaded_specs['devise'] && Gem.loaded_specs['devise'].version
+            Gem.loaded_specs['devise']&.version
           end
 
           def self.loaded?
@@ -24,7 +24,7 @@ module Datadog
           end
 
           def self.compatible?
-            super && version >= MINIMUM_VERSION
+            !!(super && (version&.>= MINIMUM_VERSION))
           end
 
           def self.auto_instrument?

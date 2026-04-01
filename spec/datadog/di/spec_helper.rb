@@ -1,17 +1,100 @@
 module DIHelpers
+  class TestRemoteConfigGenerator
+    def initialize(probe_configs)
+      @probe_configs = probe_configs
+    end
+
+    attr_reader :probe_configs
+
+    def insert_transaction(repository)
+      repository.transaction do |_repository, transaction|
+        probe_configs.each do |key, value|
+          value_json = value.to_json
+
+          target = Datadog::Core::Remote::Configuration::Target.parse(
+            target_payload_for_value(value_json)
+          )
+
+          content = Datadog::Core::Remote::Configuration::Content.parse(
+            {
+              path: key,
+              content: value_json,
+            }
+          )
+
+          transaction.insert(content.path, target, content)
+        end
+      end
+    end
+
+    def mock_response
+      RSpec::Mocks::Double.new(Datadog::Core::Remote::Transport::HTTP::Config::Response,
+        ok?: true,
+        empty?: false,
+        roots: [],
+        targets: targets,
+        target_files: target_files,
+        client_configs: client_configs,)
+    end
+
+    private
+
+    def target_payload_for_value(value)
+      encoded = encode_obj(value)
+      {
+        'custom' => {
+          'v' => 1,
+        },
+        'hashes' => {'sha256' => Digest::SHA256.hexdigest(encoded)},
+        'length' => encoded.length
+      }
+    end
+
+    def client_configs
+      probe_configs.keys.map do |k|
+        rc_key_for_probe_id(k)
+      end
+    end
+
+    def targets
+      {
+        'signed' => {
+          'expires' => '2022-09-22T09:01:04Z',
+          'targets' => probe_configs.map do |k, v|
+            [rc_key_for_probe_id(k), target_payload_for_value(v)]
+          end.to_h,
+          'version' => 0,
+          'custom' => {},
+        },
+      }
+    end
+
+    def rc_key_for_probe_id(id)
+      #"datadog/2/LIVE_DEBUGGING/#{id}/hash"
+      id
+    end
+
+    def target_files
+      probe_configs.map do |k, v|
+        {path: k, content: encode_obj(v)}
+      end
+    end
+
+    def encode_str(v)
+      Datadog::Core::Utils::Base64.strict_encode64(v).chomp
+    end
+
+    def encode_obj(v)
+      JSON.dump(v)
+      #encode_str(JSON.dump(v))
+    end
+  end
+
   module ClassMethods
     def deactivate_code_tracking
       before(:all) do
         if Datadog::DI.respond_to?(:deactivate_tracking!)
           Datadog::DI.deactivate_tracking!
-        end
-      end
-    end
-
-    def ruby_2_only
-      if RUBY_VERSION >= '3'
-        before(:all) do
-          skip "Test is only for Ruby 2"
         end
       end
     end
@@ -25,6 +108,27 @@ module DIHelpers
       if RUBY_VERSION < "2.6"
         before(:all) do
           skip "Dynamic instrumentation requires Ruby 2.6 or higher"
+        end
+      end
+
+      around do |example|
+        check = true
+        if Datadog::DI.instrumented_count > 0
+          # Leaking instrumentations is a serious problem, but we want the
+          # diagnostics to point to the root cause. If there are outstanding
+          # instrumentations at the start of the test, the value at the end
+          # is likely to be meaningless. But just in case the report that
+          # is attached to the "root cause" test somehow disappears, warn
+          # that there are outstanding instrumentations here.
+          # They just produce noise in logs but not meaningless test failures.
+          warn "DI: #{Datadog::DI.instrumented_count} outstanding instrumentations detected before test: #{Datadog::DI.instrumented_count(:method)} method instrumentations active, #{Datadog::DI.instrumented_count(:line)} line instrumentations active"
+          check = false
+        end
+
+        example.run
+
+        if check && Datadog::DI.instrumented_count > 0
+          raise "DI: #{Datadog::DI.instrumented_count} outstanding instrumentations detected after test: #{Datadog::DI.instrumented_count(:method)} method instrumentations active, #{Datadog::DI.instrumented_count(:line)} line instrumentations active"
         end
       end
     end
@@ -42,6 +146,7 @@ module DIHelpers
       let(:di_settings) do
         double('di settings').tap do |settings|
           allow(settings).to receive(:internal).and_return(di_internal_settings)
+          allow(settings).to receive(:redaction_excluded_identifiers).and_return([])
         end
       end
 
@@ -71,9 +176,27 @@ module DIHelpers
         end
       end
     end
+
+    def load_yaml_file(path, **opts)
+      if RUBY_VERSION < '3.1'
+        opts.delete(:permitted_classes)
+      end
+      YAML.load_file(path, **opts)
+    end
   end
 
   module InstanceMethods
+    # Helper method to generate a deeply nested hash for circuit breaker tests
+    def generate_deep_hash(keys_per_level, depth)
+      return "leaf_value" if depth == 0
+
+      hash = {}
+      keys_per_level.times do |i|
+        hash[:"key_#{i}"] = generate_deep_hash(keys_per_level, depth - 1)
+      end
+      hash
+    end
+
     def order_hash_keys(hash)
       hash.keys.map do |key|
         [key.to_s, hash[key]]
@@ -91,35 +214,14 @@ module DIHelpers
     end
 
     def instance_double_agent_settings
-      instance_double(Datadog::Core::Configuration::AgentSettingsResolver::AgentSettings)
+      instance_double(Datadog::Core::Configuration::AgentSettings)
     end
 
-    def expect_lazy_log(logger, meth, expected_msg)
-      expect(logger).to receive(meth) do |&block|
-        if expected_msg.is_a?(String)
-          expect(block.call).to eq(expected_msg)
-        else
-          expect(block.call).to match(expected_msg)
-        end
-      end
-    end
-
-    def expect_lazy_log_many(logger, meth, *expectations)
-      if expectations.empty?
-        raise ArgumentError, "Must have at least one expectation"
-      end
-      expect(logger).to receive(meth).exactly(expectations.length).times do |&block|
-        expected_msg = expectations.shift
-        case expected_msg
-        when String
-          expect(block.call).to eq(expected_msg)
-        when Regexp
-          expect(block.call).to match(expected_msg)
-        when nil
-          value = block.call
-          fail "Logger #{logger} #{meth} called without an expectation set: #{value}"
-        end
-      end
+    def instance_double_agent_settings_with_stubs
+      instance_double(
+        Datadog::Core::Configuration::AgentSettings,
+        hostname: "test-host", port: 9000, timeout_seconds: 1, ssl: false
+      )
     end
   end
 end

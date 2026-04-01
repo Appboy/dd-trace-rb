@@ -9,7 +9,7 @@ module Datadog
           module_function
 
           def patched?
-            Patcher.instance_variable_get(:@patched)
+            !!Patcher.instance_variable_get(:@patched)
           end
 
           def target_version
@@ -20,6 +20,8 @@ module Datadog
             require_relative 'ssrf_detection_middleware'
 
             ::Excon.defaults[:middlewares].insert(0, SSRFDetectionMiddleware)
+
+            Patcher.instance_variable_set(:@patched, true)
           end
         end
       end

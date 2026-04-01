@@ -9,10 +9,12 @@ module Datadog
         module Ext
           APP = 'rails'
           ENV_ENABLED = 'DD_TRACE_RAILS_ENABLED'
+          ENV_DISTRIBUTED_TRACING = 'DD_TRACE_RAILS_DISTRIBUTED_TRACING'
           # @!visibility private
           ENV_ANALYTICS_ENABLED = 'DD_TRACE_RAILS_ANALYTICS_ENABLED'
           ENV_ANALYTICS_SAMPLE_RATE = 'DD_TRACE_RAILS_ANALYTICS_SAMPLE_RATE'
-          ENV_DISABLE = 'DISABLE_DATADOG_RAILS'
+          # Note: Alias (previous name DISABLE_DATADOG_RAILS) defined in supported-configurations.json
+          ENV_DISABLE = 'DD_DISABLE_DATADOG_RAILS'
 
           SPAN_RUNNER_FILE = 'rails.runner.file'
           SPAN_RUNNER_INLINE = 'rails.runner.inline'

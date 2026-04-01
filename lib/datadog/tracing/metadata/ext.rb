@@ -66,6 +66,10 @@ module Datadog
           TAG_DD_PARENT_ID = '_dd.parent_id'
           DD_PARENT_ID_DEFAULT = '0000000000000000'
 
+          # Knuth Sampling Rate: the sampling rate applied by agent-based or rule-based sampling.
+          # This is a propagated tag (prefixed with `_dd.p.`) that is included in `x-datadog-tags`.
+          TAG_KNUTH_SAMPLING_RATE = '_dd.p.ksr'
+
           # Trace tags with this prefix will propagate from a trace through distributed tracing.
           # Distributed headers tags with this prefix will be injected into the active trace.
           TAGS_PREFIX = '_dd.p.'
@@ -82,12 +86,20 @@ module Datadog
           TAG_MSG = 'error.message'
           TAG_STACK = 'error.stack'
           TAG_TYPE = 'error.type'
+
+          # From https://opentelemetry.io/docs/specs/semconv/registry/attributes/exception/#exception-stacktrace
+          ATTRIBUTE_MESSAGE = 'exception.message'
+          ATTRIBUTE_STACKTRACE = 'exception.stacktrace'
+          ATTRIBUTE_TYPE = 'exception.type'
+
+          # From https://opentelemetry.io/docs/specs/semconv/exceptions/exceptions-spans/#exception-event
+          EVENT_NAME = 'exception'
         end
 
         # @public_api
         module HTTP
-          ERROR_RANGE = (500...600).freeze
           TAG_BASE_URL = 'http.base_url'
+          TAG_ENDPOINT = 'http.endpoint'
           TAG_METHOD = 'http.method'
           TAG_STATUS_CODE = 'http.status_code'
           TAG_USER_AGENT = 'http.useragent'

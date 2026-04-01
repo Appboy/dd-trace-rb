@@ -129,7 +129,6 @@ module Datadog
       # @yield Optional block where new newly created {Datadog::Tracing::SpanOperation} captures the execution.
       # @yieldparam [Datadog::Tracing::SpanOperation] span_op the newly created and active [Datadog::Tracing::SpanOperation]
       # @yieldparam [Datadog::Tracing::TraceOperation] trace_op the active [Datadog::Tracing::TraceOperation]
-      # rubocop:disable Metrics/MethodLength
       def trace(
         name,
         continue_from: nil,
@@ -149,11 +148,11 @@ module Datadog
           context = call_context
           active_trace = context.active_trace
           trace = if continue_from || active_trace.nil?
-                    start_trace(continue_from: continue_from)
-                  else
-                    active_trace
-                  end
-        rescue StandardError => e
+            start_trace(continue_from: continue_from)
+          else
+            active_trace
+          end
+        rescue => e
           logger.debug { "Failed to trace: #{e}" }
 
           # Tracing failed: fallback and run code without tracing.
@@ -194,7 +193,6 @@ module Datadog
           )
         end
       end
-      # rubocop:enable Metrics/MethodLength
 
       # Set the given key / value tag pair at the tracer level. These tags will be
       # appended to each span created by the tracer. Keys and values must be strings.
@@ -225,7 +223,7 @@ module Datadog
       # @return [nil] if no trace is active, and thus no span is active
       def active_span(key = nil)
         trace = active_trace(key)
-        trace.active_span if trace
+        trace&.active_span
       end
 
       # Information about the currently active trace.
@@ -242,10 +240,21 @@ module Datadog
         trace.to_correlation
       end
 
-      # Setup a new trace to continue from where another
+      # Setup a new trace execution context to continue from where another
       # trace left off.
+      # This is useful to continue distributed or async traces.
       #
-      # Used to continue distributed or async traces.
+      # The first span created in the restored context is a direct child of the
+      # active span from when the {Datadog::Tracing::TraceDigest} was created.
+      #
+      # When no block is given, the trace context is restored in the current thread.
+      # It remains active until the first span created in this restored context is finished.
+      # After that, if a new span is created, it start a new, unrelated trace.
+      #
+      # When a block is given, the trace context is restored inside the block execution.
+      # It remains active until the block ends, even when the first span created inside
+      # the block finishes. This means that multiple spans can be direct children of the
+      # active span from when the {Datadog::Tracing::TraceDigest} was created.
       #
       # @param [Datadog::Tracing::TraceDigest] digest continue from the {Datadog::Tracing::TraceDigest}.
       # @param [Thread] key Thread to retrieve trace from. Defaults to current thread. For internal use only.
@@ -261,23 +270,40 @@ module Datadog
         # Start a new trace from the digest
         context = call_context(key)
         original_trace = active_trace(key)
-        trace = start_trace(continue_from: digest)
+        # When we want the trace to be bound to a block, we cannot let
+        # it auto finish when the local root span finishes. This would
+        # create mutiple traces inside the block. Instead, we'll
+        # expliclity finish the trace after the block finishes.
+        auto_finish = !block
+
+        trace = start_trace(continue_from: digest, auto_finish: auto_finish)
 
         # If block hasn't been given; we need to manually deactivate
         # this trace. Subscribe to the trace finished event to do this.
         subscribe_trace_deactivation!(context, trace, original_trace) unless block
 
-        context.activate!(trace, &block)
+        if block
+          # When a block is given, the trace will be active until the block finishes.
+          context.activate!(trace) do
+            yield
+          ensure # We have to flush even when an error occurs
+            # On block completion, force the trace to finish and flush its finished spans.
+            # Unfinished spans are lost as the {TraceOperation} has ended.
+            trace.finish!
+            flush_trace(trace)
+          end
+        else
+          # Otherwise, the trace will be bound to the current thread after this point
+          context.activate!(trace)
+        end
       end
 
       # Sample a span, tagging the trace as appropriate.
       def sample_trace(trace_op)
-        begin
-          @sampler.sample!(trace_op)
-        rescue StandardError => e
-          SAMPLE_TRACE_LOG_ONLY_ONCE.run do
-            logger.warn { "Failed to sample trace: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
-          end
+        @sampler.sample!(trace_op) if trace_op.sampling_priority.nil?
+      rescue => e
+        SAMPLE_TRACE_LOG_ONLY_ONCE.run do
+          logger.warn { "Failed to sample trace: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
         end
       end
 
@@ -297,7 +323,7 @@ module Datadog
         #       description of and constraints on arguments.
         # rubocop:disable Lint/UselessMethodDefinition
         def publish(trace)
-          super(trace)
+          super
         end
         # rubocop:enable Lint/UselessMethodDefinition
       end
@@ -315,7 +341,7 @@ module Datadog
       def shutdown!
         return unless @enabled
 
-        @writer.stop if @writer
+        @writer&.stop
       end
 
       private
@@ -332,16 +358,17 @@ module Datadog
         @provider.context(key)
       end
 
-      def build_trace(digest = nil)
+      def build_trace(digest, auto_finish)
         # Resolve hostname if configured
         hostname = Core::Environment::Socket.hostname if Datadog.configuration.tracing.report_hostname
-        hostname = hostname && !hostname.empty? ? hostname : nil
+        hostname = (hostname && !hostname.empty?) ? hostname : nil
 
         if digest
           sampling_priority = if propagate_sampling_priority?(upstream_tags: digest.trace_distributed_tags)
-                                digest.trace_sampling_priority
-                              end
+            digest.trace_sampling_priority
+          end
           TraceOperation.new(
+            logger: logger,
             hostname: hostname,
             profiling_enabled: profiling_enabled,
             apm_tracing_enabled: apm_tracing_enabled,
@@ -355,15 +382,18 @@ module Datadog
             trace_state_unknown_fields: digest.trace_state_unknown_fields,
             remote_parent: digest.span_remote,
             tracer: self,
-            baggage: digest.baggage
+            baggage: digest.baggage,
+            auto_finish: auto_finish
           )
         else
           TraceOperation.new(
+            logger: logger,
             hostname: hostname,
             profiling_enabled: profiling_enabled,
             apm_tracing_enabled: apm_tracing_enabled,
             remote_parent: false,
-            tracer: self
+            tracer: self,
+            auto_finish: auto_finish
           )
         end
       end
@@ -376,7 +406,12 @@ module Datadog
           event_span_op.service ||= @default_service
         end
 
+        events.trace_propagated.subscribe do |event_trace_op|
+          sample_trace(event_trace_op)
+        end
+
         events.span_finished.subscribe do |event_span, event_trace_op|
+          sample_trace(trace_op) if event_trace_op.sampling_priority.nil?
           sample_span(event_trace_op, event_span)
           flush_trace(event_trace_op)
         end
@@ -384,9 +419,9 @@ module Datadog
 
       # Creates a new TraceOperation, with events bounds to this Tracer instance.
       # @return [TraceOperation]
-      def start_trace(continue_from: nil)
+      def start_trace(continue_from: nil, auto_finish: true)
         # Build a new trace using digest if provided.
-        trace = build_trace(continue_from)
+        trace = build_trace(continue_from, auto_finish)
 
         # Bind trace events: sample trace, set default service, flush spans.
         bind_trace_events!(trace)
@@ -410,12 +445,13 @@ module Datadog
       )
         trace = _trace || start_trace(continue_from: continue_from)
 
-        events = SpanOperation::Events.new
+        events = SpanOperation::Events.new(logger: logger)
 
         if block
           # Ignore start time if a block has been given
           trace.measure(
             name,
+            logger: logger,
             events: events,
             on_error: on_error,
             resource: resource,
@@ -429,6 +465,7 @@ module Datadog
           # Return the new span
           span = trace.build_span(
             name,
+            logger: logger,
             events: events,
             on_error: on_error,
             resource: resource,
@@ -444,17 +481,17 @@ module Datadog
           span
         end
       end
-      # rubocop:enable Lint/UnderscorePrefixedVariableName
 
+      # rubocop:enable Lint/UnderscorePrefixedVariableName
       def resolve_tags(tags, service)
         merged_tags = if @tags.any? && tags
-                        # Combine default tags with provided tags,
-                        # preferring provided tags.
-                        @tags.merge(tags)
-                      else
-                        # Use provided tags or default tags if none.
-                        tags || @tags.dup
-                      end
+          # Combine default tags with provided tags,
+          # preferring provided tags.
+          @tags.merge(tags)
+        else
+          # Use provided tags or default tags if none.
+          tags || @tags.dup
+        end
         # Remove version tag if service is not the default service
         if merged_tags.key?(Core::Environment::Ext::TAG_VERSION) && service && service != @default_service
           merged_tags.delete(Core::Environment::Ext::TAG_VERSION)
@@ -498,12 +535,10 @@ module Datadog
       private_constant :SAMPLE_TRACE_LOG_ONLY_ONCE
 
       def sample_span(trace_op, span)
-        begin
-          @span_sampler.sample!(trace_op, span)
-        rescue StandardError => e
-          SAMPLE_SPAN_LOG_ONLY_ONCE.run do
-            logger.warn { "Failed to sample span: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
-          end
+        @span_sampler.sample!(trace_op, span)
+      rescue => e
+        SAMPLE_SPAN_LOG_ONLY_ONCE.run do
+          logger.warn { "Failed to sample span: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
         end
       end
 
@@ -512,14 +547,11 @@ module Datadog
 
       # Flush finished spans from the trace buffer, send them to writer.
       def flush_trace(trace_op)
-        sample_trace(trace_op) unless trace_op.sampling_priority
-        begin
-          trace = @trace_flush.consume!(trace_op)
-          write(trace) if trace && !trace.empty?
-        rescue StandardError => e
-          FLUSH_TRACE_LOG_ONLY_ONCE.run do
-            logger.warn { "Failed to flush trace: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
-          end
+        trace = @trace_flush.consume!(trace_op)
+        write(trace) if trace && !trace.empty?
+      rescue => e
+        FLUSH_TRACE_LOG_ONLY_ONCE.run do
+          logger.warn { "Failed to flush trace: #{e.class.name} #{e} at #{Array(e.backtrace).first}" }
         end
       end
 
@@ -541,10 +573,10 @@ module Datadog
 
       # TODO: Make these dummy objects singletons to preserve memory.
       def skip_trace(name)
-        span = SpanOperation.new(name)
+        span = SpanOperation.new(name, logger: logger)
 
         if block_given?
-          trace = TraceOperation.new
+          trace = TraceOperation.new(logger: logger)
           yield(span, trace)
         else
           span

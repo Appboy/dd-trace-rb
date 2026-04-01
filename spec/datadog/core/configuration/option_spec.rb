@@ -12,7 +12,6 @@ RSpec.describe Datadog::Core::Configuration::Option do
       default: default,
       default_proc: default_proc,
       env: env,
-      deprecated_env: deprecated_env,
       env_parser: env_parser,
       after_set: nil,
       resetter: nil,
@@ -27,7 +26,6 @@ RSpec.describe Datadog::Core::Configuration::Option do
   let(:env_parser) { nil }
   let(:type) { nil }
   let(:type_options) { {} }
-  let(:deprecated_env) { nil }
   let(:setter) { proc { setter_value } }
   let(:setter_value) { double('setter_value') }
   let(:context) { double('configuration object') }
@@ -36,8 +34,9 @@ RSpec.describe Datadog::Core::Configuration::Option do
   # to make sure specs pass when comparing result ex. expect(result).to be value
   # we ensure that frozen_or_dup returns the same instance
   before do
-    allow(Datadog::Core::Utils::SafeDup).to receive(:frozen_or_dup) do |args, _block|
-      args
+    # |args, _block| is not working with arrays
+    allow(Datadog::Core::Utils::SafeDup).to receive(:frozen_or_dup) do |*args, &_block|
+      args.first
     end
   end
 
@@ -316,11 +315,11 @@ RSpec.describe Datadog::Core::Configuration::Option do
       end
 
       context 'when type is defined' do
-        context 'type is invalid value' do
+        context 'type is invalid' do
           let(:type) { :nullable_string }
           let(:value) { 'Hello' }
           it 'raise exception' do
-            expect { set }.to raise_exception(ArgumentError)
+            expect { set }.to raise_exception(Datadog::Core::Configuration::Option::InvalidDefinitionError)
           end
         end
 
@@ -510,7 +509,7 @@ RSpec.describe Datadog::Core::Configuration::Option do
 
         context 'Nil values' do
           let(:type) { :string }
-          let(:type_options) { { nilable: true } }
+          let(:type_options) { {nilable: true} }
           let(:value) { nil }
 
           it 'does not raise exception' do
@@ -537,7 +536,7 @@ RSpec.describe Datadog::Core::Configuration::Option do
       expect(Datadog::Core::Configuration::Option::Precedence::LIST).to_not be_empty
     end
 
-    # Test all combinations of precedences to seed the Option object with all possible values set.
+    # Generate and test all combinations of precedences to seed the Option object with all possible values set.
     # For each combination, try to `unset` on every precedence.
     #
     # For example, if we have 2 precedences, `default` and `rc`,
@@ -553,88 +552,119 @@ RSpec.describe Datadog::Core::Configuration::Option do
     # | default                    | default             | Option is reset |
     # | rc, default                | rc                  | default         |
     # | rc, default                | default             | rc              |
-    {
-      no_precedence: [],
-      remote_configuration: [Datadog::Core::Configuration::Option::Precedence::REMOTE_CONFIGURATION],
-      programmatic: [Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC],
-      default: [Datadog::Core::Configuration::Option::Precedence::DEFAULT],
-      remote_and_programmatic: [
-        Datadog::Core::Configuration::Option::Precedence::REMOTE_CONFIGURATION,
-        Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC
-      ],
-      remote_and_default: [
-        Datadog::Core::Configuration::Option::Precedence::REMOTE_CONFIGURATION,
-        Datadog::Core::Configuration::Option::Precedence::DEFAULT
-      ],
-      programmatic_and_default: [
-        Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC,
-        Datadog::Core::Configuration::Option::Precedence::DEFAULT
-      ],
-      all: [
-        Datadog::Core::Configuration::Option::Precedence::REMOTE_CONFIGURATION,
-        Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC,
-        Datadog::Core::Configuration::Option::Precedence::DEFAULT
-      ]
-    }.each do |name, precedences|
-      context "for #{name} set" do
-        before do
-          allow(context).to(receive(:instance_exec)) { |value, _| value }
 
-          # See this Option with many values set a different precedences.
-          precedences.each do |precedence|
-            # For convenience, the option value is set to the same object as the precedence.
-            value = precedence
+    # We don't need to test all precedence set combinations.
+    context 'with preset precedence' do
+      before do
+        allow(context).to(receive(:instance_exec)) { |value, _| value }
+      end
 
-            @highest_value ||= value
-            option.set(value, precedence: precedence)
+      context 'when no precedence value is set and try to unset a precedence that is not set' do
+        before { option.unset(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC) }
+
+        it 'does not modify the option' do
+          expect(option.get).to eq(default)
+          expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::DEFAULT)
+        end
+      end
+
+      context 'when no precedence value is set and try to unset DEFAULT' do
+        before { option.unset(Datadog::Core::Configuration::Option::Precedence::DEFAULT) }
+
+        it 'does not modify the option' do
+          expect(option.get).to eq(default)
+          expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::DEFAULT)
+        end
+      end
+
+      context 'with a single precedence value set' do
+        context 'when unsetting lower precedence' do
+          before do
+            option.set(
+              Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC,
+              precedence: Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC
+            )
+
+            option.unset(Datadog::Core::Configuration::Option::Precedence::DEFAULT)
+          end
+
+          it 'does not modify the option' do
+            expect(option.get).to eq(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC)
+            expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC)
           end
         end
 
-        # Far all scenarios, try to remove each precedence and assert the correct behavior.
-        Datadog::Core::Configuration::Option::Precedence::LIST.each do |precedence|
-          context "unsetting '#{precedence[1]}'" do
-            subject!(:unset) { option.unset(precedence) }
-            let(:precedence) { precedence }
-            let(:get) { option.get }
+        context 'when unsetting same precedence' do
+          before do
+            option.set(
+              Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC,
+              precedence: Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC
+            )
 
-            if precedences.empty?
-              context 'when no value is set' do
-                it 'resets the option' do
-                  expect(get).to eq(default)
-                  expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::DEFAULT)
-                end
-              end
-            elsif precedence < precedences[0]
-              context 'when a value with lower precedence is unset' do
-                it 'does not modify the option value' do
-                  expect(get).to eq(@highest_value)
-                  expect(option.send(:precedence_set)).to eq(precedences[0])
-                end
-              end
-            elsif precedence == precedences[0]
-              context 'the highest precedence value is unset' do
-                if precedences.size == 1
-                  context 'removing the only value set' do
-                    it 'resets the option' do
-                      expect(get).to eq(default)
-                      expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::DEFAULT)
-                    end
-                  end
-                else
-                  it 'falls back to lower precedence value' do
-                    expect(get).to eq(precedences[1])
-                    expect(option.send(:precedence_set)).to eq(precedences[1])
-                  end
-                end
-              end
-            elsif precedence > precedences[0]
-              context 'when a nonexistent value with higher precedence is unset' do
-                it 'does not modify the option value' do
-                  expect(get).to eq(@highest_value)
-                  expect(option.send(:precedence_set)).to eq(precedences[0])
-                end
-              end
-            end
+            option.unset(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC)
+          end
+
+          it 'removes the only precedence value' do
+            expect(option.get).to eq(default)
+            expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::DEFAULT)
+          end
+        end
+
+        context 'when unsetting higher precedence' do
+          before do
+            option.set(
+              Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC,
+              precedence: Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC
+            )
+
+            option.unset(Datadog::Core::Configuration::Option::Precedence::REMOTE_CONFIGURATION)
+          end
+
+          it 'does not modify the option' do
+            expect(option.get).to eq(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC)
+            expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC)
+          end
+        end
+      end
+
+      context 'with multiple precedence values set' do
+        context 'when unsetting the higher precedence' do
+          before do
+            option.set(
+              Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT,
+              precedence: Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT
+            )
+            option.set(
+              Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC,
+              precedence: Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC
+            )
+
+            option.unset(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC)
+          end
+
+          it 'falls back to lower precedence value' do
+            expect(option.get).to eq(Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT)
+            expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT)
+          end
+        end
+
+        context 'when unsetting the lower precedence' do
+          before do
+            option.set(
+              Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT,
+              precedence: Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT
+            )
+            option.set(
+              Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC,
+              precedence: Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC
+            )
+
+            option.unset(Datadog::Core::Configuration::Option::Precedence::ENVIRONMENT)
+          end
+
+          it 'does not modify the option' do
+            expect(option.get).to eq(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC)
+            expect(option.send(:precedence_set)).to eq(Datadog::Core::Configuration::Option::Precedence::PROGRAMMATIC)
           end
         end
       end
@@ -658,22 +688,24 @@ RSpec.describe Datadog::Core::Configuration::Option do
     subject(:get) { option.get }
 
     shared_examples_for 'env coercion' do
+      # As we now always set default value, we also need to change default to corresponding type
       context 'when type is defined' do
         context ':hash' do
           let(:type) { :hash }
+          let(:default) { {} }
 
           context 'value with commas' do
             let(:env_value) { 'key1:value1,key2:value2' }
 
             it 'coerce value' do
-              expect(option.get).to eq({ 'key1' => 'value1', 'key2' => 'value2' })
+              expect(option.get).to eq({'key1' => 'value1', 'key2' => 'value2'})
             end
 
             context 'remove empty values' do
               let(:env_value) { 'key1:value1,key2:value2,,,key3:value3,' }
 
               it 'coerce value' do
-                expect(option.get).to eq({ 'key1' => 'value1', 'key2' => 'value2', 'key3' => 'value3' })
+                expect(option.get).to eq({'key1' => 'value1', 'key2' => 'value2', 'key3' => 'value3'})
               end
             end
           end
@@ -681,6 +713,7 @@ RSpec.describe Datadog::Core::Configuration::Option do
 
         context ':int' do
           let(:type) { :int }
+          let(:default) { 0 }
           let(:env_value) { '1234' }
 
           it 'coerce value' do
@@ -711,6 +744,7 @@ RSpec.describe Datadog::Core::Configuration::Option do
 
         context ':float' do
           let(:type) { :float }
+          let(:default) { 0.0 }
           let(:env_value) { '12.34' }
 
           it 'coerce value' do
@@ -727,7 +761,7 @@ RSpec.describe Datadog::Core::Configuration::Option do
 
         context ':array' do
           let(:type) { :array }
-
+          let(:default) { [] }
           context 'value with commas' do
             let(:env_value) { '12,34' }
 
@@ -747,7 +781,7 @@ RSpec.describe Datadog::Core::Configuration::Option do
 
         context ':bool' do
           let(:type) { :bool }
-
+          let(:default) { false }
           context 'with value 1' do
             let(:env_value) { '1' }
 
@@ -775,6 +809,7 @@ RSpec.describe Datadog::Core::Configuration::Option do
 
         context 'invalid type' do
           let(:type) { :invalid_type }
+          let(:default) { '0' }
           let(:env_value) { '1' }
 
           it 'raise exception' do
@@ -792,10 +827,7 @@ RSpec.describe Datadog::Core::Configuration::Option do
       end
 
       it 'passes the env variable value to the env_parser' do
-        expect(context).to receive(:instance_exec) do |*args, &block|
-          expect(args.first).to eq(env_value)
-          expect(block).to eq env_parser
-        end
+        expect(context).to receive(:instance_exec).with(env_value, &env_parser)
 
         get
       end
@@ -829,159 +861,19 @@ RSpec.describe Datadog::Core::Configuration::Option do
           expect(option.get).to eq env_value
         end
 
-        it 'set precedence_set to programmatic' do
+        it 'set precedence_set to environment' do
           option.get
-          expect(option.send(:precedence_set)).to eq described_class::Precedence::PROGRAMMATIC
+          expect(option.send(:precedence_set)).to eq described_class::Precedence::ENVIRONMENT
         end
 
-        it_behaves_like 'env coercion'
-        it_behaves_like 'with env_parser'
-      end
-    end
-
-    context 'when env is an Array' do
-      let(:env) { ['TEST_ENV_VAR', 'TEST_ENV_VAR2'] }
-      let(:setter) { proc { |value| value } }
-
-      around do |example|
-        ClimateControl.modify(set_envs) { example.run }
-      end
-
-      context 'and the first environmet variable is set' do
-        let(:set_envs) { { 'TEST_ENV_VAR' => 'val1' } }
-        it { is_expected.to eq('val1') }
-      end
-
-      context 'and the second environmet variable is set' do
-        let(:set_envs) { { 'TEST_ENV_VAR2' => 'val2' } }
-        it { is_expected.to eq('val2') }
-      end
-
-      context 'and both environmet variables are set' do
-        let(:set_envs) { { 'TEST_ENV_VAR' => 'val1', 'TEST_ENV_VAR2' => 'val2' } }
-        it { is_expected.to eq('val1') }
-      end
-
-      context 'and environmet variables are not set' do
-        let(:set_envs) { {} }
-        it { is_expected.to be(default) }
-      end
-    end
-
-    context 'when deprecated_env is defined' do
-      before do
-        allow(Datadog.logger).to receive(:warn) # For deprecation warnings
-        allow(context).to receive(:instance_exec) do |*args|
-          args[0]
-        end
-      end
-
-      let(:deprecated_env) { 'TEST' }
-      context 'when env var is not set' do
-        it do
-          expect(option.get).to be default
-        end
-      end
-
-      context 'when env var is set' do
-        around do |example|
-          ClimateControl.modify(deprecated_env => env_value) do
-            example.run
-          end
-        end
-
-        let(:env_value) { 'test' }
-
-        it 'uses env var value' do
-          expect(option.get).to eq 'test'
-        end
-
-        it 'set precedence_set to programmatic' do
+        it 'falls back to default when unsetting env' do
           option.get
-          expect(option.send(:precedence_set)).to eq described_class::Precedence::PROGRAMMATIC
-        end
-
-        it 'log deprecation warning' do
-          expect(Datadog::Core).to receive(:log_deprecation)
-          option.get
-        end
-
-        it_behaves_like 'env coercion'
-        it_behaves_like 'with env_parser'
-      end
-    end
-
-    context 'when env and deprecated_env are defined' do
-      before do
-        allow(Datadog.logger).to receive(:warn) # For deprecation warnings
-        allow(context).to receive(:instance_exec) do |*args|
-          args[0]
-        end
-      end
-
-      let(:env) { 'TEST' }
-      let(:deprecated_env) { 'DEPRECATED_TEST' }
-      let(:env_value) { 'test' }
-      let(:deprecated_env_value) { 'old test' }
-
-      context 'env found' do
-        around do |example|
-          ClimateControl.modify(env => env_value, deprecated_env => deprecated_env_value) do
-            example.run
-          end
-        end
-
-        it 'uses env var value' do
-          expect(option.get).to eq 'test'
-        end
-
-        it 'set precedence_set to programmatic' do
-          option.get
-          expect(option.send(:precedence_set)).to eq described_class::Precedence::PROGRAMMATIC
-        end
-
-        it 'do not log deprecation warning' do
-          expect(Datadog::Core).to_not receive(:log_deprecation)
-          option.get
-        end
-      end
-
-      context 'env not found and deprecated_env found' do
-        around do |example|
-          ClimateControl.modify(deprecated_env => deprecated_env_value) do
-            example.run
-          end
-        end
-
-        it 'uses env var value' do
-          expect(option.get).to eq 'old test'
-        end
-
-        it 'set precedence_set to programmatic' do
-          option.get
-          expect(option.send(:precedence_set)).to eq described_class::Precedence::PROGRAMMATIC
-        end
-
-        it 'log deprecation warning' do
-          expect(Datadog::Core).to receive(:log_deprecation)
-          option.get
-        end
-      end
-
-      context 'env and deprecated_env not found' do
-        it 'uses default value' do
+          option.unset(described_class::Precedence::ENVIRONMENT)
           expect(option.get).to eq default
         end
 
-        it 'set precedence_set to default' do
-          option.get
-          expect(option.send(:precedence_set)).to eq described_class::Precedence::DEFAULT
-        end
-
-        it 'do not log deprecation warning' do
-          expect(Datadog::Core).to_not receive(:log_deprecation)
-          option.get
-        end
+        it_behaves_like 'env coercion'
+        it_behaves_like 'with env_parser'
       end
     end
 
@@ -1024,6 +916,35 @@ RSpec.describe Datadog::Core::Configuration::Option do
         end
 
         it { is_expected.to be(setter_value) }
+      end
+    end
+
+    # Stubbed config files.
+    context 'with local config file' do
+      let(:env) { 'TEST' }
+      let(:setter) { proc { |value| value } }
+      before do
+        allow(Datadog::Core::Configuration::StableConfig).to receive(:configuration).and_return(
+          {local: {id: '12345', config: {'TEST' => 'test'}}}
+        )
+      end
+
+      it 'uses the local config file' do
+        expect(option.get).to eq 'test'
+      end
+    end
+
+    context 'with fleet config file' do
+      let(:env) { 'TEST' }
+      let(:setter) { proc { |value| value } }
+      before do
+        allow(Datadog::Core::Configuration::StableConfig).to receive(:configuration).and_return(
+          {fleet: {id: '56789', config: {'TEST' => 'test'}}}
+        )
+      end
+
+      it 'uses the fleet config file' do
+        expect(option.get).to eq 'test'
       end
     end
   end

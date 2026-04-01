@@ -12,13 +12,14 @@ require_relative '../remote/ext'
 require_relative '../../profiling/ext'
 
 require_relative '../../tracing/configuration/settings'
+require_relative '../../opentelemetry/configuration/settings'
 
 module Datadog
   module Core
     module Configuration
       # Global configuration settings for the Datadog library.
       # @public_api
-      # rubocop:disable Metrics/BlockLength
+      # standard:disable Metrics/BlockLength
       class Settings
         include Base
 
@@ -122,8 +123,8 @@ module Datadog
           # @default `DD_TRACE_DEBUG` environment variable, otherwise `false`
           # @return [Boolean]
           option :debug do |o|
-            o.env [Datadog::Core::Configuration::Ext::Diagnostics::ENV_DEBUG_ENABLED,
-                   Datadog::Core::Configuration::Ext::Diagnostics::ENV_OTEL_LOG_LEVEL]
+            # Note: Alias (OTEL_LOG_LEVEL) defined in supported-configurations.json
+            o.env Datadog::Core::Configuration::Ext::Diagnostics::ENV_DEBUG_ENABLED
             o.default false
             o.type :bool
             o.env_parser do |value|
@@ -137,7 +138,7 @@ module Datadog
             o.after_set do |enabled|
               # Enable rich debug print statements.
               # We do not need to unnecessarily load 'pp' unless in debugging mode.
-              require 'pp' if enabled
+              require 'pp' if enabled # standard:disable Lint/RedundantRequireStatement
             end
           end
 
@@ -167,6 +168,20 @@ module Datadog
           o.type :string, nilable: true
           # NOTE: env also gets set as a side effect of tags. See the WORKAROUND note in #initialize for details.
           o.env Core::Environment::Ext::ENV_ENVIRONMENT
+        end
+
+        # Configuration for container environments. For internal use only.
+        # @!visibility private
+        settings :container do
+          # Data supplied by the container runner to assist in uniquely identifying this process.
+          # Used in [Origin Detection](https://docs.datadoghq.com/developers/dogstatsd/unix_socket/?tab=host#origin-detection)
+          #
+          # @default `DD_EXTERNAL_ENV` environment variable, otherwise `nil`
+          # @return [String,nil]
+          option :external_env do |o|
+            o.type :string, nilable: true
+            o.env Core::Environment::Ext::ENV_EXTERNAL_ENV
+          end
         end
 
         # Internal {Datadog::Statsd} metrics collection.
@@ -212,6 +227,7 @@ module Datadog
           # Log level for `Datadog.logger`.
           # @see Logger::Severity
           # @return Logger::Severity
+          # TODO: Add environment variable for this `DD_TRACE_LOG_LEVEL`
           option :level, default: ::Logger::INFO
         end
 
@@ -291,9 +307,6 @@ module Datadog
             #       for Ruby versions 2.x, 3.1.4+, 3.2.3+ and 3.3.0+
             #       (more details in {Datadog::Profiling::Component.enable_gc_profiling?})
             #
-            # @warn Due to a VM bug in the Ractor implementation (https://bugs.ruby-lang.org/issues/19112) this feature
-            #       stops working when Ractors get garbage collected.
-            #
             # @default `DD_PROFILING_GC_ENABLED` environment variable, otherwise `true`
             option :gc_enabled do |o|
               o.type :bool
@@ -313,7 +326,7 @@ module Datadog
 
             # Can be used to enable/disable the collection of heap profiles.
             #
-            # This feature is alpha and disabled by default
+            # This feature is in preview and disabled by default. Requires Ruby 3.1+.
             #
             # @warn To enable heap profiling you are required to also enable allocation profiling.
             #
@@ -326,12 +339,12 @@ module Datadog
 
             # Can be used to enable/disable the collection of heap size profiles.
             #
-            # This feature is alpha and enabled by default when heap profiling is enabled.
+            # This feature is in preview and by default is enabled whenever heap profiling is enabled.
             #
-            # @warn To enable heap size profiling you are required to also enable allocation and heap profiling.
+            # @warn Heap size profiling depends on allocation and heap profiling, so they must be enabled as well.
             #
-            # @default `DD_PROFILING_EXPERIMENTAL_HEAP_SIZE_ENABLED` environment variable as a boolean, otherwise
-            # whatever the value of DD_PROFILING_EXPERIMENTAL_HEAP_ENABLED is.
+            # @default `DD_PROFILING_EXPERIMENTAL_HEAP_SIZE_ENABLED` environment variable as a boolean, otherwise it
+            # follows the value of `experimental_heap_enabled`.
             option :experimental_heap_size_enabled do |o|
               o.type :bool
               o.env 'DD_PROFILING_EXPERIMENTAL_HEAP_SIZE_ENABLED'
@@ -341,17 +354,19 @@ module Datadog
             # Can be used to configure the heap sampling rate: a heap sample will be collected for every x allocation
             # samples.
             #
-            # The lower the value, the more accuracy in heap tracking but the bigger the overhead. In particular, a
-            # value of 1 will track ALL allocations samples for heap profiles.
+            # The higher the value, the less accuracy in heap tracking but the smaller the overhead.
+            #
+            # If you needed to tweak this, please tell us why on <https://github.com/DataDog/dd-trace-rb/issues/new>,
+            # so we can fix it!
             #
             # The effective heap sampling rate in terms of allocations (not allocation samples) can be calculated via
             # effective_heap_sample_rate = allocation_sample_rate * heap_sample_rate.
             #
-            # @default `DD_PROFILING_EXPERIMENTAL_HEAP_SAMPLE_RATE` environment variable, otherwise `10`.
+            # @default `DD_PROFILING_EXPERIMENTAL_HEAP_SAMPLE_RATE` environment variable, otherwise `1`.
             option :experimental_heap_sample_rate do |o|
               o.type :int
               o.env 'DD_PROFILING_EXPERIMENTAL_HEAP_SAMPLE_RATE'
-              o.default 10
+              o.default 1
             end
 
             # Can be used to disable checking which version of `libmysqlclient` is being used by the `mysql2` gem.
@@ -421,6 +436,23 @@ module Datadog
               o.default true
             end
 
+            # The profiler gathers data by sending `SIGPROF` unix signals to Ruby application threads.
+            #
+            # When using `Kernel#exec` on Linux, it can happen that a signal sent before calling `exec` arrives after
+            # the new process is running, causing it to fail with the `Profiling timer expired` error message.
+            # To avoid this, the profiler installs a monkey patch on `Kernel#exec` to stop profiling before actually
+            # calling `exec`.
+            # This monkey patch is available for Ruby 2.7+; let us know if you need it on earlier Rubies.
+            # For more details see https://github.com/DataDog/dd-trace-rb/issues/5101 .
+            #
+            # @default `DD_PROFILING_SHUTDOWN_ON_EXEC_ENABLED` environment variable as a boolean,
+            # otherwise `true`
+            option :shutdown_on_exec_enabled do |o|
+              o.env 'DD_PROFILING_SHUTDOWN_ON_EXEC_ENABLED'
+              o.type :bool
+              o.default true
+            end
+
             # Configures how much wall-time overhead the profiler targets. The profiler will dynamically adjust the
             # interval between samples it takes so as to try and maintain the property that it spends no longer than
             # this amount of wall-clock time profiling. For example, with the default value of 2%, the profiler will
@@ -454,7 +486,7 @@ module Datadog
               o.after_set do |_, _, precedence|
                 unless precedence == Datadog::Core::Configuration::Option::Precedence::DEFAULT
                   Core.log_deprecation(key: :experimental_crash_tracking_enabled) do
-                    'The profiling.advanced.experimental_crash_tracking_enabled setting has been deprecated for removal '\
+                    'The profiling.advanced.experimental_crash_tracking_enabled setting has been deprecated for removal ' \
                     'and no longer does anything. Please remove it from your Datadog.configure block.'
                   end
                 end
@@ -483,7 +515,7 @@ module Datadog
             # @default `DD_PROFILING_GVL_ENABLED` environment variable as a boolean, otherwise `true`
             option :gvl_enabled do |o|
               o.type :bool
-              o.deprecated_env 'DD_PROFILING_PREVIEW_GVL_ENABLED'
+              # Note: Deprecated alias (DD_PROFILING_PREVIEW_GVL_ENABLED) defined in supported-configurations.json
               o.env 'DD_PROFILING_GVL_ENABLED'
               o.default true
             end
@@ -542,6 +574,60 @@ module Datadog
               o.env 'DD_PROFILING_HEAP_CLEAN_AFTER_GC_ENABLED'
               o.default true
             end
+
+            # Controls if the profiler should use native filenames for frames in stack traces for functions implemented using
+            # native code. Setting to `false` will make the profiler fall back to default Ruby stack trace behavior (only show .rb files).
+            #
+            # @default true
+            option :native_filenames_enabled do |o|
+              o.type :bool
+              o.env 'DD_PROFILING_NATIVE_FILENAMES_ENABLED'
+              o.default true
+            end
+
+            # Controls if the profiler should sample directly from the signal handler.
+            # Sampling directly from the signal handler improves accuracy of the data collected.
+            #
+            # We recommend using this setting with Ruby 3.2.5+ / Ruby 3.3.4+ and above
+            # as they include additional safety measures added in https://github.com/ruby/ruby/pull/11036.
+            # We have not validated it thoroughly with earlier versions, but in practice it should work on Ruby 3.0+
+            # (the key change was https://github.com/ruby/ruby/pull/3296).
+            #
+            # Enabling this on Ruby 2 is not recommended as it may cause VM crashes and/or incorrect data.
+            #
+            # @default true on Ruby 3.2.5+ / Ruby 3.3.4+, false on older Rubies
+            option :sighandler_sampling_enabled do |o|
+              o.type :bool
+              o.env 'DD_PROFILING_SIGHANDLER_SAMPLING_ENABLED'
+              o.default do
+                Gem::Version.new(RUBY_VERSION) >= Gem::Version.new('3.2.5') &&
+                  !(RUBY_VERSION.start_with?('3.3.') && Gem::Version.new(RUBY_VERSION) < Gem::Version.new('3.3.4'))
+              end
+            end
+
+            # Experimental: Controls the CPU sampling interval in milliseconds. This sets how often the profiler
+            # attempts to take a CPU sample. Valid values are 1 to 10.
+            #
+            # Lower values increase accuracy but also increase overhead. If you need to reduce profiler overhead,
+            # use the `overhead_target_percentage` setting instead.
+            #
+            # @warn This setting is experimental and may be removed or changed in future versions.
+            #
+            # # No config via environment variable yet
+            # @default 10
+            option :experimental_cpu_sampling_interval_ms do |o|
+              o.type :int
+              o.default 10
+            end
+
+            # Fallback to system dns instead of using libdatadog built-in resolver.
+            #
+            # @default `DD_PROFILING_EXPERIMENTAL_USE_SYSTEM_DNS` environment variable as a boolean, otherwise `true`
+            option :experimental_use_system_dns do |o|
+              o.type :bool
+              o.env 'DD_PROFILING_EXPERIMENTAL_USE_SYSTEM_DNS'
+              o.default true
+            end
           end
 
           # @public_api
@@ -572,7 +658,8 @@ module Datadog
 
           option :experimental_runtime_id_enabled do |o|
             o.type :bool
-            o.env 'DD_TRACE_EXPERIMENTAL_RUNTIME_ID_ENABLED'
+            # Note: Alias (DD_TRACE_EXPERIMENTAL_RUNTIME_ID_ENABLED) defined in supported-configurations.json
+            o.env 'DD_RUNTIME_METRICS_RUNTIME_ID_ENABLED'
             o.default false
           end
 
@@ -588,7 +675,8 @@ module Datadog
           o.type :string, nilable: true
 
           # NOTE: service also gets set as a side effect of tags. See the WORKAROUND note in #initialize for details.
-          o.env [Core::Environment::Ext::ENV_SERVICE, Core::Environment::Ext::ENV_OTEL_SERVICE]
+          # Note: Alias (OTEL_SERVICE_NAME) defined in supported-configurations.json
+          o.env Core::Environment::Ext::ENV_SERVICE
           o.default Core::Environment::Ext::FALLBACK_SERVICE_NAME
 
           # There's a few cases where we don't want to use the fallback service name, so this helper allows us to get a
@@ -623,7 +711,8 @@ module Datadog
         # @return [Hash<String,String>]
         option :tags do |o|
           o.type :hash, nilable: true
-          o.env [Core::Environment::Ext::ENV_TAGS, Core::Environment::Ext::ENV_OTEL_RESOURCE_ATTRIBUTES]
+          # Note: Alias (OTEL_RESOURCE_ATTRIBUTES) defined in supported-configurations.json
+          o.env Core::Environment::Ext::ENV_TAGS
           o.env_parser do |env_value|
             # Parses a string containing key-value pairs and returns a hash.
             # Key-value pairs are delimited by ':' OR `=`, and pairs are separated by whitespace, comma, OR BOTH.
@@ -641,11 +730,11 @@ module Datadog
                 val ||= ''
                 # maps OpenTelemetry semantic attributes to Datadog tags
                 key = case key.downcase
-                      when 'deployment.environment' then 'env'
-                      when 'service.version' then 'version'
-                      when 'service.name' then 'service'
-                      else key
-                      end
+                when 'deployment.environment' then 'env'
+                when 'service.version' then 'version'
+                when 'service.name' then 'service'
+                else key
+                end
                 result[key] = val unless key.empty?
               end
             end
@@ -792,6 +881,7 @@ module Datadog
 
           # Overrides agentless telemetry URL. To be used internally for testing purposes only.
           #
+          # @default `DD_TELEMETRY_AGENTLESS_URL` environment variable, otherwise `nil`.
           # @return [String]
           # @!visibility private
           option :agentless_url_override do |o|
@@ -888,6 +978,16 @@ module Datadog
             o.env Core::Telemetry::Ext::ENV_LOG_COLLECTION
             o.default true
           end
+
+          # For internal use only.
+          # Enables telemetry debugging through the Datadog platform.
+          #
+          # @default `false`.
+          # @return [Boolean]
+          option :debug do |o|
+            o.type :bool
+            o.default false
+          end
         end
 
         # Remote configuration
@@ -957,6 +1057,16 @@ module Datadog
           end
         end
 
+        # Enable process tags propagation such that payloads like spans contain the process tag.
+        #
+        # @default `DD_EXPERIMENTAL_PROPAGATE_PROCESS_TAGS_ENABLED` environment variable, otherwise `true`
+        # @return [Boolean]
+        option :experimental_propagate_process_tags_enabled do |o|
+          o.env 'DD_EXPERIMENTAL_PROPAGATE_PROCESS_TAGS_ENABLED'
+          o.default true
+          o.type :bool
+        end
+
         # Tracer specific configuration starting with APM (e.g. DD_APM_TRACING_ENABLED).
         # @public_api
         settings :apm do
@@ -984,8 +1094,10 @@ module Datadog
         # TODO: Tracing should manage its own settings.
         #       Keep this extension here for now to keep things working.
         extend Datadog::Tracing::Configuration::Settings
+
+        extend Datadog::OpenTelemetry::Configuration::Settings
       end
-      # rubocop:enable Metrics/BlockLength
+      # standard:enable Metrics/BlockLength
     end
   end
 end

@@ -62,7 +62,7 @@ module Datadog
             # return `nil` with IO transport
             return unless transport.respond_to?(:client)
 
-            adapter = transport.client.api.adapter
+            adapter = transport.client.instance.adapter
             adapter.url
           end
 
@@ -84,9 +84,13 @@ module Datadog
           # @return [Numeric, nil] tracer sample rate configured
           def sample_rate
             sampler = Datadog.configuration.tracing.sampler
-            return nil unless sampler
+            return Datadog.configuration.tracing.sampling.default_rate unless sampler
 
-            sampler.sample_rate(nil) rescue nil
+            begin
+              sampler.sample_rate(nil)
+            rescue
+              nil
+            end
           end
 
           # DEV: We currently only support SimpleRule instances.
@@ -97,6 +101,8 @@ module Datadog
           # @return [Hash, nil] sample rules configured
           def sampling_rules
             sampler = Datadog.configuration.tracing.sampler
+            return Datadog.configuration.tracing.sampling.rules unless sampler
+
             return nil unless sampler.is_a?(Tracing::Sampling::PrioritySampler) &&
               sampler.priority_sampler.is_a?(Tracing::Sampling::RuleSampler)
 

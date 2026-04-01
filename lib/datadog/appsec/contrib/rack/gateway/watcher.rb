@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 require_relative '../ext'
-require_relative '../../../instrumentation/gateway'
 require_relative '../../../event'
+require_relative '../../../trace_keeper'
+require_relative '../../../security_event'
+require_relative '../../../instrumentation/gateway'
 
 module Datadog
   module AppSec
@@ -22,8 +24,8 @@ module Datadog
               end
 
               def watch_request(gateway = Instrumentation.gateway)
-                gateway.watch('rack.request', :appsec) do |stack, gateway_request|
-                  context = gateway_request.env[Datadog::AppSec::Ext::CONTEXT_KEY]
+                gateway.watch('rack.request') do |stack, gateway_request|
+                  context = gateway_request.env[AppSec::Ext::CONTEXT_KEY]
 
                   persistent_data = {
                     'server.request.cookies' => gateway_request.cookies,
@@ -37,18 +39,17 @@ module Datadog
 
                   result = context.run_waf(persistent_data, {}, Datadog.configuration.appsec.waf_timeout)
 
+                  if result.match? || !result.attributes.empty?
+                    context.events.push(
+                      AppSec::SecurityEvent.new(result, trace: context.trace, span: context.span)
+                    )
+                  end
+
                   if result.match?
-                    Datadog::AppSec::Event.tag_and_keep!(context, result)
+                    AppSec::Event.tag(context, result)
+                    TraceKeeper.keep!(context.trace) if result.keep?
 
-                    context.events << {
-                      waf_result: result,
-                      trace: context.trace,
-                      span: context.span,
-                      request: gateway_request,
-                      actions: result.actions
-                    }
-
-                    Datadog::AppSec::ActionsHandler.handle(result.actions)
+                    AppSec::ActionsHandler.handle(result.actions)
                   end
 
                   stack.call(gateway_request.request)
@@ -56,7 +57,7 @@ module Datadog
               end
 
               def watch_response(gateway = Instrumentation.gateway)
-                gateway.watch('rack.response', :appsec) do |stack, gateway_response|
+                gateway.watch('rack.response') do |stack, gateway_response|
                   context = gateway_response.context
 
                   persistent_data = {
@@ -68,17 +69,14 @@ module Datadog
                   result = context.run_waf(persistent_data, {}, Datadog.configuration.appsec.waf_timeout)
 
                   if result.match?
-                    Datadog::AppSec::Event.tag_and_keep!(context, result)
+                    AppSec::Event.tag(context, result)
+                    TraceKeeper.keep!(context.trace) if result.keep?
 
-                    context.events << {
-                      waf_result: result,
-                      trace: context.trace,
-                      span: context.span,
-                      response: gateway_response,
-                      actions: result.actions
-                    }
+                    context.events.push(
+                      AppSec::SecurityEvent.new(result, trace: context.trace, span: context.span)
+                    )
 
-                    Datadog::AppSec::ActionsHandler.handle(result.actions)
+                    AppSec::ActionsHandler.handle(result.actions)
                   end
 
                   stack.call(gateway_response.response)
@@ -86,8 +84,8 @@ module Datadog
               end
 
               def watch_request_body(gateway = Instrumentation.gateway)
-                gateway.watch('rack.request.body', :appsec) do |stack, gateway_request|
-                  context = gateway_request.env[Datadog::AppSec::Ext::CONTEXT_KEY]
+                gateway.watch('rack.request.body') do |stack, gateway_request|
+                  context = gateway_request.env[AppSec::Ext::CONTEXT_KEY]
 
                   persistent_data = {
                     'server.request.body' => gateway_request.form_hash
@@ -96,17 +94,14 @@ module Datadog
                   result = context.run_waf(persistent_data, {}, Datadog.configuration.appsec.waf_timeout)
 
                   if result.match?
-                    Datadog::AppSec::Event.tag_and_keep!(context, result)
+                    AppSec::Event.tag(context, result)
+                    TraceKeeper.keep!(context.trace) if result.keep?
 
-                    context.events << {
-                      waf_result: result,
-                      trace: context.trace,
-                      span: context.span,
-                      request: gateway_request,
-                      actions: result.actions
-                    }
+                    context.events.push(
+                      AppSec::SecurityEvent.new(result, trace: context.trace, span: context.span)
+                    )
 
-                    Datadog::AppSec::ActionsHandler.handle(result.actions)
+                    AppSec::ActionsHandler.handle(result.actions)
                   end
 
                   stack.call(gateway_request.request)
@@ -118,7 +113,7 @@ module Datadog
               #       somewhere closer to identity related monitor.
               # WARNING: The Gateway is a subject of refactoring
               def watch_request_finish(gateway = Instrumentation.gateway)
-                gateway.watch('rack.request.finish', :appsec) do |stack, gateway_request|
+                gateway.watch('rack.request.finish') do |stack, gateway_request|
                   context = gateway_request.env[AppSec::Ext::CONTEXT_KEY]
 
                   if context.span.nil? || !gateway.pushed?('appsec.events.user_lifecycle')

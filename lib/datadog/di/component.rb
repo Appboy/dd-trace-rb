@@ -29,22 +29,6 @@ module Datadog
           end
         end
 
-        def build!(settings, agent_settings, logger, telemetry: nil)
-          unless settings.respond_to?(:dynamic_instrumentation) && settings.dynamic_instrumentation.enabled
-            raise "Requested DI component but DI is not enabled in settings"
-          end
-
-          unless settings.respond_to?(:remote) && settings.remote.enabled
-            raise "Requested DI component but remote config is not enabled in settings"
-          end
-
-          unless environment_supported?(settings, logger)
-            raise "DI does not support the environment (development or Ruby version too low or not MRI)"
-          end
-
-          new(settings, agent_settings, logger, code_tracker: DI.code_tracker, telemetry: telemetry)
-        end
-
         # Checks whether the runtime environment is supported by
         # dynamic instrumentation. Currently we only require that, if Rails
         # is used, that Rails environment is not development because
@@ -79,9 +63,19 @@ module Datadog
         @redactor = Redactor.new(settings)
         @serializer = Serializer.new(settings, redactor, telemetry: telemetry)
         @instrumenter = Instrumenter.new(settings, serializer, logger, code_tracker: code_tracker, telemetry: telemetry)
-        @probe_notifier_worker = ProbeNotifierWorker.new(settings, logger, agent_settings: agent_settings, telemetry: telemetry)
+        @probe_repository = ProbeRepository.new
         @probe_notification_builder = ProbeNotificationBuilder.new(settings, serializer)
-        @probe_manager = ProbeManager.new(settings, instrumenter, probe_notification_builder, probe_notifier_worker, logger, telemetry: telemetry)
+        @probe_notifier_worker = ProbeNotifierWorker.new(
+          settings, logger,
+          agent_settings: agent_settings,
+          probe_repository: probe_repository,
+          probe_notification_builder: probe_notification_builder,
+          telemetry: telemetry,
+        )
+        @probe_manager = ProbeManager.new(
+          settings, instrumenter, probe_notification_builder, probe_notifier_worker, logger, probe_repository,
+          telemetry: telemetry,
+        )
         probe_notifier_worker.start
       end
 
@@ -91,6 +85,7 @@ module Datadog
       attr_reader :telemetry
       attr_reader :code_tracker
       attr_reader :instrumenter
+      attr_reader :probe_repository
       attr_reader :probe_notifier_worker
       attr_reader :probe_notification_builder
       attr_reader :probe_manager
@@ -111,6 +106,28 @@ module Datadog
         probe_manager.clear_hooks
         probe_manager.close
         probe_notifier_worker.stop
+      end
+
+      def parse_probe_spec_and_notify(probe_spec)
+        probe = ProbeBuilder.build_from_remote_config(probe_spec)
+      rescue => exc
+        begin
+          probe = Struct.new(:id).new(
+            probe_spec['id'],
+          )
+          payload = probe_notification_builder.build_errored(probe, exc)
+          probe_notifier_worker.add_status(payload)
+        rescue => nested_exc
+          logger.debug { "di: failed to build error notification: #{nested_exc.class}: #{nested_exc}" }
+          telemetry&.report(nested_exc, description: 'Error building probe error notification')
+          raise
+        end
+
+        raise
+      else
+        payload = probe_notification_builder.build_received(probe)
+        probe_notifier_worker.add_status(payload, probe: probe)
+        probe
       end
     end
   end

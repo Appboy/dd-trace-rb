@@ -1,4 +1,23 @@
+# This file is loaded repeatedly in the test suite due to the way DI performs
+# code tracking. Remove the constants if they have already been defined
+# to avoid Ruby warnings.
+begin
+  Object.send(:remove_const, :HookTestClass)
+rescue NameError
+end
+begin
+  Object.send(:remove_const, :YieldingMethodMissingHookTestClass)
+rescue NameError
+end
+begin
+  Object.send(:remove_const, :HookIvarTestClass)
+rescue NameError
+end
+
 class HookTestClass
+  class TestException < StandardError
+  end
+
   def hook_test_method
     42
   end
@@ -50,6 +69,10 @@ class HookTestClass
   def positional_and_squashed(arg, options)
     [arg, options]
   end
+
+  def exception_method
+    raise TestException, 'Test exception'
+  end
 end
 
 class YieldingMethodMissingHookTestClass
@@ -61,5 +84,23 @@ class YieldingMethodMissingHookTestClass
   def method_missing(name, *args, **kwargs)
     yield [args, kwargs]
     [args, kwargs]
+  end
+end
+
+class HookIvarTestClass # < HookTestClass
+  def initialize
+    @ivar = 2442
+  end
+
+  def hook_test_method
+    42
+  end
+
+  def hook_test_method_with_arg(arg)
+    arg
+  end
+
+  def hook_test_method_with_kwarg(kwarg:)
+    kwarg
   end
 end

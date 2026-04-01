@@ -25,7 +25,7 @@ class TracingTraceBenchmark
   #   per 100ms, this means we'll have around 120 samples (give or take a small margin of error).
   # @param [Integer] warmup in seconds. The default is 2 seconds.
   def benchmark_time(time: 12, warmup: 2)
-    VALIDATE_BENCHMARK_MODE ? { time: 0.001, warmup: 0 } : { time: time, warmup: warmup }
+    VALIDATE_BENCHMARK_MODE ? {time: 0.001, warmup: 0} : {time: time, warmup: warmup}
   end
 
   def benchmark_no_writer
@@ -34,7 +34,7 @@ class TracingTraceBenchmark
     Benchmark.ips do |x|
       x.config(**benchmark_time)
 
-      def trace(x, depth)
+      def trace(x, depth) # standard:disable Lint/NestedMethodDefinition
         x.report(
           "#{depth} span trace - no writer",
           (depth.times.map { "Datadog::Tracing.trace('op.name') {" } + depth.times.map { "}" }).join
@@ -45,7 +45,7 @@ class TracingTraceBenchmark
       trace(x, 10)
       trace(x, 100)
 
-      x.save! "#{File.basename(__FILE__)}-results.json" unless VALIDATE_BENCHMARK_MODE
+      x.save! "#{File.basename(__FILE__, '.rb')}-results.json" unless VALIDATE_BENCHMARK_MODE
       x.compare!
     end
   end
@@ -62,7 +62,7 @@ class TracingTraceBenchmark
     Benchmark.ips do |x|
       x.config(**benchmark_time)
 
-      def trace(x, depth)
+      def trace(x, depth) # standard:disable Lint/NestedMethodDefinition
         x.report(
           "#{depth} span trace - no network",
           (depth.times.map { "Datadog::Tracing.trace('op.name') {" } + depth.times.map { "}" }).join
@@ -73,7 +73,7 @@ class TracingTraceBenchmark
       trace(x, 10)
       trace(x, 100)
 
-      x.save! "#{File.basename(__FILE__)}-results.json" unless VALIDATE_BENCHMARK_MODE
+      x.save! "#{File.basename(__FILE__, '.rb')}-results.json" unless VALIDATE_BENCHMARK_MODE
       x.compare!
     end
   end
@@ -87,7 +87,7 @@ class TracingTraceBenchmark
           trace.to_digest
         end
 
-        x.save! "#{File.basename(__FILE__)}-results.json" unless VALIDATE_BENCHMARK_MODE
+        x.save! "#{File.basename(__FILE__, '.rb')}-results.json" unless VALIDATE_BENCHMARK_MODE
         x.compare!
       end
     end
@@ -102,7 +102,7 @@ class TracingTraceBenchmark
           Datadog::Tracing.log_correlation
         end
 
-        x.save! "#{File.basename(__FILE__)}-results.json" unless VALIDATE_BENCHMARK_MODE
+        x.save! "#{File.basename(__FILE__, '.rb')}-results.json" unless VALIDATE_BENCHMARK_MODE
         x.compare!
       end
     end
@@ -118,7 +118,7 @@ class TracingTraceBenchmark
           Datadog::Tracing.continue_trace!(digest)
         end
 
-        x.save! "#{File.basename(__FILE__)}-results.json" unless VALIDATE_BENCHMARK_MODE
+        x.save! "#{File.basename(__FILE__, '.rb')}-results.json" unless VALIDATE_BENCHMARK_MODE
         x.compare!
       end
     end
@@ -147,7 +147,7 @@ class TracingTraceBenchmark
           raise unless extracted_trace_digest
         end
 
-        x.save! "#{File.basename(__FILE__)}-results.json" unless VALIDATE_BENCHMARK_MODE
+        x.save! "#{File.basename(__FILE__, '.rb')}-results.json" unless VALIDATE_BENCHMARK_MODE
         x.compare!
       end
     end
@@ -170,7 +170,7 @@ class TracingTraceBenchmark
           raise unless extracted_trace_digest
         end
 
-        x.save! "#{File.basename(__FILE__)}-results.json" unless VALIDATE_BENCHMARK_MODE
+        x.save! "#{File.basename(__FILE__, '.rb')}-results.json" unless VALIDATE_BENCHMARK_MODE
         x.compare!
       end
     end
@@ -180,11 +180,15 @@ end
 puts "Current pid is #{Process.pid}"
 
 def run_benchmark(&block)
-  # Forking to avoid monkey-patching leaking between benchmarks
-  pid = fork { block.call }
-  _, status = Process.wait2(pid)
+  if VALIDATE_BENCHMARK_MODE
+    block.call
+  else
+    # Forking to avoid monkey-patching leaking between benchmarks
+    pid = fork { block.call }
+    _, status = Process.wait2(pid)
 
-  raise "Benchmark failed with status #{status}" unless status.success?
+    raise "Benchmark failed with status #{status}" unless status.success?
+  end
 end
 
 TracingTraceBenchmark.new.instance_exec do

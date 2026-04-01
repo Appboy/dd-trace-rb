@@ -19,7 +19,7 @@ module Datadog
           register_as :rack, auto_patch: false
 
           def self.version
-            Gem.loaded_specs['rack'] && Gem.loaded_specs['rack'].version
+            Gem.loaded_specs['rack']&.version
           end
 
           def self.loaded?
@@ -27,7 +27,7 @@ module Datadog
           end
 
           def self.compatible?
-            super && version >= MINIMUM_VERSION
+            !!(super && (version&.>= MINIMUM_VERSION))
           end
 
           def self.auto_instrument?

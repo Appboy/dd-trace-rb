@@ -12,7 +12,7 @@ require 'mysql2'
 
 RSpec.describe 'Mysql2::Client patcher' do
   let(:service_name) { 'my-sql' }
-  let(:configuration_options) { { service_name: service_name } }
+  let(:configuration_options) { {service_name: service_name} }
 
   let(:client) do
     Mysql2::Client.new(
@@ -76,6 +76,7 @@ RSpec.describe 'Mysql2::Client patcher' do
         end
 
         it_behaves_like 'with sql comment propagation', span_op_name: 'mysql2.query'
+        it_behaves_like 'with sql comment base hash injection', span_op_name: 'mysql2.query'
 
         context 'when configured with `on_error`' do
           before do
@@ -138,6 +139,17 @@ RSpec.describe 'Mysql2::Client patcher' do
           let(:peer_service_val) { database }
           let(:peer_service_source) { 'mysql2.db.name' }
         end
+
+        context 'and the database name is empty' do
+          let(:database) { '' }
+
+          it 'does not set database name related tags' do
+            query
+
+            expect(span.get_tag('db.instance')).to be_nil
+            expect(span.get_tag('mysql2.db.name')).to be_nil
+          end
+        end
       end
 
       context 'when a failed query is made' do
@@ -165,7 +177,7 @@ RSpec.describe 'Mysql2::Client patcher' do
         end
 
         context 'when configured with `on_error`' do
-          let(:configuration_options) { { on_error: ->(_span, _error) { false } } }
+          let(:configuration_options) { {on_error: ->(_span, _error) { false }} }
 
           it 'does not mark span with error' do
             expect { query }.to raise_error(Mysql2::Error)

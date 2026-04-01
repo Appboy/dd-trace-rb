@@ -1,7 +1,7 @@
 require "datadog/profiling"
 if Datadog::Profiling.supported?
   require "datadog/profiling/pprof/pprof_pb"
-  require "extlz4"
+  require "zstd-ruby"
 end
 
 module ProfileHelpers
@@ -18,11 +18,10 @@ module ProfileHelpers
   end
   Frame = Struct.new(:base_label, :path, :lineno)
 
-  def skip_if_profiling_not_supported(testcase)
-    testcase.skip("Profiling is not supported on JRuby") if PlatformHelpers.jruby?
-    testcase.skip("Profiling is not supported on TruffleRuby") if PlatformHelpers.truffleruby?
+  def skip_if_profiling_not_supported
+    skip_if_libdatadog_not_supported
 
-    # Profiling is not officially supported on macOS due to missing libdatadog binaries,
+    # Profiling is not officially supported on macOS
     # but it's still useful to allow it to be enabled for development.
     if PlatformHelpers.mac? && ENV["DD_PROFILING_MACOS_TESTING"] != "true"
       testcase.skip(
@@ -39,7 +38,7 @@ module ProfileHelpers
   end
 
   def decode_profile(encoded_profile)
-    ::Perftools::Profiles::Profile.decode(LZ4.decode(encoded_profile._native_bytes))
+    ::Perftools::Profiles::Profile.decode(Zstd.decompress(encoded_profile._native_bytes))
   end
 
   def samples_from_pprof(encoded_profile)

@@ -1,0 +1,26 @@
+module Datadog
+  module Core
+    module Telemetry
+      module Transport
+        module Telemetry
+          class Request < Datadog::Core::Transport::Request
+            @request_type: untyped
+
+            @api_key: untyped
+
+            def initialize: (untyped request_type, untyped parcel, untyped api_key) -> void
+
+            attr_reader request_type: untyped
+
+            attr_reader api_key: untyped
+          end
+
+          class Transport < Core::Transport::Transport
+            attr_accessor api_key: String?
+            def send_telemetry: (request_type: untyped, payload: untyped) -> untyped
+          end
+        end
+      end
+    end
+  end
+end

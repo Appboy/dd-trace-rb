@@ -15,11 +15,7 @@ RSpec.shared_examples_for 'configured peer service span' do |env_service_name_ke
     end
 
     context 'with default peer services enabled' do
-      around do |example|
-        ClimateControl.modify('DD_TRACE_PEER_SERVICE_DEFAULTS_ENABLED' => 'true') do
-          example.run
-        end
-      end
+      with_env 'DD_TRACE_PEER_SERVICE_DEFAULTS_ENABLED' => 'true'
 
       context 'when env_var configured' do
         it 'expects peer.service to equal env var value and source to be peer.service' do
@@ -29,7 +25,7 @@ RSpec.shared_examples_for 'configured peer service span' do |env_service_name_ke
       end
 
       context 'when peer_service option is configured' do
-        let(:configuration_options) { { peer_service: 'configured_peer_service' } }
+        let(:configuration_options) { {peer_service: 'configured_peer_service'} }
 
         it 'expects peer.service to equal configured value and source to be peer.service' do
           expect(span.get_tag('peer.service')).to eq(configuration_options[:peer_service])
@@ -49,7 +45,7 @@ RSpec.shared_examples_for 'configured peer service span' do |env_service_name_ke
       end
 
       context 'when peer_service option is configured' do
-        let(:configuration_options) { { peer_service: 'configured_peer_service' } }
+        let(:configuration_options) { {peer_service: 'configured_peer_service'} }
 
         it 'expects peer.service to equal configured value and source to be peer.service' do
           expect(span.get_tag('peer.service')).to eq(configuration_options[:peer_service])

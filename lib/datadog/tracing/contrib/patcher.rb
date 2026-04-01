@@ -20,11 +20,14 @@ module Datadog
         # @public_api
         module CommonMethods
           attr_accessor \
-            :patch_error_result,
-            :patch_successful
+            :patch_error_result
+
+          def patch_successful
+            !!@patch_successful
+          end
 
           def patch_name
-            self.class != Class && self.class != Module ? self.class.name : name
+            (self.class != Class && self.class != Module) ? self.class.name : name
           end
 
           def patched?
@@ -35,15 +38,13 @@ module Datadog
             return unless defined?(super)
 
             patch_only_once.run do
-              begin
-                super.tap do
-                  # Emit a metric
-                  Datadog.health_metrics.instrumentation_patched(1, tags: default_tags)
-                  @patch_successful = true
-                end
-              rescue StandardError => e
-                on_patch_error(e)
+              super.tap do
+                # Emit a metric
+                Datadog.health_metrics.instrumentation_patched(1, tags: default_tags)
+                @patch_successful = true
               end
+            rescue => e
+              on_patch_error(e)
             end
           end
 

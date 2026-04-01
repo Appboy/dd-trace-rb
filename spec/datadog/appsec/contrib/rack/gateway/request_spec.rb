@@ -18,8 +18,21 @@ RSpec.describe Datadog::AppSec::Contrib::Rack::Gateway::Request do
   end
 
   describe '#query' do
-    it 'returns URL query information' do
-      expect(request.query).to eq({ 'a' => ['foo', 'bar'], 'b' => ['baz'] })
+    context 'when query string parsing succeeds' do
+      it 'returns URL query information' do
+        expect(request.query).to eq({'a' => ['foo', 'bar'], 'b' => 'baz'})
+      end
+    end
+
+    context 'when query string parsing failed' do
+      before { allow(::Rack::Utils).to receive(:parse_query).and_raise RangeError, 'too big' }
+
+      it 'returns empty query' do
+        expect(Datadog::AppSec.telemetry).to receive(:report)
+          .with(instance_of(RangeError), description: 'AppSec: Failed to parse request query string')
+
+        expect(request.query).to eq({})
+      end
     end
   end
 
@@ -91,7 +104,7 @@ RSpec.describe Datadog::AppSec::Contrib::Rack::Gateway::Request do
 
   describe '#cookies' do
     it 'returns the cookie information' do
-      expect(request.cookies).to eq({ 'foo' => 'bar' })
+      expect(request.cookies).to eq({'foo' => 'bar'})
     end
   end
 
@@ -131,13 +144,13 @@ RSpec.describe Datadog::AppSec::Contrib::Rack::Gateway::Request do
         described_class.new(
           Rack::MockRequest.env_for(
             'http://example.com:8080/?a=foo',
-            { method: 'POST', input: 'name=john', 'REMOTE_ADDR' => '10.10.10.10' }
+            {:method => 'POST', :input => 'name=john', 'REMOTE_ADDR' => '10.10.10.10'}
           )
         )
       end
 
       it 'returns information' do
-        expect(request.form_hash).to eq({ 'name' => 'john' })
+        expect(request.form_hash).to eq({'name' => 'john'})
       end
     end
   end

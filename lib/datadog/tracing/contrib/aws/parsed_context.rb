@@ -11,7 +11,9 @@ module Datadog
           end
 
           def safely(attr, fallback = nil)
-            public_send(attr) rescue fallback
+            public_send(attr)
+          rescue
+            fallback
           end
 
           def resource
@@ -26,8 +28,12 @@ module Datadog
             context.params
           end
 
+          def http_response
+            context.http_response
+          end
+
           def status_code
-            context.http_response.status_code
+            http_response.status_code
           end
 
           def http_method

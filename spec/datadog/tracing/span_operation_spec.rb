@@ -104,7 +104,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
 
     context 'given an option' do
       shared_examples 'a string property' do |nillable: true|
-        let(:options) { { property => value } }
+        let(:options) { {property => value} }
 
         context 'set to a String' do
           let(:value) { 'test string' }
@@ -147,7 +147,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
       end
 
       context ':on_error' do
-        let(:options) { { on_error: block } }
+        let(:options) { {on_error: on_error} }
 
         let(:block) { proc { raise error } }
         let(:error) { error_class.new('error message') }
@@ -162,6 +162,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
             before { allow(span_op).to receive(:set_error) }
 
             it 'propagates the error' do
+              expect(Datadog.logger).not_to receive(:warn)
               expect { measure }.to raise_error(error)
               expect(span_op).to have_received(:set_error).with(error)
             end
@@ -172,6 +173,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
           let(:on_error) { block }
 
           it 'yields to the error block and raises the error' do
+            expect(Datadog.logger).not_to receive(:warn)
             expect do
               expect do |b|
                 options[:on_error] = b.to_proc
@@ -191,7 +193,9 @@ RSpec.describe Datadog::Tracing::SpanOperation do
           let(:on_error) { 'not a proc' }
 
           it 'fallbacks to default error handler and log a debug message' do
-            expect(Datadog.logger).to receive(:debug).at_least(:once)
+            expect(Datadog.logger).to receive(:warn).with(
+              /on_error argument to SpanOperation ignored because is not a Proc: not a proc/
+            )
             expect do
               span_op.measure(&block)
             end.to raise_error(error)
@@ -211,7 +215,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
       end
 
       describe ':parent_id' do
-        let(:options) { { parent_id: parent_id } }
+        let(:options) { {parent_id: parent_id} }
 
         context 'that is nil' do
           let(:parent_id) { nil }
@@ -225,7 +229,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
       end
 
       describe ':id' do
-        let(:options) { { id: id } }
+        let(:options) { {id: id} }
 
         context 'that is nil' do
           let(:id) { nil }
@@ -251,13 +255,13 @@ RSpec.describe Datadog::Tracing::SpanOperation do
       end
 
       describe ':links' do
-        let(:options) { { links: span_links } }
+        let(:options) { {links: span_links} }
 
         context 'that is an Array' do
           let(:span_links) do
             [Datadog::Tracing::SpanLink.new(
               Datadog::Tracing::TraceDigest.new(trace_id: 1, span_id: 2),
-              attributes: { "link.name": 'moon' }
+              attributes: {"link.name": 'moon'}
             )]
           end
           it { is_expected.to have_attributes(links: span_links) }
@@ -270,7 +274,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
       end
 
       describe ':start_time' do
-        let(:options) { { start_time: start_time } }
+        let(:options) { {start_time: start_time} }
         let(:start_time) { instance_double(Time) }
 
         context 'that is nil' do
@@ -285,7 +289,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
       end
 
       describe ':tags' do
-        let(:options) { { tags: tags } }
+        let(:options) { {tags: tags} }
 
         context 'that is nil' do
           let(:tags) { nil }
@@ -294,7 +298,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
         end
 
         context 'that is a Hash' do
-          let(:tags) { { 'custom_tag' => 'custom_value' } }
+          let(:tags) { {'custom_tag' => 'custom_value'} }
 
           it_behaves_like 'a root span operation'
           it { expect(span_op.get_tag('custom_tag')).to eq(tags['custom_tag']) }
@@ -302,7 +306,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
       end
 
       describe ':trace_id' do
-        let(:options) { { trace_id: trace_id } }
+        let(:options) { {trace_id: trace_id} }
 
         context 'that is nil' do
           let(:trace_id) { nil }
@@ -384,7 +388,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
 
         it do
           expect(callback_spy).to have_received(:before_start).with(span_op).ordered
-          expect(callback_spy).to have_received(:after_stop).with(span_op).ordered
+          expect(callback_spy).to have_received(:after_stop).with(span_op, nil).ordered
           expect(callback_spy).to have_received(:after_finish).with(kind_of(Datadog::Tracing::Span), span_op).ordered
           expect(callback_spy).to_not have_received(:on_error)
         end
@@ -436,7 +440,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
 
         it do
           expect(callback_spy).to have_received(:before_start).with(span_op).ordered
-          expect(callback_spy).to have_received(:after_stop).with(span_op).ordered
+          expect(callback_spy).to have_received(:after_stop).with(span_op, error).ordered
           expect(callback_spy).to have_received(:on_error).with(span_op, error).ordered
           expect(callback_spy).to have_received(:after_finish).with(kind_of(Datadog::Tracing::Span), span_op).ordered
         end
@@ -468,7 +472,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
 
         it do
           expect(callback_spy).to have_received(:before_start).with(span_op).ordered
-          expect(callback_spy).to have_received(:after_stop).with(span_op).ordered
+          expect(callback_spy).to have_received(:after_stop).with(span_op, error).ordered
           expect(callback_spy).to have_received(:on_error).with(span_op, error).ordered
           expect(callback_spy).to have_received(:after_finish).with(kind_of(Datadog::Tracing::Span), span_op).ordered
         end
@@ -659,7 +663,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
           include_context 'callbacks'
           before { stop }
           it do
-            expect(callback_spy).to have_received(:after_stop).with(span_op)
+            expect(callback_spy).to have_received(:after_stop).with(span_op, nil)
             expect(callback_spy).to have_received(:before_start).with(span_op)
             expect(callback_spy).to_not have_received(:after_finish)
           end
@@ -681,7 +685,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
           include_context 'callbacks'
           before { stop }
           it do
-            expect(callback_spy).to have_received(:after_stop).with(span_op)
+            expect(callback_spy).to have_received(:after_stop).with(span_op, nil)
             expect(callback_spy).to_not have_received(:before_start)
             expect(callback_spy).to_not have_received(:after_finish)
           end
@@ -767,7 +771,7 @@ RSpec.describe Datadog::Tracing::SpanOperation do
         include_context 'callbacks'
         before { finish }
         it do
-          expect(callback_spy).to have_received(:after_stop).with(span_op).ordered
+          expect(callback_spy).to have_received(:after_stop).with(span_op, nil).ordered
           expect(callback_spy).to have_received(:after_finish).with(kind_of(Datadog::Tracing::Span), span_op).ordered
         end
       end
@@ -976,11 +980,9 @@ RSpec.describe Datadog::Tracing::SpanOperation do
 
     context 'given an error' do
       let(:error) do
-        begin
-          raise message
-        rescue => e
-          e
-        end
+        raise message
+      rescue => e
+        e
       end
 
       let(:message) { 'Test error!' }
@@ -993,6 +995,100 @@ RSpec.describe Datadog::Tracing::SpanOperation do
         expect(span_op.get_tag(Datadog::Tracing::Metadata::Ext::Errors::TAG_MSG)).to eq(message)
         expect(span_op.get_tag(Datadog::Tracing::Metadata::Ext::Errors::TAG_STACK)).to be_a_kind_of(String)
       end
+    end
+  end
+
+  describe '#record_exception' do
+    let(:error) { StandardError.new('test error').tap { |e| e.set_backtrace(['this is a backtrace']) } }
+
+    it 'creates a span event' do
+      span_op.record_exception(error)
+      span_op.record_exception(error)
+
+      expect(span_op.span_events.length).to eq(2)
+      expect(span_op.span_events[0]).to have_attributes(
+        name: 'exception',
+        attributes: {
+          'exception.type' => 'StandardError',
+          'exception.message' => 'test error',
+          'exception.stacktrace' => 'this is a backtrace: test error (StandardError)
+',
+        }
+      )
+      expect(span_op.span_events[1]).to have_attributes(
+        name: 'exception',
+        attributes: {
+          'exception.type' => 'StandardError',
+          'exception.message' => 'test error',
+          'exception.stacktrace' => 'this is a backtrace: test error (StandardError)
+',
+        }
+      )
+    end
+
+    it 'provides custom attributes' do
+      span_op.record_exception(
+        error,
+        attributes: {'custom_attr1' => 'value',
+                     :custom_attr2 => 'value'}
+      )
+
+      expect(span_op.span_events.last).to have_attributes(
+        name: 'exception',
+        attributes: {
+          'exception.type' => 'StandardError',
+          'exception.message' => 'test error',
+          'exception.stacktrace' => 'this is a backtrace: test error (StandardError)
+',
+          'custom_attr1' => 'value',
+          'custom_attr2' => 'value'
+        }
+      )
+    end
+
+    it 'provides invalid custom attributes' do
+      allow(Datadog.logger).to receive(:warn)
+
+      span_op.record_exception(
+        error,
+        attributes: {
+          'custom_attr' => 'value',
+          'custom_attr2' => {foo: 'bar'},
+          'custom_attr3' => [[1]],
+          'custom_attr4' => [1, 'foo'],
+          'custom_attr5' => 2 << 65,
+          'custom_attr6' => -2 << 65,
+          'custom_attr7' => Float::NAN,
+          'custom_attr8' => Float::INFINITY
+        }
+      )
+
+      expect(span_op.span_events[0].attributes.keys.length).to eq(4)
+      expect(span_op.span_events[0]).to have_attributes(
+        name: 'exception',
+        attributes: {
+          'exception.type' => 'StandardError',
+          'exception.message' => 'test error',
+          'exception.stacktrace' => 'this is a backtrace: test error (StandardError)
+',
+          'custom_attr' => 'value'
+        }
+      )
+      expect(Datadog.logger).to have_received(:warn).with(
+        /Attribute custom_attr2 must be a string, number, boolean, or array: \{.*foo.*bar.*\}./
+      )
+      expect(Datadog.logger).to have_received(:warn).with(
+        'Attribute custom_attr3 must be a string, number, or boolean: [[1]].'
+      )
+      expect(Datadog.logger).to have_received(:warn).with('Attribute custom_attr4 array must be homogenous: [1, "foo"].')
+      expect(Datadog.logger).to have_received(:warn).with(
+        "Attribute custom_attr5 must be within the range of a signed 64-bit integer: #{2 << 65}."
+      )
+      expect(Datadog.logger).to have_received(:warn).with(
+        "Attribute custom_attr6 must be within the range of a signed 64-bit integer: #{-(2 << 65)}."
+      )
+      expect(Datadog.logger).to have_received(:warn).with('Attribute custom_attr7 must be a finite number: NaN.')
+      expect(Datadog.logger).to have_received(:warn).with('Attribute custom_attr8 must be a finite number: Infinity.')
     end
   end
 end

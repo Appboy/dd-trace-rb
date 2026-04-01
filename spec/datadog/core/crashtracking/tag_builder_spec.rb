@@ -46,14 +46,14 @@ RSpec.describe Datadog::Core::Crashtracking::TagBuilder do
     end
 
     it 'includes the provided user tags' do
-      settings.tags = { 'foo' => 'bar' }
+      settings.tags = {'foo' => 'bar'}
 
       expect(call).to include('foo' => 'bar')
     end
 
     context 'when there is a conflict between user and metadata tags' do
       it 'overrides the user-provided tags' do
-        settings.tags = { 'foo' => 'bar', 'version' => '1.0.0' }
+        settings.tags = {'foo' => 'bar', 'version' => '1.0.0'}
         settings.version = '2.0.0'
 
         expect(call).to include('foo' => 'bar', 'version' => '2.0.0')
@@ -62,7 +62,7 @@ RSpec.describe Datadog::Core::Crashtracking::TagBuilder do
 
     context 'when user tag keys and values are not strings' do
       it 'encodes them as strings' do
-        settings.tags = { :symbol_key => :symbol_value, nil => 'nil key', 'nil value' => nil, 12 => 34 }
+        settings.tags = {:symbol_key => :symbol_value, nil => 'nil key', 'nil value' => nil, 12 => 34}
 
         expect(call).to include('symbol_key' => 'symbol_value', '' => 'nil key', 'nil value' => '', '12' => '34')
       end
@@ -70,7 +70,7 @@ RSpec.describe Datadog::Core::Crashtracking::TagBuilder do
 
     context 'when tagging key or value is not utf-8' do
       it 'converts them to utf-8' do
-        settings.tags = { 'ascii-key'.encode(Encoding::ASCII) => 'ascii-value'.encode(Encoding::ASCII) }
+        settings.tags = {'ascii-key'.encode(Encoding::ASCII) => 'ascii-value'.encode(Encoding::ASCII)}
 
         result = call
 
@@ -84,10 +84,12 @@ RSpec.describe Datadog::Core::Crashtracking::TagBuilder do
     describe 'source code integration' do
       context 'when git environment is available' do
         before do
-          allow(Datadog::Core::Environment::Git).to receive(:git_repository_url).and_return(
+          Datadog::Core::TagBuilder.reset_for_tests
+
+          expect(Datadog::Core::Environment::Git).to receive(:git_repository_url).and_return(
             'git_repository_url'
           )
-          allow(Datadog::Core::Environment::Git).to receive(:git_commit_sha).and_return('git_commit_sha')
+          expect(Datadog::Core::Environment::Git).to receive(:git_commit_sha).and_return('git_commit_sha')
         end
 
         it 'includes the git repository URL and commit SHA' do
@@ -99,12 +101,38 @@ RSpec.describe Datadog::Core::Crashtracking::TagBuilder do
 
       context 'when git environment is not available' do
         before do
-          allow(Datadog::Core::Environment::Git).to receive(:git_repository_url).and_return(nil)
-          allow(Datadog::Core::Environment::Git).to receive(:git_commit_sha).and_return(nil)
+          Datadog::Core::TagBuilder.reset_for_tests
+
+          expect(Datadog::Core::Environment::Git).to receive(:git_repository_url).and_return(nil)
+          expect(Datadog::Core::Environment::Git).to receive(:git_commit_sha).and_return(nil)
         end
 
         it 'includes the git repository URL and commit SHA' do
           expect(call).to_not include('git.repository_url', 'git.commit.sha')
+        end
+      end
+    end
+
+    describe 'process tags' do
+      context 'when process tags propagation is enabled' do
+        before do
+          settings.experimental_propagate_process_tags_enabled = true
+          expect(Datadog::Core::Environment::Process).to receive(:serialized)
+            .and_return('entrypoint.workdir:myapp,entrypoint.name:script.rb,entrypoint.basedir:bin,entrypoint.type:script')
+        end
+
+        it 'includes process tags in the crash tracking payload' do
+          expect(call).to include('process_tags' => 'entrypoint.workdir:myapp,entrypoint.name:script.rb,entrypoint.basedir:bin,entrypoint.type:script')
+        end
+      end
+
+      context 'when process tags propagation is not enabled' do
+        before do
+          settings.experimental_propagate_process_tags_enabled = false
+        end
+
+        it 'does not include process tags in the crash tracking payload' do
+          expect(call.keys).to_not include('process_tags')
         end
       end
     end

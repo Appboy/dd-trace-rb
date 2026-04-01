@@ -17,14 +17,18 @@ end
 require 'datadog/tracing/contrib/rails/rails_helper'
 require 'datadog/tracing/contrib/active_job/integration'
 
-RSpec.describe 'ActiveJob' do
-  before { skip unless defined? ::ActiveJob }
+RSpec.describe 'ActiveJob', execute_in_fork: Rails.version.to_i >= 8 do
+  before do
+    skip unless defined? ::ActiveJob
+    require 'sidekiq/rails' if defined?(Rails)
+  end
+
   after { remove_patch!(:active_job) }
   include_context 'Rails test application'
 
   context 'with active_job instrumentation' do
     subject(:job_class) do
-      stub_const('JOB_EXECUTIONS',  Concurrent::AtomicFixnum.new(0))
+      stub_const('JOB_EXECUTIONS', Concurrent::AtomicFixnum.new(0))
       stub_const('JobDiscardError', Class.new(StandardError))
       stub_const('JobRetryError', Class.new(StandardError))
 
@@ -234,11 +238,11 @@ RSpec.describe 'ActiveJob' do
 
     before do
       Sidekiq.configure_client do |config|
-        config.redis = { url: ENV['REDIS_URL'] }
+        config.redis = {url: ENV['REDIS_URL']}
       end
 
       Sidekiq.configure_server do |config|
-        config.redis = { url: ENV['REDIS_URL'] }
+        config.redis = {url: ENV['REDIS_URL']}
       end
 
       Sidekiq::Testing.inline!
@@ -253,7 +257,8 @@ RSpec.describe 'ActiveJob' do
           Class.new do
             include Sidekiq::Worker
 
-            def perform; end
+            def perform
+            end
           end
         )
       end
@@ -277,10 +282,15 @@ RSpec.describe 'ActiveJob' do
         stub_const(
           'EmptyJob',
           Class.new(ActiveJob::Base) do
-            def perform; end
+            def perform
+            end
           end
         )
       end
+
+      # See https://github.com/sidekiq/sidekiq/blob/aee9da68706536fcacbaad069794644f027c3278/Changes.md?plain=1#L37
+      let(:sidekiq_7_wrapper) { 'ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper' }
+      let(:sidekiq_8_wrapper) { 'Sidekiq::ActiveJob::Wrapper' }
 
       it 'has correct Sidekiq span' do
         worker.perform_later
@@ -291,7 +301,7 @@ RSpec.describe 'ActiveJob' do
 
         expect(span.name).to eq('sidekiq.job')
         expect(span.resource).to eq('EmptyJob')
-        expect(span.get_tag('sidekiq.job.wrapper')).to eq('ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper')
+        expect(span.get_tag('sidekiq.job.wrapper')).to eq(sidekiq_7_wrapper).or eq(sidekiq_8_wrapper)
         expect(span.get_tag('sidekiq.job.id')).to match(/[0-9a-f]{24}/)
         expect(span.get_tag('sidekiq.job.retry')).to eq('true')
         expect(span.get_tag('sidekiq.job.queue')).to eq('default')

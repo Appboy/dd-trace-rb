@@ -12,14 +12,12 @@ RSpec.describe Datadog::Core::Remote::Component, :integration do
 
   let(:logger) { logger_allowing_debug }
 
-  around do |example|
-    ClimateControl.modify('DD_REMOTE_CONFIGURATION_ENABLED' => nil) { example.run }
-  end
+  with_env 'DD_REMOTE_CONFIGURATION_ENABLED' => nil
 
   describe '.build' do
     subject(:build) { described_class.build(settings, agent_settings, logger: logger, telemetry: telemetry) }
 
-    after { build.shutdown! if build }
+    after { build&.shutdown! }
 
     context 'remote disabled' do
       let(:remote) do
@@ -61,6 +59,17 @@ RSpec.describe Datadog::Core::Remote::Component, :integration do
 
     after do
       component.shutdown!
+    end
+
+    context 'logging' do
+      it 'logs client ID and registered products' do
+        expect(logger).to receive(:debug) do |&block|
+          message = block.call
+          expect(message).to match(/new remote configuration client: [0-9a-f-]+/)
+          expect(message).to match(/products:/)
+        end
+        component
+      end
     end
 
     context 'worker' do
@@ -176,6 +185,11 @@ RSpec.describe Datadog::Core::Remote::Component, :integration do
     subject(:start) { component.start }
     after { component.shutdown! }
 
+    before do
+      allow_any_instance_of(Datadog::Core::Remote::Negotiation).to receive(:endpoint?).and_return(true)
+      allow(component.worker.instance_variable_get("@block")).to receive(:call)
+    end
+
     it { expect { start }.to change { component.started? }.from(false).to(true) }
 
     it 'does not wait for first sync' do
@@ -208,6 +222,44 @@ RSpec.describe Datadog::Core::Remote::Component, :integration do
 
         it { is_expected.to eq(false) }
       end
+    end
+  end
+
+  describe '#after_fork' do
+    subject(:after_fork) { component.after_fork }
+
+    let(:original_client) { component.client }
+    let(:original_client_id) { original_client.id }
+
+    after { component.shutdown! }
+
+    it 'creates a new client instance' do
+      expect { after_fork }.to change { component.client.object_id }
+    end
+
+    it 'generates a new client ID' do
+      expect { after_fork }.to change { component.client.id }.from(original_client_id)
+    end
+
+    it 'resets healthy flag to false' do
+      component.instance_variable_set(:@healthy, true)
+      expect { after_fork }.to change { component.healthy }.from(true).to(false)
+    end
+
+    it 'logs the new client ID and products' do
+      # Allow the initial debug message during component initialization
+      allow(logger).to receive(:debug)
+
+      # Capture the original client to ensure the component is initialized
+      original_client
+
+      # Now expect the after_fork debug message
+      expect(logger).to receive(:debug) do |&block|
+        message = block.call
+        expect(message).to match(/remote configuration client recreated after fork: [0-9a-f-]+/)
+        expect(message).to match(/products:/)
+      end
+      after_fork
     end
   end
 end
@@ -368,7 +420,7 @@ RSpec.describe Datadog::Core::Remote::Component::Barrier do
     context('with an instance timeout') do
       let(:instance_timeout) { delay / 4 }
 
-      it 'unblocks on timeout' do
+      it "unblocks on timeout with" do
         record << :one
         expect(barrier.wait_once).to eq :timeout
         record << :two
